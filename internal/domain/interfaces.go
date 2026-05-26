@@ -1,0 +1,79 @@
+package domain
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
+
+// UserRepository handles user persistence.
+type UserRepository interface {
+	Create(ctx context.Context, user *User) (*User, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	Update(ctx context.Context, user *User) (*User, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// OrganizationRepository handles org persistence.
+type OrganizationRepository interface {
+	Create(ctx context.Context, org *Organization) (*Organization, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Organization, error)
+	GetBySlug(ctx context.Context, slug string) (*Organization, error)
+	ListByUser(ctx context.Context, userID uuid.UUID, page, perPage int) ([]*Organization, int, error)
+	Update(ctx context.Context, org *Organization) (*Organization, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	AddMember(ctx context.Context, orgID, userID uuid.UUID, role string) error
+	RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
+	IsMember(ctx context.Context, orgID, userID uuid.UUID) (bool, error)
+}
+
+// ProjectRepository handles project persistence.
+type ProjectRepository interface {
+	Create(ctx context.Context, project *Project) (*Project, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Project, error)
+	GetBySlug(ctx context.Context, orgID uuid.UUID, slug string) (*Project, error)
+	ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*Project, int, error)
+	Update(ctx context.Context, project *Project) (*Project, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// DeploymentRepository handles deployment persistence.
+type DeploymentRepository interface {
+	Create(ctx context.Context, d *Deployment) (*Deployment, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Deployment, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID, page, perPage int) ([]*Deployment, int, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
+	AppendLog(ctx context.Context, log *BuildLog) error
+	GetLogs(ctx context.Context, deploymentID uuid.UUID) ([]*BuildLog, error)
+}
+
+// APITokenRepository handles API token persistence.
+type APITokenRepository interface {
+	Create(ctx context.Context, token *APIToken) (*APIToken, error)
+	GetByHash(ctx context.Context, hash string) (*APIToken, error)
+	ListByUser(ctx context.Context, userID uuid.UUID) ([]*APIToken, error)
+	Revoke(ctx context.Context, id uuid.UUID) error
+	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+}
+
+// AuditRepository handles audit log persistence.
+type AuditRepository interface {
+	Append(ctx context.Context, log *AuditLog) error
+	ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*AuditLog, int, error)
+}
+
+// AuthService handles authentication business logic.
+type AuthService interface {
+	Register(ctx context.Context, name, email, password string) (*User, *TokenPair, error)
+	Login(ctx context.Context, email, password string) (*User, *TokenPair, error)
+	RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error)
+	ValidateAccessToken(ctx context.Context, token string) (*User, error)
+}
+
+// CacheStore abstracts the Redis cache.
+type CacheStore interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string, ttlSeconds int) error
+	Del(ctx context.Context, key string) error
+}
