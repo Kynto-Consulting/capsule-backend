@@ -1,0 +1,19 @@
+[build]
+  cmd = "go build -o ./tmp/capsule-server ./cmd/server"
+  bin = "./tmp/capsule-server"
+  delay = 1000
+  exclude_dir = ["tmp", "vendor", "testdata"]
+  include_ext = ["go"]
+  kill_delay = "0.5s"
+
+[log]
+  time = true
+
+[color]
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+
+[misc]
+  clean_on_exit = true
