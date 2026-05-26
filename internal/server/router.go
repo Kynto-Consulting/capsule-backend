@@ -14,10 +14,18 @@ import (
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
-func newRouter(cfg *config.Config, logger *slog.Logger, version string, authSvc domain.AuthService) *chi.Mux {
-	authHandler := handlers.NewAuthHandler(authSvc)
-	r := chi.NewRouter()
+type Deps struct {
+	AuthSvc  domain.AuthService
+	OrgRepo  domain.OrganizationRepository
+	ProjRepo domain.ProjectRepository
+}
 
+func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
+	authHandler    := handlers.NewAuthHandler(deps.AuthSvc)
+	orgHandler     := handlers.NewOrgHandler(deps.OrgRepo)
+	projectHandler := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
+
+	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(chiMiddleware.RealIP)
 	r.Use(middleware.Logger(logger))
@@ -36,13 +44,28 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, authSvc 
 	r.Get("/health", handlers.Health(version))
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Public auth
 		r.Post("/auth/register", authHandler.Register)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
 
+		// Protected
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(authSvc))
+			r.Use(middleware.Auth(deps.AuthSvc))
+
 			r.Get("/auth/me", authHandler.Me)
+
+			// Organizations
+			r.Post("/orgs", orgHandler.Create)
+			r.Get("/orgs", orgHandler.List)
+			r.Get("/orgs/{orgID}", orgHandler.Get)
+			r.Delete("/orgs/{orgID}", orgHandler.Delete)
+
+			// Projects (scoped to org)
+			r.Post("/orgs/{orgID}/projects", projectHandler.Create)
+			r.Get("/orgs/{orgID}/projects", projectHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}", projectHandler.Get)
+			r.Delete("/orgs/{orgID}/projects/{projectID}", projectHandler.Delete)
 		})
 	})
 

@@ -23,3 +23,7 @@ func respondJSON(w http.ResponseWriter, status int, v any) {
 func respondError(w http.ResponseWriter, status int, code, message string) {
 	respondJSON(w, status, errorEnvelope{Error: errorBody{Code: code, Message: message}})
 }
+
+func respondNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
+}
