@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"strconv"
 	"time"
 )
@@ -37,6 +38,8 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	env := getEnv("CAPSULE_ENV", "development")
+
 	port, err := strconv.Atoi(getEnv("CAPSULE_PORT", "8080"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid CAPSULE_PORT: %w", err)
@@ -63,7 +66,7 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		Env:                getEnv("CAPSULE_ENV", "development"),
+		Env:                env,
 		Port:               port,
 		LogLevel:           getEnv("CAPSULE_LOG_LEVEL", "info"),
 		SecretKey:          secretKey,
@@ -73,7 +76,7 @@ func Load() (*Config, error) {
 		JWTRefreshTTL:      7 * 24 * time.Hour,
 		RateLimitRPS:       rps,
 		RateLimitBurst:     burst,
-		CORSAllowedOrigins: []string{"http://localhost:3000"},
+		CORSAllowedOrigins: splitEnvList("CORS_ALLOWED_ORIGINS", defaultCORSAllowedOrigins(env)),
 
 		AWSRegion:          getEnv("AWS_DEFAULT_REGION", "us-east-1"),
 		AWSAccountID:       os.Getenv("AWS_ACCOUNT_ID"),
@@ -91,4 +94,31 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultCORSAllowedOrigins(env string) []string {
+	if env == "production" {
+		return []string{"https://app.tumi-ai.com"}
+	}
+
+	return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+}
+
+func splitEnvList(key string, fallback []string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return append([]string(nil), fallback...)
+	}
+
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	if len(values) == 0 {
+		return append([]string(nil), fallback...)
+	}
+	return values
 }
