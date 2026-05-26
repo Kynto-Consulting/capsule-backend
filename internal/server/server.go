@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kynto/capsule/backend/internal/config"
+	"github.com/kynto/capsule/backend/internal/domain"
 )
 
 type Server struct {
@@ -19,8 +20,8 @@ type Server struct {
 	version string
 }
 
-func New(cfg *config.Config, logger *slog.Logger, version string) *Server {
-	router := newRouter(cfg, logger, version)
+func New(cfg *config.Config, logger *slog.Logger, version string, authSvc domain.AuthService) *Server {
+	router := newRouter(cfg, logger, version, authSvc)
 	return &Server{
 		http: &http.Server{
 			Addr:         fmt.Sprintf(":%d", cfg.Port),

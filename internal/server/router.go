@@ -9,11 +9,13 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/kynto/capsule/backend/internal/config"
+	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
-func newRouter(cfg *config.Config, logger *slog.Logger, version string) *chi.Mux {
+func newRouter(cfg *config.Config, logger *slog.Logger, version string, authSvc domain.AuthService) *chi.Mux {
+	authHandler := handlers.NewAuthHandler(authSvc)
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
@@ -34,7 +36,14 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string) *chi.Mux
 	r.Get("/health", handlers.Health(version))
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// auth routes registered by RegisterAuthRoutes
+		r.Post("/auth/register", authHandler.Register)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/refresh", authHandler.Refresh)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(authSvc))
+			r.Get("/auth/me", authHandler.Me)
+		})
 	})
 
 	return r

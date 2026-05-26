@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/kynto/capsule/backend/internal/config"
+	"github.com/kynto/capsule/backend/internal/repository"
 	"github.com/kynto/capsule/backend/internal/server"
+	"github.com/kynto/capsule/backend/internal/service"
 )
 
 var (
@@ -38,7 +42,20 @@ func main() {
 		"env", cfg.Env,
 	)
 
-	srv := server.New(cfg, logger, version)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := repository.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	userRepo := repository.NewUserRepository(pool)
+	authSvc := service.NewAuthService(userRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
+
+	srv := server.New(cfg, logger, version, authSvc)
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
