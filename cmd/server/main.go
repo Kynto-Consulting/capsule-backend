@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kynto/capsule/backend/internal/config"
+	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/repository"
 	"github.com/kynto/capsule/backend/internal/server"
 	"github.com/kynto/capsule/backend/internal/service"
@@ -59,12 +60,21 @@ func main() {
 	deploymentRepo := repository.NewDeploymentRepository(pool)
 	authSvc        := service.NewAuthService(userRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
+	var cacheStore domain.CacheStore
+	redisCache, err := repository.NewRedisCache(cfg.RedisURL)
+	if err != nil {
+		logger.Warn("redis unavailable; cache features disabled", "error", err)
+	} else {
+		cacheStore = redisCache
+	}
+
 	srv := server.New(cfg, logger, version, server.Deps{
 		AuthSvc:        authSvc,
 		OrgRepo:        orgRepo,
 		ProjRepo:       projRepo,
 		EnvVarRepo:     envVarRepo,
 		DeploymentRepo: deploymentRepo,
+		CacheStore:     cacheStore,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

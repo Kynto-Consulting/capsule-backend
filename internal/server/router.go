@@ -20,10 +20,11 @@ type Deps struct {
 	ProjRepo       domain.ProjectRepository
 	EnvVarRepo     domain.EnvVarRepository
 	DeploymentRepo domain.DeploymentRepository
+	CacheStore     domain.CacheStore // optional; may be nil
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
-	authHandler       := handlers.NewAuthHandler(deps.AuthSvc)
+	authHandler       := handlers.NewAuthHandler(deps.AuthSvc, deps.CacheStore)
 	orgHandler        := handlers.NewOrgHandler(deps.OrgRepo)
 	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
 	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
@@ -58,11 +59,13 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Use(middleware.Auth(deps.AuthSvc))
 
 			r.Get("/auth/me", authHandler.Me)
+			r.Post("/auth/logout", authHandler.Logout)
 
 			// Organizations
 			r.Post("/orgs", orgHandler.Create)
 			r.Get("/orgs", orgHandler.List)
 			r.Get("/orgs/{orgID}", orgHandler.Get)
+			r.Patch("/orgs/{orgID}", orgHandler.Update)
 			r.Delete("/orgs/{orgID}", orgHandler.Delete)
 
 			// Projects (scoped to org)

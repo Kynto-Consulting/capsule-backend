@@ -107,6 +107,59 @@ func (h *OrgHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, org)
 }
 
+type updateOrgRequest struct {
+	Name string `json:"name"`
+}
+
+func (h *OrgHandler) Update(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
+		return
+	}
+
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid organization id")
+		return
+	}
+
+	org, err := h.repo.GetByID(r.Context(), orgID)
+	if err == domain.ErrNotFound {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "organization not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if org.OwnerID != user.ID {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "only owner can update")
+		return
+	}
+
+	var req updateOrgRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required")
+		return
+	}
+
+	org.Name = req.Name
+	updated, err := h.repo.Update(r.Context(), org)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update organization")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, updated)
+}
+
 func (h *OrgHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))

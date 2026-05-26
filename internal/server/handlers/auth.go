@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -10,11 +12,12 @@ import (
 )
 
 type AuthHandler struct {
-	svc domain.AuthService
+	svc   domain.AuthService
+	cache domain.CacheStore // may be nil
 }
 
-func NewAuthHandler(svc domain.AuthService) *AuthHandler {
-	return &AuthHandler{svc: svc}
+func NewAuthHandler(svc domain.AuthService, cache domain.CacheStore) *AuthHandler {
+	return &AuthHandler{svc: svc, cache: cache}
 }
 
 type registerRequest struct {
@@ -129,4 +132,33 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, user)
+}
+
+type logoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// Logout blacklists the provided refresh token so it cannot be reused.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var req logoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	if req.RefreshToken == "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "refresh_token required")
+		return
+	}
+
+	if h.cache != nil {
+		hash := sha256.Sum256([]byte(req.RefreshToken))
+		key := "blacklist:" + hex.EncodeToString(hash[:])
+		const ttl = 7 * 24 * 3600 // 7 days in seconds
+		if err := h.cache.Set(r.Context(), key, "1", ttl); err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "logout failed")
+			return
+		}
+	}
+
+	respondNoContent(w)
 }
