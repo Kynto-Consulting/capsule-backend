@@ -21,9 +21,11 @@ func NewAuthHandler(svc domain.AuthService, cache domain.CacheStore) *AuthHandle
 }
 
 type registerRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Name           string `json:"name"`
+	Email          string `json:"email"`
+	Password       string `json:"password"`
+	InviteCode     string `json:"invite_code"`
+	OnboardingCode string `json:"onboarding_code"`
 }
 
 func (req *registerRequest) validate() error {
@@ -49,13 +51,21 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, pair, err := h.svc.Register(r.Context(), req.Name, req.Email, req.Password)
+	user, pair, err := h.svc.Register(r.Context(), req.Name, req.Email, req.Password, req.InviteCode, req.OnboardingCode)
 	if err != nil {
 		if err == domain.ErrConflict {
 			respondError(w, http.StatusConflict, "EMAIL_TAKEN", "email already registered")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "registration failed")
+		if err == domain.ErrInvalidInviteCode {
+			respondError(w, http.StatusForbidden, "INVALID_INVITE_CODE", "invalid registration invite code")
+			return
+		}
+		if err == domain.ErrInvalidOnboardingCode {
+			respondError(w, http.StatusForbidden, "INVALID_ONBOARDING_CODE", "invalid global onboarding code")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
 
@@ -161,4 +171,48 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondNoContent(w)
+}
+
+type onboardingVerifyRequest struct {
+	Code string `json:"code"`
+}
+
+func (h *AuthHandler) GetOnboardingStatus(w http.ResponseWriter, r *http.Request) {
+	saved, secret, qrCodeURI, err := h.svc.GetOnboardingStatus(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"saved":       saved,
+		"secret":      secret,
+		"qr_code_uri": qrCodeURI,
+	})
+}
+
+func (h *AuthHandler) VerifyOnboarding(w http.ResponseWriter, r *http.Request) {
+	var req onboardingVerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	if req.Code == "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "verification code required")
+		return
+	}
+
+	verified, err := h.svc.VerifyOnboarding(r.Context(), req.Code)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !verified {
+		respondError(w, http.StatusForbidden, "INVALID_ONBOARDING_CODE", "invalid onboarding verification code")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+	})
 }

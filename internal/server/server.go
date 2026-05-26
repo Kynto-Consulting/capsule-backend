@@ -34,6 +34,11 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 	}
 }
 
+// Handler returns the HTTP handler (router) configured for the server.
+func (s *Server) Handler() http.Handler {
+	return s.http.Handler
+}
+
 func (s *Server) Run() error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

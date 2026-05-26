@@ -30,16 +30,24 @@ func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment)
 		          started_at, completed_at, created_at`
 
 	var out domain.Deployment
+	var gitSHA, imageTag *string
 	err := r.pool.QueryRow(ctx, q,
 		d.ProjectID, d.Version, d.GitSHA, d.BuildStrategy, d.ContainerPort, d.Trigger, d.TriggeredBy,
 	).Scan(
-		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &out.GitSHA, &out.Status,
-		&out.ImageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
+		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &gitSHA, &out.Status,
+		&imageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
 		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
 		&out.CreatedAt,
 	)
 	if err != nil {
+		fmt.Printf("DATABASE ERROR IN CREATE DEPLOYMENT: %v\n", err)
 		return nil, fmt.Errorf("creating deployment: %w", err)
+	}
+	if gitSHA != nil {
+		out.GitSHA = *gitSHA
+	}
+	if imageTag != nil {
+		out.ImageTag = *imageTag
 	}
 	return &out, nil
 }
@@ -138,14 +146,21 @@ func (r *DeploymentRepository) scanOne(ctx context.Context, q string, args ...an
 
 func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*domain.Deployment, error) {
 	var d domain.Deployment
+	var gitSHA, imageTag *string
 	err := row.Scan(
-		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &d.GitSHA, &d.Status,
-		&d.ImageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
+		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &gitSHA, &d.Status,
+		&imageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
 		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
 		&d.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning deployment: %w", err)
+	}
+	if gitSHA != nil {
+		d.GitSHA = *gitSHA
+	}
+	if imageTag != nil {
+		d.ImageTag = *imageTag
 	}
 	return &d, nil
 }

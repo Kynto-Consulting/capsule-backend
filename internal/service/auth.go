@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/pkg/totp"
 )
 
 const bcryptCost = 12
@@ -25,6 +27,7 @@ type authClaims struct {
 
 type AuthService struct {
 	users      domain.UserRepository
+	settings   domain.SettingsRepository
 	secretKey  string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -33,12 +36,14 @@ type AuthService struct {
 
 func NewAuthService(
 	users domain.UserRepository,
+	settings domain.SettingsRepository,
 	secretKey string,
 	accessTTL, refreshTTL time.Duration,
 	logger *slog.Logger,
 ) *AuthService {
 	return &AuthService{
 		users:      users,
+		settings:   settings,
 		secretKey:  secretKey,
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
@@ -46,7 +51,38 @@ func NewAuthService(
 	}
 }
 
-func (s *AuthService) Register(ctx context.Context, name, email, password string) (*domain.User, *domain.TokenPair, error) {
+func (s *AuthService) Register(ctx context.Context, name, email, password, inviteCode, onboardingCode string) (*domain.User, *domain.TokenPair, error) {
+	// 1. Invite code verification
+	envInvite := os.Getenv("REGISTRATION_INVITE_CODE")
+	if envInvite != "" && inviteCode != envInvite {
+		return nil, nil, domain.ErrInvalidInviteCode
+	}
+
+	// 2. Global Onboarding 2FA validation
+	savedStr, err := s.settings.Get(ctx, "global_2fa_saved")
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting global 2fa saved state: %w", err)
+	}
+	secret, err := s.settings.Get(ctx, "global_2fa_secret")
+	if err != nil {
+		return nil, nil, fmt.Errorf("getting global 2fa secret: %w", err)
+	}
+
+	if secret == "" {
+		return nil, nil, fmt.Errorf("global 2fa secret is not set yet; please retrieve onboarding status first")
+	}
+
+	if !totp.VerifyCode(secret, onboardingCode) {
+		return nil, nil, domain.ErrInvalidOnboardingCode
+	}
+
+	// If successfully validated and onboarding was false, save it as completed
+	if savedStr != "true" {
+		if err := s.settings.Set(ctx, "global_2fa_saved", "true"); err != nil {
+			return nil, nil, fmt.Errorf("saving global 2fa status: %w", err)
+		}
+	}
+
 	existing, err := s.users.GetByEmail(ctx, email)
 	if err != nil && err != domain.ErrNotFound {
 		return nil, nil, fmt.Errorf("checking existing user: %w", err)
@@ -60,11 +96,18 @@ func (s *AuthService) Register(ctx context.Context, name, email, password string
 		return nil, nil, fmt.Errorf("hashing password: %w", err)
 	}
 
+	// Automatically make the first registered user an 'admin', other users are 'member'
+	// This helps with multi-user setups!
+	var role = "member"
+	if savedStr != "true" {
+		role = "admin"
+	}
+
 	user := &domain.User{
 		Name:         name,
 		Email:        email,
 		PasswordHash: string(hash),
-		Role:         "member",
+		Role:         role,
 	}
 
 	created, err := s.users.Create(ctx, user)
@@ -201,4 +244,69 @@ func (s *AuthService) parseToken(tokenStr string) (*authClaims, error) {
 		return nil, domain.ErrTokenInvalid
 	}
 	return claims, nil
+}
+
+func (s *AuthService) GetOnboardingStatus(ctx context.Context) (saved bool, secret string, qrCodeURI string, err error) {
+	savedStr, err := s.settings.Get(ctx, "global_2fa_saved")
+	if err != nil {
+		return false, "", "", fmt.Errorf("getting global 2fa saved state: %w", err)
+	}
+
+	if savedStr == "true" {
+		return true, "", "", nil
+	}
+
+	// Not saved yet, fetch or generate secret
+	secret, err = s.settings.Get(ctx, "global_2fa_secret")
+	if err != nil {
+		return false, "", "", fmt.Errorf("getting global 2fa secret: %w", err)
+	}
+
+	if secret == "" {
+		// Generate a new secure secret!
+		secret, err = totp.GenerateSecret()
+		if err != nil {
+			return false, "", "", fmt.Errorf("generating secure secret: %w", err)
+		}
+		if err := s.settings.Set(ctx, "global_2fa_secret", secret); err != nil {
+			return false, "", "", fmt.Errorf("saving new global 2fa secret: %w", err)
+		}
+		if err := s.settings.Set(ctx, "global_2fa_saved", "false"); err != nil {
+			return false, "", "", fmt.Errorf("saving global 2fa default saved state: %w", err)
+		}
+	}
+
+	qrCodeURI = totp.ProvisioningURI(secret, "AdminOnboarding", "Capsule")
+	return false, secret, qrCodeURI, nil
+}
+
+func (s *AuthService) VerifyOnboarding(ctx context.Context, code string) (bool, error) {
+	savedStr, err := s.settings.Get(ctx, "global_2fa_saved")
+	if err != nil {
+		return false, fmt.Errorf("getting global 2fa saved state: %w", err)
+	}
+
+	if savedStr == "true" {
+		return true, nil // Already saved!
+	}
+
+	secret, err := s.settings.Get(ctx, "global_2fa_secret")
+	if err != nil {
+		return false, fmt.Errorf("getting global 2fa secret: %w", err)
+	}
+
+	if secret == "" {
+		return false, fmt.Errorf("no onboarding 2fa secret has been generated yet; get onboarding status first")
+	}
+
+	if !totp.VerifyCode(secret, code) {
+		return false, nil // Invalid code
+	}
+
+	// Validated successfully! Save it.
+	if err := s.settings.Set(ctx, "global_2fa_saved", "true"); err != nil {
+		return false, fmt.Errorf("saving global 2fa status: %w", err)
+	}
+
+	return true, nil
 }

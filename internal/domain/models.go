@@ -18,6 +18,8 @@ type User struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	DeletedAt        *time.Time `json:"-"`
+	TwoFactorSecret  string     `json:"-"`
+	TwoFactorEnabled bool       `json:"two_factor_enabled"`
 }
 
 type Organization struct {

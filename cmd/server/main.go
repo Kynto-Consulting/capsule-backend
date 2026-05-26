@@ -11,6 +11,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/repository"
 	"github.com/kynto/capsule/backend/internal/server"
 	"github.com/kynto/capsule/backend/internal/service"
+	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 var (
@@ -58,7 +59,11 @@ func main() {
 	projRepo       := repository.NewProjectRepository(pool)
 	envVarRepo     := repository.NewEnvVarRepository(pool, cfg.SecretKey)
 	deploymentRepo := repository.NewDeploymentRepository(pool)
-	authSvc        := service.NewAuthService(userRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
+	dbRepo         := repository.NewDatabaseRepository(pool)
+	domainRepo     := repository.NewDomainRepository(pool)
+	apiTokenRepo   := repository.NewAPITokenRepository(pool)
+	settingsRepo   := repository.NewSettingsRepository(pool)
+	authSvc        := service.NewAuthService(userRepo, settingsRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
 	var cacheStore domain.CacheStore
 	redisCache, err := repository.NewRedisCache(cfg.RedisURL)
@@ -68,13 +73,30 @@ func main() {
 		cacheStore = redisCache
 	}
 
+	awsCtx, awsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer awsCancel()
+	awsClients, err := awsclient.New(awsCtx, cfg.AWSRegion,
+		os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY"), cfg.AWSAccountID)
+	if err != nil {
+		logger.Warn("AWS clients unavailable", "error", err)
+		awsClients = nil
+	}
+
 	srv := server.New(cfg, logger, version, server.Deps{
-		AuthSvc:        authSvc,
-		OrgRepo:        orgRepo,
-		ProjRepo:       projRepo,
-		EnvVarRepo:     envVarRepo,
-		DeploymentRepo: deploymentRepo,
-		CacheStore:     cacheStore,
+		AuthSvc:            authSvc,
+		OrgRepo:            orgRepo,
+		ProjRepo:           projRepo,
+		EnvVarRepo:         envVarRepo,
+		DeploymentRepo:     deploymentRepo,
+		CacheStore:         cacheStore,
+		DatabaseRepo:       dbRepo,
+		DomainRepo:         domainRepo,
+		APITokenRepo:       apiTokenRepo,
+		AWSClients:         awsClients,
+		ALBDNSName:         cfg.ALBDNSName,
+		DBSubnetGroup:      cfg.DBSubnetGroup,
+		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
+		SecretKey:          cfg.SecretKey,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

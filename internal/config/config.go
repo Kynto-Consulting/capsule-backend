@@ -23,6 +23,17 @@ type Config struct {
 	RateLimitBurst int
 
 	CORSAllowedOrigins []string
+
+	// AWS
+	AWSRegion      string
+	AWSAccountID   string
+	ECRRegistry    string
+	ArtifactsBucket string
+
+	// Infrastructure
+	ALBDNSName         string
+	DBSubnetGroup      string
+	RDSSecurityGroupID string
 }
 
 func Load() (*Config, error) {
@@ -63,6 +74,15 @@ func Load() (*Config, error) {
 		RateLimitRPS:       rps,
 		RateLimitBurst:     burst,
 		CORSAllowedOrigins: []string{"http://localhost:3000"},
+
+		AWSRegion:          getEnv("AWS_DEFAULT_REGION", "us-east-1"),
+		AWSAccountID:       os.Getenv("AWS_ACCOUNT_ID"),
+		ECRRegistry:        os.Getenv("ECR_REGISTRY"),
+		ArtifactsBucket:    getEnv("ARTIFACTS_BUCKET", "capsule-artifacts-348973061281"),
+
+		ALBDNSName:         os.Getenv("ALB_DNS_NAME"),
+		DBSubnetGroup:      getEnv("DB_SUBNET_GROUP", "capsule"),
+		RDSSecurityGroupID: os.Getenv("RDS_SECURITY_GROUP_ID"),
 	}, nil
 }
 

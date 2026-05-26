@@ -71,12 +71,34 @@ type AuditRepository interface {
 	ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*AuditLog, int, error)
 }
 
+// DatabaseRepository handles managed database persistence.
+type DatabaseRepository interface {
+	Create(ctx context.Context, db *Database) (*Database, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Database, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Database, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status, host string, port int) error
+	UpdateCredentials(ctx context.Context, id uuid.UUID, credsEnc []byte) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	GetGlobalStats(ctx context.Context) (projects int, rdsDatabases int, s3Buckets int, domains int, err error)
+}
+
+// DomainRepository handles domain record persistence.
+type DomainRepository interface {
+	Create(ctx context.Context, d *Domain) (*Domain, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Domain, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Domain, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status, recordValue string) error
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
 // AuthService handles authentication business logic.
 type AuthService interface {
-	Register(ctx context.Context, name, email, password string) (*User, *TokenPair, error)
+	Register(ctx context.Context, name, email, password, inviteCode, onboardingCode string) (*User, *TokenPair, error)
 	Login(ctx context.Context, email, password string) (*User, *TokenPair, error)
 	RefreshToken(ctx context.Context, refreshToken string) (*TokenPair, error)
 	ValidateAccessToken(ctx context.Context, token string) (*User, error)
+	GetOnboardingStatus(ctx context.Context) (saved bool, secret string, qrCodeURI string, err error)
+	VerifyOnboarding(ctx context.Context, code string) (bool, error)
 }
 
 // CacheStore abstracts the Redis cache.
@@ -84,4 +106,10 @@ type CacheStore interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key, value string, ttlSeconds int) error
 	Del(ctx context.Context, key string) error
+}
+
+// SettingsRepository handles platform-wide settings persistence.
+type SettingsRepository interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string) error
 }

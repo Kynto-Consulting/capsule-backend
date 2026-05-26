@@ -12,6 +12,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
+	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 type Deps struct {
@@ -21,6 +22,15 @@ type Deps struct {
 	EnvVarRepo     domain.EnvVarRepository
 	DeploymentRepo domain.DeploymentRepository
 	CacheStore     domain.CacheStore // optional; may be nil
+
+	DatabaseRepo       domain.DatabaseRepository
+	DomainRepo         domain.DomainRepository
+	APITokenRepo       domain.APITokenRepository
+	AWSClients         *awsclient.Clients
+	ALBDNSName         string
+	DBSubnetGroup      string
+	RDSSecurityGroupID string
+	SecretKey          string
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
@@ -29,6 +39,29 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
 	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
 	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo)
+	databaseHandler   := handlers.NewDatabaseHandler(
+		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
+		deps.AWSClients, deps.SecretKey,
+		deps.DBSubnetGroup, deps.RDSSecurityGroupID, logger,
+	)
+	domainHandler := handlers.NewDomainHandler(
+		deps.DomainRepo, deps.OrgRepo, deps.ProjRepo,
+		deps.AWSClients, deps.ALBDNSName, logger,
+	)
+	storageHandler := handlers.NewStorageHandler(
+		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
+		deps.AWSClients, deps.SecretKey, logger,
+	)
+	emailHandler := handlers.NewEmailHandler(
+		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
+		deps.AWSClients, deps.SecretKey, logger,
+	)
+	aiHandler := handlers.NewAIHandler(
+		deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo, deps.DeploymentRepo,
+		deps.AWSClients, logger,
+	)
+	pricingHandler := handlers.NewPricingHandler()
+	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -53,6 +86,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		r.Post("/auth/register", authHandler.Register)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
+		r.Get("/auth/onboarding/status", authHandler.GetOnboardingStatus)
+		r.Post("/auth/onboarding/verify", authHandler.VerifyOnboarding)
+
+		// Public/Token authorized AI chat proxy
+		r.Post("/ai/chat", aiHandler.Chat)
 
 		// Protected
 		r.Group(func(r chi.Router) {
@@ -86,6 +124,46 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}", deploymentHandler.Get)
 			r.Get("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}/logs", deploymentHandler.GetLogs)
 			r.Post("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}/cancel", deploymentHandler.Cancel)
+
+			// Databases (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/databases", databaseHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/databases", databaseHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}/databases/{dbID}", databaseHandler.Get)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/databases/{dbID}", databaseHandler.Delete)
+
+			// Storage Buckets (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage/{dbID}", storageHandler.Get)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/storage/{dbID}", storageHandler.Delete)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/presign", storageHandler.Presign)
+
+			// SES Email setups (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/email/setup", emailHandler.Setup)
+			r.Get("/orgs/{orgID}/projects/{projectID}/email/status", emailHandler.Status)
+			r.Post("/orgs/{orgID}/projects/{projectID}/email/test", emailHandler.Test)
+			r.Get("/orgs/{orgID}/projects/{projectID}/email/stats", emailHandler.Stats)
+
+			// Domains (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.List)
+			r.Post("/orgs/{orgID}/projects/{projectID}/domains/{domainID}/verify", domainHandler.Verify)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/domains/{domainID}", domainHandler.Delete)
+
+			// Bedrock AI Utility Keys and Helpers
+			r.Post("/ai/keys", aiHandler.CreateKey)
+			r.Get("/ai/keys", aiHandler.ListKeys)
+			r.Delete("/ai/keys/{keyID}", aiHandler.RevokeKey)
+
+			r.Post("/ai/dockerfile", aiHandler.Dockerfile)
+			r.Post("/ai/explain-failure", aiHandler.ExplainFailure)
+			r.Post("/ai/optimize-costs", aiHandler.OptimizeCosts)
+
+			// Pricing estimate
+			r.Post("/pricing/estimate", pricingHandler.Estimate)
+
+			// AWS Spend and Credits tracking
+			r.Get("/aws/billing", billingHandler.GetBillingSummary)
 		})
 	})
 
