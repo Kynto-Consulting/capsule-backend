@@ -15,15 +15,17 @@ import (
 )
 
 type Deps struct {
-	AuthSvc  domain.AuthService
-	OrgRepo  domain.OrganizationRepository
-	ProjRepo domain.ProjectRepository
+	AuthSvc    domain.AuthService
+	OrgRepo    domain.OrganizationRepository
+	ProjRepo   domain.ProjectRepository
+	EnvVarRepo domain.EnvVarRepository
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
 	authHandler    := handlers.NewAuthHandler(deps.AuthSvc)
 	orgHandler     := handlers.NewOrgHandler(deps.OrgRepo)
 	projectHandler := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
+	envVarHandler  := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -65,7 +67,13 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/projects", projectHandler.Create)
 			r.Get("/orgs/{orgID}/projects", projectHandler.List)
 			r.Get("/orgs/{orgID}/projects/{projectID}", projectHandler.Get)
+			r.Patch("/orgs/{orgID}/projects/{projectID}", projectHandler.Update)
 			r.Delete("/orgs/{orgID}/projects/{projectID}", projectHandler.Delete)
+
+			// Env vars (scoped to project)
+			r.Get("/orgs/{orgID}/projects/{projectID}/env", envVarHandler.List)
+			r.Put("/orgs/{orgID}/projects/{projectID}/env", envVarHandler.Set)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/env/{key}", envVarHandler.Delete)
 		})
 	})
 

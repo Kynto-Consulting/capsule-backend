@@ -48,6 +48,14 @@ type DeploymentRepository interface {
 	GetLogs(ctx context.Context, deploymentID uuid.UUID) ([]*BuildLog, error)
 }
 
+// EnvVarRepository handles environment variable persistence.
+type EnvVarRepository interface {
+	Upsert(ctx context.Context, e *EnvVar) (*EnvVar, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*EnvVar, error)
+	GetByKey(ctx context.Context, projectID uuid.UUID, key string) (*EnvVar, error)
+	Delete(ctx context.Context, projectID uuid.UUID, key string) error
+}
+
 // APITokenRepository handles API token persistence.
 type APITokenRepository interface {
 	Create(ctx context.Context, token *APIToken) (*APIToken, error)

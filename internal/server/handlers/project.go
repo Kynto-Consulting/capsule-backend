@@ -148,6 +148,79 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, project)
 }
 
+func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID)
+	if !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	project, err := h.projects.GetByID(r.Context(), projectID)
+	if err == domain.ErrNotFound {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	var req struct {
+		Name          *string `json:"name"`
+		RepoURL       *string `json:"repo_url"`
+		Branch        *string `json:"branch"`
+		BuildStrategy *string `json:"build_strategy"`
+		Runtime       *string `json:"runtime"`
+		Serverless    *bool   `json:"serverless"`
+		Replicas      *int    `json:"replicas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+
+	if req.Name != nil {
+		project.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.RepoURL != nil {
+		project.RepoURL = *req.RepoURL
+	}
+	if req.Branch != nil {
+		project.Branch = *req.Branch
+	}
+	if req.BuildStrategy != nil {
+		project.BuildStrategy = *req.BuildStrategy
+	}
+	if req.Runtime != nil {
+		project.Runtime = *req.Runtime
+	}
+	if req.Serverless != nil {
+		project.Serverless = *req.Serverless
+	}
+	if req.Replicas != nil {
+		project.Replicas = *req.Replicas
+	}
+
+	updated, err := h.projects.Update(r.Context(), project)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update project")
+		return
+	}
+	respondJSON(w, http.StatusOK, updated)
+}
+
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
