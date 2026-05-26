@@ -1,0 +1,151 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/kynto/capsule/backend/internal/domain"
+)
+
+type DeploymentRepository struct {
+	pool *pgxpool.Pool
+}
+
+func NewDeploymentRepository(pool *pgxpool.Pool) *DeploymentRepository {
+	return &DeploymentRepository{pool: pool}
+}
+
+func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment) (*domain.Deployment, error) {
+	const q = `
+		INSERT INTO deployments
+		  (project_id, version, git_sha, status, build_strategy, container_port, trigger, triggered_by)
+		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
+		RETURNING id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
+		          container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
+		          started_at, completed_at, created_at`
+
+	var out domain.Deployment
+	err := r.pool.QueryRow(ctx, q,
+		d.ProjectID, d.Version, d.GitSHA, d.BuildStrategy, d.ContainerPort, d.Trigger, d.TriggeredBy,
+	).Scan(
+		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &out.GitSHA, &out.Status,
+		&out.ImageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
+		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
+		&out.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("creating deployment: %w", err)
+	}
+	return &out, nil
+}
+
+func (r *DeploymentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Deployment, error) {
+	const q = `
+		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
+		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
+		       started_at, completed_at, created_at
+		FROM deployments WHERE id = $1`
+	return r.scanOne(ctx, q, id)
+}
+
+func (r *DeploymentRepository) ListByProject(ctx context.Context, projectID uuid.UUID, page, perPage int) ([]*domain.Deployment, int, error) {
+	const q = `
+		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
+		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
+		       started_at, completed_at, created_at
+		FROM deployments WHERE project_id = $1
+		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+
+	rows, err := r.pool.Query(ctx, q, projectID, perPage, (page-1)*perPage)
+	if err != nil {
+		return nil, 0, fmt.Errorf("querying deployments: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Deployment
+	for rows.Next() {
+		d, err := r.scanRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, d)
+	}
+
+	var total int
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM deployments WHERE project_id = $1`, projectID,
+	).Scan(&total)
+
+	return out, total, nil
+}
+
+func (r *DeploymentRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
+	var q string
+	switch status {
+	case "building", "deploying":
+		q = `UPDATE deployments SET status = $2, started_at = COALESCE(started_at, now()) WHERE id = $1`
+	case "success", "failed", "cancelled":
+		q = `UPDATE deployments SET status = $2, completed_at = now() WHERE id = $1`
+	default:
+		q = `UPDATE deployments SET status = $2 WHERE id = $1`
+	}
+	_, err := r.pool.Exec(ctx, q, id, status)
+	return err
+}
+
+func (r *DeploymentRepository) AppendLog(ctx context.Context, log *domain.BuildLog) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO build_logs (deployment_id, level, message) VALUES ($1, $2, $3)`,
+		log.DeploymentID, log.Level, log.Message,
+	)
+	return err
+}
+
+func (r *DeploymentRepository) GetLogs(ctx context.Context, deploymentID uuid.UUID) ([]*domain.BuildLog, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, deployment_id, level, message, created_at FROM build_logs WHERE deployment_id = $1 ORDER BY created_at`,
+		deploymentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying logs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.BuildLog
+	for rows.Next() {
+		var l domain.BuildLog
+		if err := rows.Scan(&l.ID, &l.DeploymentID, &l.Level, &l.Message, &l.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning log: %w", err)
+		}
+		out = append(out, &l)
+	}
+	return out, nil
+}
+
+func (r *DeploymentRepository) scanOne(ctx context.Context, q string, args ...any) (*domain.Deployment, error) {
+	row := r.pool.QueryRow(ctx, q, args...)
+	d, err := r.scanRow(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return d, err
+}
+
+func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*domain.Deployment, error) {
+	var d domain.Deployment
+	err := row.Scan(
+		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &d.GitSHA, &d.Status,
+		&d.ImageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
+		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
+		&d.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("scanning deployment: %w", err)
+	}
+	return &d, nil
+}

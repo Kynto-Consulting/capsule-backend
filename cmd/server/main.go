@@ -52,17 +52,19 @@ func main() {
 	}
 	defer pool.Close()
 
-	userRepo   := repository.NewUserRepository(pool)
-	orgRepo    := repository.NewOrgRepository(pool)
-	projRepo   := repository.NewProjectRepository(pool)
-	envVarRepo := repository.NewEnvVarRepository(pool, cfg.SecretKey)
-	authSvc    := service.NewAuthService(userRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
+	userRepo       := repository.NewUserRepository(pool)
+	orgRepo        := repository.NewOrgRepository(pool)
+	projRepo       := repository.NewProjectRepository(pool)
+	envVarRepo     := repository.NewEnvVarRepository(pool, cfg.SecretKey)
+	deploymentRepo := repository.NewDeploymentRepository(pool)
+	authSvc        := service.NewAuthService(userRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
 	srv := server.New(cfg, logger, version, server.Deps{
-		AuthSvc:    authSvc,
-		OrgRepo:    orgRepo,
-		ProjRepo:   projRepo,
-		EnvVarRepo: envVarRepo,
+		AuthSvc:        authSvc,
+		OrgRepo:        orgRepo,
+		ProjRepo:       projRepo,
+		EnvVarRepo:     envVarRepo,
+		DeploymentRepo: deploymentRepo,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

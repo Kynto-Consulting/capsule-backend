@@ -15,17 +15,19 @@ import (
 )
 
 type Deps struct {
-	AuthSvc    domain.AuthService
-	OrgRepo    domain.OrganizationRepository
-	ProjRepo   domain.ProjectRepository
-	EnvVarRepo domain.EnvVarRepository
+	AuthSvc        domain.AuthService
+	OrgRepo        domain.OrganizationRepository
+	ProjRepo       domain.ProjectRepository
+	EnvVarRepo     domain.EnvVarRepository
+	DeploymentRepo domain.DeploymentRepository
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
-	authHandler    := handlers.NewAuthHandler(deps.AuthSvc)
-	orgHandler     := handlers.NewOrgHandler(deps.OrgRepo)
-	projectHandler := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
-	envVarHandler  := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
+	authHandler       := handlers.NewAuthHandler(deps.AuthSvc)
+	orgHandler        := handlers.NewOrgHandler(deps.OrgRepo)
+	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
+	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
+	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -74,6 +76,13 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/env", envVarHandler.List)
 			r.Put("/orgs/{orgID}/projects/{projectID}/env", envVarHandler.Set)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/env/{key}", envVarHandler.Delete)
+
+			// Deployments (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/deployments", deploymentHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/deployments", deploymentHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}", deploymentHandler.Get)
+			r.Get("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}/logs", deploymentHandler.GetLogs)
+			r.Post("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}/cancel", deploymentHandler.Cancel)
 		})
 	})
 
