@@ -1,0 +1,4 @@
+BEGIN;
+DROP TABLE IF EXISTS redis_instances;
+DROP TABLE IF EXISTS databases;
+COMMIT;

@@ -1,0 +1,4 @@
+BEGIN;
+DROP TABLE IF EXISTS ssl_certificates;
+DROP TABLE IF EXISTS domains;
+COMMIT;
