@@ -185,7 +185,7 @@ type CronJob struct {
 	Command       string     `json:"command"`
 	Timezone      string     `json:"timezone"`
 	Status        string     `json:"status"`
-	LastRunStatus string     `json:"last_run_status,omitempty"`
+	LastRunStatus *string    `json:"last_run_status,omitempty"`
 	LastRunAt     *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt     *time.Time `json:"next_run_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`

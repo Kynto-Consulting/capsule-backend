@@ -207,6 +207,27 @@ func (h *LogsHandler) GetWorkerLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetCronLogs — GET /orgs/{orgID}/projects/{projectID}/logs/cron
+func (h *LogsHandler) GetCronLogs(w http.ResponseWriter, r *http.Request) {
+	project, status, code, msg := h.resolveProject(r)
+	if status != 0 {
+		respondError(w, status, code, msg)
+		return
+	}
+
+	tail := parseTailParam(r, 100, 1000)
+	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "cron", tail)
+	if err != nil {
+		h.logger.Error("failed to list cron logs", "project_id", project.ID, "error", err)
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve cron logs")
+		return
+	}
+	if logs == nil {
+		logs = []*domain.ExecutionLog{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"data": logs})
+}
+
 // GetStorageLogs — GET /orgs/{orgID}/projects/{projectID}/logs/storage
 func (h *LogsHandler) GetStorageLogs(w http.ResponseWriter, r *http.Request) {
 	project, status, code, msg := h.resolveProject(r)

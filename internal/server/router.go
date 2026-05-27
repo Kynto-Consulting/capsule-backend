@@ -70,7 +70,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
 	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.ExecLogRepo, deps.AWSClients)
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger)
-	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, logger)
+	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
@@ -212,6 +212,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/lambda", logsHandler.GetLambdaLogs)
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/workers/{workerID}", logsHandler.GetWorkerLogs)
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/storage", logsHandler.GetStorageLogs)
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/cron", logsHandler.GetCronLogs)
 
 			// Cron Jobs (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons", cronHandler.Create)

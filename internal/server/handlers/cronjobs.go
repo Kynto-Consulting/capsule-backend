@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type CronJobHandler struct {
 	crons    domain.CronJobRepository
 	orgs     domain.OrganizationRepository
 	projects domain.ProjectRepository
+	exLogs   domain.ExecutionLogRepository
 	logger   *slog.Logger
 }
 
@@ -27,12 +30,14 @@ func NewCronJobHandler(
 	crons domain.CronJobRepository,
 	orgs domain.OrganizationRepository,
 	projects domain.ProjectRepository,
+	exLogs domain.ExecutionLogRepository,
 	logger *slog.Logger,
 ) *CronJobHandler {
 	return &CronJobHandler{
 		crons:    crons,
 		orgs:     orgs,
 		projects: projects,
+		exLogs:   exLogs,
 		logger:   logger,
 	}
 }
@@ -249,13 +254,33 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	go func(c *domain.CronJob) {
 		ctx := context.Background()
-		runErr := exec.CommandContext(ctx, "sh", "-c", c.Command).Run()
+		start := time.Now()
+		cmd := exec.CommandContext(ctx, "sh", "-c", c.Command)
+		out, runErr := cmd.CombinedOutput()
+		dur := time.Since(start)
 		runStatus := "success"
+		level := "info"
 		if runErr != nil {
 			h.logger.Error("cron trigger failed", "cron_id", c.ID, "error", runErr)
 			runStatus = "failed"
+			level = "error"
 		}
 		_ = h.crons.UpdateLastRun(ctx, c.ID, runStatus, nil)
+
+		// Persist cron execution log
+		if h.exLogs != nil {
+			msg := fmt.Sprintf("cron %q (%s) → %s in %s", c.Name, c.Command, runStatus, dur.Round(time.Millisecond))
+			if len(out) > 0 {
+				msg += "\n" + string(out)
+			}
+			_ = h.exLogs.Append(ctx, &domain.ExecutionLog{
+				ProjectID: c.ProjectID,
+				Source:    "cron",
+				SourceID:  c.ID.String(),
+				Level:     level,
+				Message:   msg,
+			})
+		}
 	}(cron)
 
 	respondJSON(w, http.StatusAccepted, map[string]any{"message": "cron job triggered"})
