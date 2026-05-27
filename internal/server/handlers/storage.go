@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -76,7 +77,8 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Public bool   `json:"public"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -112,7 +114,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.provisionS3(db, bucketName)
+	go h.provisionS3(db, bucketName, req.Public)
 
 	respondJSON(w, http.StatusCreated, db)
 }
@@ -322,7 +324,7 @@ func (h *StorageHandler) Presign(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helpers
-func (h *StorageHandler) provisionS3(db *domain.Database, bucketName string) {
+func (h *StorageHandler) provisionS3(db *domain.Database, bucketName string, public bool) {
 	ctx := context.Background()
 	logger := h.logger.With("db_id", db.ID, "bucket_name", bucketName)
 
@@ -339,6 +341,26 @@ func (h *StorageHandler) provisionS3(db *domain.Database, bucketName string) {
 		logger.Error("failed to create S3 bucket", "error", err)
 		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "s3.amazonaws.com", 443)
 		return
+	}
+
+	if public {
+		// Disable public access block
+		_, _ = h.aws.S3.PutPublicAccessBlock(ctx, &s3.PutPublicAccessBlockInput{
+			Bucket: aws.String(bucketName),
+			PublicAccessBlockConfiguration: &s3types.PublicAccessBlockConfiguration{
+				BlockPublicAcls:       aws.Bool(false),
+				IgnorePublicAcls:      aws.Bool(false),
+				BlockPublicPolicy:     aws.Bool(false),
+				RestrictPublicBuckets: aws.Bool(false),
+			},
+		})
+		// Apply public read bucket policy
+		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"PublicRead","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::%s/*"}]}`, bucketName)
+		_, _ = h.aws.S3.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{
+			Bucket: aws.String(bucketName),
+			Policy: aws.String(policy),
+		})
+		logger.Info("S3 bucket configured as public", "bucket", bucketName)
 	}
 
 	// Encrypt credentials (reusing active environment credentials)

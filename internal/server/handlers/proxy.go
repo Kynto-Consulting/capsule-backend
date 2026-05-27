@@ -44,6 +44,14 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 
 	switch resourceType {
 	case "app":
+		if project.DeployType == "static" {
+			staticBucket := "capsule-static-348973061281" // TODO: make configurable
+			websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
+				staticBucket, project.ID.String()+"/",
+				strings.TrimPrefix(r.URL.Path, "/_proxy/"+subdomain))
+			http.Redirect(w, r, websiteURL, http.StatusFound)
+			return
+		}
 		h.proxyToContainer(w, r, project, subdomain)
 	case "storage":
 		h.handleStorageInfo(w, r, project)
@@ -90,6 +98,17 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if project.DeployType == "static" {
+		staticBucket := "capsule-static-348973061281" // TODO: make configurable
+		path := r.URL.Path
+		if path == "" {
+			path = "/"
+		}
+		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
+			staticBucket, project.ID.String(), path)
+		http.Redirect(w, r, websiteURL, http.StatusFound)
+		return
+	}
 	h.proxyToContainer(w, r, project, "")
 }
 
@@ -116,6 +135,13 @@ func (h *ProxyHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/"
 	}
 
+	if project.DeployType == "static" {
+		staticBucket := "capsule-static-348973061281" // TODO: make configurable
+		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
+			staticBucket, project.ID.String(), r.URL.Path)
+		http.Redirect(w, r, websiteURL, http.StatusFound)
+		return
+	}
 	h.proxyToContainer(w, r, project, projectSlug)
 }
 

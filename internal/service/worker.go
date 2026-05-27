@@ -354,6 +354,14 @@ func (w *DeployWorker) runLambdaDeploy(ctx context.Context, id, projectID uuid.U
 			return
 		}
 		functionURL = *result.FunctionUrl
+		// Allow public unauthenticated invocation via Function URL
+		_, _ = lambdaClient.AddPermission(ctx, &lambda.AddPermissionInput{
+			FunctionName:        &functionName,
+			StatementId:         aws.String("AllowPublicFunctionURL"),
+			Action:              aws.String("lambda:InvokeFunctionUrl"),
+			Principal:           aws.String("*"),
+			FunctionUrlAuthType: lambdatypes.FunctionUrlAuthTypeNone,
+		})
 	} else {
 		functionURL = *urlConfig.FunctionUrl
 	}
@@ -395,9 +403,10 @@ func (w *DeployWorker) runStaticDeploy(ctx context.Context, id, projectID uuid.U
 		return
 	}
 
-	// Upload to S3 under static/{projectID}/
-	prefix := "static/" + projectID.String() + "/"
-	w.appendLog(ctx, id, fmt.Sprintf("Uploading to S3: s3://%s/%s", w.bucket, prefix))
+	// Upload to the public static bucket under {projectID}/
+	staticBucket := strings.ReplaceAll(w.bucket, "artifacts", "static")
+	prefix := projectID.String() + "/"
+	w.appendLog(ctx, id, fmt.Sprintf("Uploading to S3: s3://%s/%s", staticBucket, prefix))
 
 	err := filepath.WalkDir(outputDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -432,7 +441,7 @@ func (w *DeployWorker) runStaticDeploy(ctx context.Context, id, projectID uuid.U
 		}
 
 		_, err = w.aws.S3.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:      &w.bucket,
+			Bucket:      &staticBucket,
 			Key:         &key,
 			Body:        bytes.NewReader(data),
 			ContentType: &contentType,
@@ -452,7 +461,8 @@ func (w *DeployWorker) runStaticDeploy(ctx context.Context, id, projectID uuid.U
 	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {
 		w.logger.Error("deploy worker: failed to set success status", "id", id, "error", err)
 	}
-	w.appendLog(ctx, id, "Static deployment completed. Files available at: s3://"+w.bucket+"/"+prefix)
+	websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s", staticBucket, projectID.String()+"/")
+	w.appendLog(ctx, id, "Static site live at: "+websiteURL)
 	w.logger.Info("deploy worker: static deployment succeeded", "id", id)
 }
 
