@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -25,6 +26,7 @@ type Clients struct {
 	S3      *s3.Client
 	SES     *sesv2.Client
 	Lambda  *lambda.Client
+	CE      *costexplorer.Client
 	Region  string
 	Account string
 }
@@ -52,6 +54,21 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 
 	_ = aws.ToString(aws.String(region)) // satisfy import
 
+	// Cost Explorer is global — always us-east-1
+	ceCfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
+	if err != nil {
+		return nil, fmt.Errorf("loading aws config for ce: %w", err)
+	}
+	if accessKeyID != "" && secretKey != "" {
+		ceCfg, err = config.LoadDefaultConfig(ctx,
+			config.WithRegion("us-east-1"),
+			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretKey, "")),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("loading aws config for ce (static): %w", err)
+		}
+	}
+
 	return &Clients{
 		ECR:     ecr.NewFromConfig(cfg),
 		RDS:     rds.NewFromConfig(cfg),
@@ -60,6 +77,7 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 		S3:      s3.NewFromConfig(cfg),
 		SES:     sesv2.NewFromConfig(cfg),
 		Lambda:  lambda.NewFromConfig(cfg),
+		CE:      costexplorer.NewFromConfig(ceCfg),
 		Region:  region,
 		Account: account,
 	}, nil
