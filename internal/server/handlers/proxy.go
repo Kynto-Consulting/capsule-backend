@@ -66,9 +66,7 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 			if subPath == "" || subPath == "/" {
 				subPath = "/index.html"
 			}
-			websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-				staticBucketName(), project.ID.String(), subPath)
-			http.Redirect(w, r, websiteURL, http.StatusFound)
+			h.proxyToStaticS3(w, r, project.ID.String(), subPath)
 			return
 		}
 		h.proxyToContainer(w, r, project, subdomain)
@@ -118,13 +116,11 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if project.DeployType == "static" {
-		path := r.URL.Path
-		if path == "" {
-			path = "/"
+		subPath := r.URL.Path
+		if subPath == "" || subPath == "/" {
+			subPath = "/index.html"
 		}
-		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-			staticBucketName(), project.ID.String(), path)
-		http.Redirect(w, r, websiteURL, http.StatusFound)
+		h.proxyToStaticS3(w, r, project.ID.String(), subPath)
 		return
 	}
 	h.proxyToContainer(w, r, project, "")
@@ -154,9 +150,11 @@ func (h *ProxyHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if project.DeployType == "static" {
-		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-			staticBucketName(), project.ID.String(), r.URL.Path)
-		http.Redirect(w, r, websiteURL, http.StatusFound)
+		subPath := r.URL.Path
+		if subPath == "" || subPath == "/" {
+			subPath = "/index.html"
+		}
+		h.proxyToStaticS3(w, r, project.ID.String(), subPath)
 		return
 	}
 	h.proxyToContainer(w, r, project, projectSlug)
@@ -372,6 +370,41 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 			w.Write([]byte(resp.Body))
 		}
 	}
+}
+
+// proxyToStaticS3 reverse-proxies to S3 website hosting without redirecting the client.
+// subPath must start with '/'. The user URL stays on the Capsule domain.
+func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, projectID, subPath string) {
+	s3Host := fmt.Sprintf("%s.s3-website-us-east-1.amazonaws.com", staticBucketName())
+	targetURL := fmt.Sprintf("http://%s/%s%s", s3Host, projectID, subPath)
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
+	if err != nil {
+		http.Error(w, "failed to build S3 request", http.StatusInternalServerError)
+		return
+	}
+	// Propagate Accept headers (important for content negotiation)
+	req.Header.Set("Accept", r.Header.Get("Accept"))
+	req.Header.Set("Accept-Encoding", r.Header.Get("Accept-Encoding"))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("S3 fetch failed: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Forward content-type and cache headers
+	for _, hdr := range []string{"Content-Type", "Cache-Control", "ETag", "Last-Modified", "Content-Encoding"} {
+		if v := resp.Header.Get(hdr); v != "" {
+			w.Header().Set(hdr, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 func (h *ProxyHandler) handleStorageInfo(w http.ResponseWriter, r *http.Request, project *domain.Project) {
