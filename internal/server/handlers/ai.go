@@ -80,7 +80,7 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	models := []Model{
 		{
 			ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+			BedrockID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 			ContextWindow: 200000, MaxOutput: 8192,
 			Description: "Fastest and most compact Claude model. Ideal for classification, extraction, and simple Q&A at high throughput.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, FunctionCalling: true, Streaming: true},
@@ -88,8 +88,8 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 			Tags:         []string{"fast", "cheap", "classification"},
 		},
 		{
-			ID: "claude-sonnet-4", Name: "Claude Sonnet 4", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-sonnet-4-5:0",
+			ID: "claude-sonnet-4.5", Name: "Claude Sonnet 4.5", Provider: "Anthropic",
+			BedrockID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 			ContextWindow: 200000, MaxOutput: 16000,
 			Description: "Best balance of intelligence and speed. Recommended for most production workloads including reasoning, coding, and analysis.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
@@ -97,8 +97,8 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 			Tags:         []string{"balanced", "vision", "recommended"},
 		},
 		{
-			ID: "claude-opus-4", Name: "Claude Opus 4", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-opus-4-5:0",
+			ID: "claude-opus-4.5", Name: "Claude Opus 4.5", Provider: "Anthropic",
+			BedrockID: "us.anthropic.claude-opus-4-5-20251101-v1:0",
 			ContextWindow: 200000, MaxOutput: 32000,
 			Description: "Most powerful Claude model. Best for complex reasoning, research synthesis, and tasks requiring deep analysis.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
@@ -106,31 +106,31 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 			Tags:         []string{"powerful", "complex-reasoning", "research"},
 		},
 		{
-			ID: "titan-text-express", Name: "Amazon Titan Text Express", Provider: "Amazon",
-			BedrockID: "amazon.titan-text-express-v1",
-			ContextWindow: 8192, MaxOutput: 8192,
-			Description: "Amazon's general-purpose text model. Cost-effective for summarisation, paraphrase, and open-ended generation.",
-			Capabilities: ModelCapabilities{TextGeneration: true, Streaming: true},
-			Pricing:      ModelPricing{InputPer1KTokens: 0.0002, OutputPer1KTokens: 0.0006},
-			Tags:         []string{"amazon", "budget"},
-		},
-		{
-			ID: "llama3-70b", Name: "Meta Llama 3 70B Instruct", Provider: "Meta",
-			BedrockID: "us.meta.llama3-70b-instruct-v1:0",
+			ID: "llama3-3-70b", Name: "Meta Llama 3.3 70B Instruct", Provider: "Meta",
+			BedrockID: "us.meta.llama3-3-70b-instruct-v1:0",
 			ContextWindow: 128000, MaxOutput: 8192,
-			Description: "Meta's flagship open model. Strong performance on instruction-following, coding assistance, and multilingual tasks.",
+			Description: "Meta's latest open model. Strong instruction-following, coding assistance, and multilingual support.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
-			Pricing:      ModelPricing{InputPer1KTokens: 0.00265, OutputPer1KTokens: 0.0035},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00099, OutputPer1KTokens: 0.00099},
 			Tags:         []string{"open-source", "multilingual"},
 		},
 		{
-			ID: "mistral-7b", Name: "Mistral 7B Instruct", Provider: "Mistral AI",
-			BedrockID: "mistral.mistral-7b-instruct-v0:2",
-			ContextWindow: 32768, MaxOutput: 8192,
-			Description: "Efficient 7B model with strong reasoning relative to size. Good for low-latency workloads with moderate complexity.",
+			ID: "llama3-2-90b", Name: "Meta Llama 3.2 90B Instruct", Provider: "Meta",
+			BedrockID: "us.meta.llama3-2-90b-instruct-v1:0",
+			ContextWindow: 128000, MaxOutput: 8192,
+			Description: "Large vision-capable Llama model for complex reasoning and image understanding tasks.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00072, OutputPer1KTokens: 0.00072},
+			Tags:         []string{"open-source", "vision"},
+		},
+		{
+			ID: "deepseek-r1", Name: "DeepSeek-R1", Provider: "DeepSeek",
+			BedrockID: "us.deepseek.r1-v1:0",
+			ContextWindow: 64000, MaxOutput: 8192,
+			Description: "Advanced reasoning model with extended chain-of-thought. Excellent for math, logic, and complex problem solving.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
-			Pricing:      ModelPricing{InputPer1KTokens: 0.00015, OutputPer1KTokens: 0.0002},
-			Tags:         []string{"efficient", "low-latency"},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00135, OutputPer1KTokens: 0.0054},
+			Tags:         []string{"reasoning", "math", "chain-of-thought"},
 		},
 	}
 
@@ -349,18 +349,18 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Map models — use cross-region inference profile IDs (us.* prefix required for on-demand)
-	awsModelID := "us.anthropic.claude-sonnet-4-5:0"
+	awsModelID := "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 	switch req.Model {
 	case "claude-haiku-4.5":
-		awsModelID = "us.anthropic.claude-3-5-haiku-20241022-v1:0"
-	case "claude-opus-4":
-		awsModelID = "us.anthropic.claude-opus-4-5:0"
-	case "titan-text-express":
-		awsModelID = "amazon.titan-text-express-v1"
-	case "llama3-70b":
-		awsModelID = "us.meta.llama3-70b-instruct-v1:0"
-	case "mistral-7b":
-		awsModelID = "mistral.mistral-7b-instruct-v0:2"
+		awsModelID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+	case "claude-opus-4.5":
+		awsModelID = "us.anthropic.claude-opus-4-5-20251101-v1:0"
+	case "llama3-3-70b":
+		awsModelID = "us.meta.llama3-3-70b-instruct-v1:0"
+	case "llama3-2-90b":
+		awsModelID = "us.meta.llama3-2-90b-instruct-v1:0"
+	case "deepseek-r1":
+		awsModelID = "us.deepseek.r1-v1:0"
 	}
 
 	// Build Anthropic messages payload
