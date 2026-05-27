@@ -184,15 +184,24 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 	w.appendLog(ctx, id, "Deploying container...")
 
+	// --- find an available host port in range 20000-29999 (deterministic from project ID) ---
+	shortBytes := []byte(projectID.String())
+	portOffset := 0
+	for _, b := range shortBytes {
+		portOffset = (portOffset*31 + int(b)) % 10000
+	}
+	hostPort := 20000 + portOffset
+
 	// --- stop and remove old container ---
 	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
-	_ = rmCmd.Run() // ignore error if container didn't exist
+	_ = rmCmd.Run()
 
 	// --- start new container ---
 	runCmd := exec.CommandContext(ctx, "docker", "run", "-d",
 		"--name", imageName,
 		"--restart", "unless-stopped",
 		"-e", "PORT=3000",
+		"-p", fmt.Sprintf("%d:3000", hostPort),
 		imageName,
 	)
 	runOut, err := runCmd.CombinedOutput()
@@ -202,7 +211,12 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 
 	containerID := strings.TrimSpace(string(runOut))
-	w.appendLog(ctx, id, fmt.Sprintf("Container started: %s", containerID))
+	w.appendLog(ctx, id, fmt.Sprintf("Container started: %s (port %d)", containerID, hostPort))
+
+	// --- store host port ---
+	if err := w.deployments.UpdateHostPort(ctx, id, hostPort); err != nil {
+		w.logger.Warn("deploy worker: failed to store host port", "id", id, "error", err)
+	}
 
 	// --- success ---
 	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {

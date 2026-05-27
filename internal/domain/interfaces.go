@@ -47,6 +47,7 @@ type DeploymentRepository interface {
 	AppendLog(ctx context.Context, log *BuildLog) error
 	GetLogs(ctx context.Context, deploymentID uuid.UUID) ([]*BuildLog, error)
 	Cancel(ctx context.Context, id uuid.UUID) error
+	UpdateHostPort(ctx context.Context, id uuid.UUID, hostPort int) error
 }
 
 // EnvVarRepository handles environment variable persistence.
