@@ -323,20 +323,35 @@ func (h *EmailHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return comprehensive stats for the email dashboard visual interface
 	type emailStats struct {
-		Sent      int `json:"sent"`
-		Delivered int `json:"delivered"`
-		Bounces   int `json:"bounces"`
-		Complaints int `json:"complaints"`
+		SentLast24H    float64 `json:"sent_last_24h"`
+		Quota24H       float64 `json:"quota_24h"`
+		SendingEnabled bool    `json:"sending_enabled"`
 	}
 
-	// Simulated high-fidelity logs/analytics
+	// No AWS client — return zeroes
+	if h.aws == nil || h.aws.SES == nil {
+		respondJSON(w, http.StatusOK, emailStats{})
+		return
+	}
+
+	out, err := h.aws.SES.GetAccount(r.Context(), &sesv2.GetAccountInput{})
+	if err != nil {
+		h.logger.Warn("failed to get SES account stats", "error", err)
+		respondJSON(w, http.StatusOK, emailStats{})
+		return
+	}
+
+	var sent, quota float64
+	if out.SendQuota != nil {
+		sent = out.SendQuota.SentLast24Hours
+		quota = out.SendQuota.Max24HourSend
+	}
+
 	respondJSON(w, http.StatusOK, emailStats{
-		Sent:      1240,
-		Delivered: 1236,
-		Bounces:   3,
-		Complaints: 1,
+		SentLast24H:    sent,
+		Quota24H:       quota,
+		SendingEnabled: out.SendingEnabled,
 	})
 }
 
