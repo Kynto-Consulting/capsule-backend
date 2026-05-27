@@ -42,6 +42,7 @@ type Project struct {
 	RepoURL       string                 `json:"repo_url,omitempty"`
 	Branch        string                 `json:"branch"`
 	BuildStrategy string                 `json:"build_strategy"`
+	DeployType    string                 `json:"deploy_type"`
 	Runtime       string                 `json:"runtime,omitempty"`
 	Serverless    bool                   `json:"serverless"`
 	Replicas      int                    `json:"replicas"`
@@ -61,6 +62,7 @@ type Deployment struct {
 	Status           string     `json:"status"`
 	ImageTag         string     `json:"image_tag,omitempty"`
 	BuildStrategy    string     `json:"build_strategy,omitempty"`
+	DeployType       string     `json:"deploy_type,omitempty"`
 	ContainerPort    int        `json:"container_port,omitempty"`
 	BuildDurationMs  *int64     `json:"build_duration_ms,omitempty"`
 	DeployDurationMs *int64     `json:"deploy_duration_ms,omitempty"`

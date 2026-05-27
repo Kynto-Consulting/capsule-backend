@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -72,18 +76,19 @@ func (w *DeployWorker) processNext(ctx context.Context) {
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	var (
-		id        uuid.UUID
-		projectID uuid.UUID
-		sourceKey *string
+		id            uuid.UUID
+		projectID     uuid.UUID
+		sourceKey     *string
+		buildStrategy string
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT id, project_id, source_key
+		SELECT id, project_id, source_key, build_strategy
 		FROM deployments
 		WHERE status = 'queued'
 		ORDER BY created_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED
-	`).Scan(&id, &projectID, &sourceKey)
+	`).Scan(&id, &projectID, &sourceKey, &buildStrategy)
 	if err != nil {
 		// No rows available — nothing to do.
 		return
@@ -95,7 +100,7 @@ func (w *DeployWorker) processNext(ctx context.Context) {
 	}
 
 	w.logger.Info("deploy worker: picked deployment", "id", id, "project_id", projectID)
-	w.runDeployment(ctx, id, projectID, sourceKey)
+	w.runDeployment(ctx, id, projectID, sourceKey, buildStrategy)
 }
 
 func (w *DeployWorker) appendLog(ctx context.Context, id uuid.UUID, msg string) {
@@ -120,8 +125,8 @@ func (w *DeployWorker) failDeployment(ctx context.Context, id uuid.UUID, msg str
 	_ = w.deployments.UpdateStatus(ctx, id, "failed")
 }
 
-// runDeployment executes a single deployment end-to-end.
-func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUID, sourceKey *string) {
+// runDeployment executes a single deployment end-to-end, dispatching by build strategy.
+func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUID, sourceKey *string, buildStrategy string) {
 	// --- transition to building ---
 	if err := w.deployments.UpdateStatus(ctx, id, "building"); err != nil {
 		w.failDeployment(ctx, id, "failed to update status to building", err)
@@ -129,7 +134,7 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 	w.appendLog(ctx, id, "Starting build...")
 
-	// short tag for container/image name — first 8 chars of project UUID
+	// short tag for container/image name — first 12 chars of project UUID (no dashes)
 	shortID := strings.ReplaceAll(projectID.String(), "-", "")[:12]
 	imageName := "capsule-app-" + shortID
 
@@ -152,6 +157,27 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 		w.appendLog(ctx, id, "No source key provided, using generated Dockerfile")
 	}
 
+	// --- find an available host port in range 20000-29999 (deterministic from project ID) ---
+	shortBytes := []byte(projectID.String())
+	portOffset := 0
+	for _, b := range shortBytes {
+		portOffset = (portOffset*31 + int(b)) % 10000
+	}
+	hostPort := 20000 + portOffset
+
+	// --- dispatch by build strategy ---
+	switch buildStrategy {
+	case "lambda":
+		w.runLambdaDeploy(ctx, id, projectID, buildDir)
+	case "static":
+		w.runStaticDeploy(ctx, id, projectID, buildDir)
+	default:
+		w.runDockerDeploy(ctx, id, projectID, buildDir, imageName, hostPort)
+	}
+}
+
+// runDockerDeploy handles the docker build + run flow.
+func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir, imageName string, hostPort int) {
 	// --- ensure Dockerfile exists ---
 	dockerfilePath := filepath.Join(buildDir, "Dockerfile")
 	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
@@ -183,14 +209,6 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 		return
 	}
 	w.appendLog(ctx, id, "Deploying container...")
-
-	// --- find an available host port in range 20000-29999 (deterministic from project ID) ---
-	shortBytes := []byte(projectID.String())
-	portOffset := 0
-	for _, b := range shortBytes {
-		portOffset = (portOffset*31 + int(b)) % 10000
-	}
-	hostPort := 20000 + portOffset
 
 	// --- stop and remove old container ---
 	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
@@ -234,6 +252,208 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 	w.appendLog(ctx, id, "Deployment completed successfully")
 	w.logger.Info("deploy worker: deployment succeeded", "id", id, "image", imageName)
+}
+
+// runLambdaDeploy builds and deploys a Lambda function from the source.
+func (w *DeployWorker) runLambdaDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir string) {
+	functionName := "capsule-" + strings.ReplaceAll(projectID.String(), "-", "")[:12]
+
+	w.appendLog(ctx, id, "Building Lambda function...")
+
+	// Detect runtime
+	runtime := lambdatypes.RuntimeProvidedal2023
+	var buildCmd *exec.Cmd
+
+	if _, err := os.Stat(filepath.Join(buildDir, "go.mod")); err == nil {
+		w.appendLog(ctx, id, "Detected Go runtime")
+		buildCmd = exec.CommandContext(ctx, "sh", "-c",
+			"cd "+buildDir+" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bootstrap .")
+		runtime = lambdatypes.RuntimeProvidedal2023
+	} else if _, err := os.Stat(filepath.Join(buildDir, "package.json")); err == nil {
+		w.appendLog(ctx, id, "Detected Node.js runtime")
+		runtime = lambdatypes.RuntimeNodejs20x
+		buildCmd = exec.CommandContext(ctx, "sh", "-c",
+			"cd "+buildDir+" && npm install --omit=dev")
+	} else {
+		w.appendLog(ctx, id, "Detected generic runtime")
+	}
+
+	if buildCmd != nil {
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			w.failDeployment(ctx, id, "lambda build failed: "+string(out), err)
+			return
+		}
+	}
+
+	// Create ZIP
+	zipPath := filepath.Join(buildDir, "function.zip")
+	zipCmd := exec.CommandContext(ctx, "sh", "-c",
+		"cd "+buildDir+" && zip -r function.zip . -x '*.zip'")
+	if out, err := zipCmd.CombinedOutput(); err != nil {
+		w.failDeployment(ctx, id, "zip failed: "+string(out), err)
+		return
+	}
+
+	zipData, err := os.ReadFile(zipPath)
+	if err != nil {
+		w.failDeployment(ctx, id, "reading zip", err)
+		return
+	}
+
+	w.appendLog(ctx, id, fmt.Sprintf("Deploying to Lambda: %s", functionName))
+
+	if err := w.deployments.UpdateStatus(ctx, id, "deploying"); err != nil {
+		w.failDeployment(ctx, id, "updating status", err)
+		return
+	}
+
+	lambdaClient := w.aws.Lambda
+
+	// Try update first, then create
+	_, err = lambdaClient.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
+		FunctionName: &functionName,
+		ZipFile:      zipData,
+	})
+	if err != nil {
+		// Function doesn't exist, create it
+		role := "arn:aws:iam::" + w.aws.Account + ":role/capsule-lambda-role"
+		handler := "bootstrap"
+		if runtime == lambdatypes.RuntimeNodejs20x {
+			handler = "index.handler"
+		}
+		_, err = lambdaClient.CreateFunction(ctx, &lambda.CreateFunctionInput{
+			FunctionName: &functionName,
+			Runtime:      runtime,
+			Role:         &role,
+			Handler:      &handler,
+			Code:         &lambdatypes.FunctionCode{ZipFile: zipData},
+			Timeout:      aws.Int32(30),
+			MemorySize:   aws.Int32(256),
+		})
+		if err != nil {
+			w.failDeployment(ctx, id, "creating lambda function", err)
+			return
+		}
+	}
+
+	// Create/get Function URL
+	urlConfig, err := lambdaClient.GetFunctionUrlConfig(ctx, &lambda.GetFunctionUrlConfigInput{
+		FunctionName: &functionName,
+	})
+
+	var functionURL string
+	if err != nil {
+		// Create URL
+		authType := lambdatypes.FunctionUrlAuthTypeNone
+		result, err2 := lambdaClient.CreateFunctionUrlConfig(ctx, &lambda.CreateFunctionUrlConfigInput{
+			FunctionName: &functionName,
+			AuthType:     authType,
+		})
+		if err2 != nil {
+			w.failDeployment(ctx, id, "creating function URL", err2)
+			return
+		}
+		functionURL = *result.FunctionUrl
+	} else {
+		functionURL = *urlConfig.FunctionUrl
+	}
+
+	w.appendLog(ctx, id, fmt.Sprintf("Lambda deployed. Function URL: %s", functionURL))
+
+	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {
+		w.logger.Error("deploy worker: failed to set success status", "id", id, "error", err)
+	}
+	w.appendLog(ctx, id, "Lambda deployment completed successfully")
+	w.logger.Info("deploy worker: lambda deployment succeeded", "id", id, "function", functionName)
+}
+
+// runStaticDeploy builds a static site and uploads it to S3.
+func (w *DeployWorker) runStaticDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir string) {
+	w.appendLog(ctx, id, "Building static site...")
+
+	// Detect build command
+	outputDir := buildDir
+	if _, err := os.Stat(filepath.Join(buildDir, "package.json")); err == nil {
+		w.appendLog(ctx, id, "Running npm build...")
+		buildCmd := exec.CommandContext(ctx, "sh", "-c", "npm install && npm run build")
+		buildCmd.Dir = buildDir
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			w.failDeployment(ctx, id, "npm build failed: "+string(out), err)
+			return
+		}
+		// Check common output dirs
+		for _, d := range []string{"dist", "build", "out", ".next"} {
+			if _, err := os.Stat(filepath.Join(buildDir, d)); err == nil {
+				outputDir = filepath.Join(buildDir, d)
+				break
+			}
+		}
+	}
+
+	if err := w.deployments.UpdateStatus(ctx, id, "deploying"); err != nil {
+		w.failDeployment(ctx, id, "updating status", err)
+		return
+	}
+
+	// Upload to S3 under static/{projectID}/
+	prefix := "static/" + projectID.String() + "/"
+	w.appendLog(ctx, id, fmt.Sprintf("Uploading to S3: s3://%s/%s", w.bucket, prefix))
+
+	err := filepath.WalkDir(outputDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(outputDir, path)
+		key := prefix + filepath.ToSlash(rel)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		contentType := "application/octet-stream"
+		switch {
+		case strings.HasSuffix(path, ".html"):
+			contentType = "text/html"
+		case strings.HasSuffix(path, ".css"):
+			contentType = "text/css"
+		case strings.HasSuffix(path, ".js"):
+			contentType = "application/javascript"
+		case strings.HasSuffix(path, ".json"):
+			contentType = "application/json"
+		case strings.HasSuffix(path, ".png"):
+			contentType = "image/png"
+		case strings.HasSuffix(path, ".jpg"), strings.HasSuffix(path, ".jpeg"):
+			contentType = "image/jpeg"
+		case strings.HasSuffix(path, ".svg"):
+			contentType = "image/svg+xml"
+		case strings.HasSuffix(path, ".woff2"):
+			contentType = "font/woff2"
+		}
+
+		_, err = w.aws.S3.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:      &w.bucket,
+			Key:         &key,
+			Body:        bytes.NewReader(data),
+			ContentType: &contentType,
+		})
+		if err != nil {
+			return fmt.Errorf("uploading %s: %w", key, err)
+		}
+		w.appendLog(ctx, id, fmt.Sprintf("Uploaded: %s", rel))
+		return nil
+	})
+
+	if err != nil {
+		w.failDeployment(ctx, id, "uploading static files", err)
+		return
+	}
+
+	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {
+		w.logger.Error("deploy worker: failed to set success status", "id", id, "error", err)
+	}
+	w.appendLog(ctx, id, "Static deployment completed. Files available at: s3://"+w.bucket+"/"+prefix)
+	w.logger.Info("deploy worker: static deployment succeeded", "id", id)
 }
 
 // downloadAndExtract downloads a tar.gz from S3 and extracts it into destDir.

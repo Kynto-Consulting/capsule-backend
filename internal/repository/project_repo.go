@@ -22,18 +22,18 @@ func NewProjectRepository(pool *pgxpool.Pool) *ProjectRepository {
 
 func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) (*domain.Project, error) {
 	const q = `
-		INSERT INTO projects (org_id, name, slug, repo_url, branch, build_strategy, runtime, serverless, replicas, status, labels)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'created', '{}')
-		RETURNING id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		INSERT INTO projects (org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime, serverless, replicas, status, labels)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'docker'), $8, $9, $10, 'created', '{}')
+		RETURNING id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		          serverless, replicas, status, labels, created_at, updated_at`
 
 	var created domain.Project
 	err := r.pool.QueryRow(ctx, q,
 		p.OrgID, p.Name, p.Slug, p.RepoURL, p.Branch,
-		p.BuildStrategy, p.Runtime, p.Serverless, p.Replicas,
+		p.BuildStrategy, p.DeployType, p.Runtime, p.Serverless, p.Replicas,
 	).Scan(
 		&created.ID, &created.OrgID, &created.Name, &created.Slug,
-		&created.RepoURL, &created.Branch, &created.BuildStrategy, &created.Runtime,
+		&created.RepoURL, &created.Branch, &created.BuildStrategy, &created.DeployType, &created.Runtime,
 		&created.Serverless, &created.Replicas, &created.Status, &created.Labels,
 		&created.CreatedAt, &created.UpdatedAt,
 	)
@@ -45,7 +45,7 @@ func (r *ProjectRepository) Create(ctx context.Context, p *domain.Project) (*dom
 
 func (r *ProjectRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Project, error) {
 	const q = `
-		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		       serverless, replicas, status, labels, created_at, updated_at
 		FROM projects WHERE id = $1 AND deleted_at IS NULL`
 	return r.scanOne(ctx, q, id)
@@ -53,7 +53,7 @@ func (r *ProjectRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 
 func (r *ProjectRepository) GetBySlug(ctx context.Context, orgID uuid.UUID, slug string) (*domain.Project, error) {
 	const q = `
-		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		       serverless, replicas, status, labels, created_at, updated_at
 		FROM projects WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL`
 	return r.scanOne(ctx, q, orgID, slug)
@@ -61,7 +61,7 @@ func (r *ProjectRepository) GetBySlug(ctx context.Context, orgID uuid.UUID, slug
 
 func (r *ProjectRepository) GetBySlugGlobal(ctx context.Context, slug string) (*domain.Project, error) {
 	const q = `
-		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		       serverless, replicas, status, labels, created_at, updated_at
 		FROM projects WHERE slug = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT 1`
@@ -70,7 +70,7 @@ func (r *ProjectRepository) GetBySlugGlobal(ctx context.Context, slug string) (*
 
 func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*domain.Project, int, error) {
 	const q = `
-		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		       serverless, replicas, status, labels, created_at, updated_at
 		FROM projects WHERE org_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
@@ -102,11 +102,11 @@ func (r *ProjectRepository) Update(ctx context.Context, p *domain.Project) (*dom
 	const q = `
 		UPDATE projects
 		SET name = $2, repo_url = $3, branch = $4, build_strategy = $5,
-		    runtime = $6, serverless = $7, replicas = $8, updated_at = now()
+		    deploy_type = $6, runtime = $7, serverless = $8, replicas = $9, updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		RETURNING id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		          serverless, replicas, status, labels, created_at, updated_at`
-	return r.scanOne(ctx, q, p.ID, p.Name, p.RepoURL, p.Branch, p.BuildStrategy, p.Runtime, p.Serverless, p.Replicas)
+	return r.scanOne(ctx, q, p.ID, p.Name, p.RepoURL, p.Branch, p.BuildStrategy, p.DeployType, p.Runtime, p.Serverless, p.Replicas)
 }
 
 func (r *ProjectRepository) Delete(ctx context.Context, id uuid.UUID) error {
@@ -136,7 +136,7 @@ func (r *ProjectRepository) scanRow(row interface {
 	var p domain.Project
 	err := row.Scan(
 		&p.ID, &p.OrgID, &p.Name, &p.Slug, &p.RepoURL, &p.Branch,
-		&p.BuildStrategy, &p.Runtime, &p.Serverless, &p.Replicas,
+		&p.BuildStrategy, &p.DeployType, &p.Runtime, &p.Serverless, &p.Replicas,
 		&p.Status, &p.Labels, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {

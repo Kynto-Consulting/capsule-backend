@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -64,7 +65,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
-	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo)
+	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -81,6 +82,26 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+
+	// Custom domain middleware — intercept requests from non-platform hosts
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			// Strip port
+			if i := strings.LastIndex(host, ":"); i >= 0 {
+				host = host[:i]
+			}
+			// Only intercept non-platform hosts
+			if host != "" &&
+				!strings.HasSuffix(host, ".apps.tumi-ai.com") &&
+				!strings.HasSuffix(host, ".tumi-ai.com") &&
+				host != "localhost" {
+				proxyHandler.ProxyByHost(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	r.Get("/health", handlers.Health(version))
 

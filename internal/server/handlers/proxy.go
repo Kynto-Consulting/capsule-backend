@@ -14,10 +14,11 @@ import (
 type ProxyHandler struct {
 	orgs     domain.OrganizationRepository
 	projects domain.ProjectRepository
+	domains  domain.DomainRepository
 }
 
-func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository) *ProxyHandler {
-	return &ProxyHandler{orgs: orgs, projects: projects}
+func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository) *ProxyHandler {
+	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains}
 }
 
 // ProxyBySlug handles /_proxy/{subdomain}/* — called by Next.js rewrites for *.apps.tumi-ai.com.
@@ -51,6 +52,45 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unknown resource type", http.StatusNotFound)
 	}
+}
+
+// ProxyByHost handles requests arriving with a custom domain Host header.
+// It looks up the verified domain record and either redirects or proxies to the container.
+func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
+	host := r.Host
+	// Strip port if present
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+
+	d, err := h.domains.GetByHostname(r.Context(), host)
+	if err == domain.ErrNotFound {
+		http.Error(w, "domain not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Handle redirect domains
+	if strings.HasPrefix(d.DNSProvider, "redirect:") {
+		target := strings.TrimPrefix(d.DNSProvider, "redirect:")
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return
+	}
+
+	project, err := h.projects.GetByID(r.Context(), d.ProjectID)
+	if err == domain.ErrNotFound {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	h.proxyToContainer(w, r, project, "")
 }
 
 // Proxy handles /apps/{orgSlug}/{projectSlug}/* — legacy path-based routing (kept for backward compat).

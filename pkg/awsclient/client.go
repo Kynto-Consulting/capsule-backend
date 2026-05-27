@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -23,6 +24,7 @@ type Clients struct {
 	Bedrock *bedrockruntime.Client
 	S3      *s3.Client
 	SES     *sesv2.Client
+	Lambda  *lambda.Client
 	Region  string
 	Account string
 }
@@ -57,6 +59,7 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 		Bedrock: bedrockruntime.NewFromConfig(cfg),
 		S3:      s3.NewFromConfig(cfg),
 		SES:     sesv2.NewFromConfig(cfg),
+		Lambda:  lambda.NewFromConfig(cfg),
 		Region:  region,
 		Account: account,
 	}, nil

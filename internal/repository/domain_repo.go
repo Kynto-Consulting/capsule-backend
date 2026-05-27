@@ -65,6 +65,28 @@ func (r *DomainRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.D
 	return &out, nil
 }
 
+func (r *DomainRepository) GetByHostname(ctx context.Context, hostname string) (*domain.Domain, error) {
+	const q = `
+		SELECT id, project_id, domain_name, record_type, record_value, verification_token,
+		       status, ssl_enabled, dns_provider, verified_at, created_at, updated_at
+		FROM domains
+		WHERE domain_name = $1 AND status = 'verified'
+		LIMIT 1`
+	var out domain.Domain
+	err := r.pool.QueryRow(ctx, q, hostname).Scan(
+		&out.ID, &out.ProjectID, &out.DomainName, &out.RecordType, &out.RecordValue,
+		&out.VerificationToken, &out.Status, &out.SSLEnabled, &out.DNSProvider,
+		&out.VerifiedAt, &out.CreatedAt, &out.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting domain by hostname: %w", err)
+	}
+	return &out, nil
+}
+
 func (r *DomainRepository) ListByProject(ctx context.Context, projectID uuid.UUID) ([]*domain.Domain, error) {
 	const q = `
 		SELECT id, project_id, domain_name, record_type, record_value, verification_token,
