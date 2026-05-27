@@ -155,25 +155,9 @@ func (h *LogsHandler) GetRuntimeLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetLambdaLogs — GET /orgs/{orgID}/projects/{projectID}/logs/lambda
+// GetLambdaLogs — GET /orgs/{orgID}/projects/{projectID}/logs/lambda[?source_id=]
 func (h *LogsHandler) GetLambdaLogs(w http.ResponseWriter, r *http.Request) {
-	project, status, code, msg := h.resolveProject(r)
-	if status != 0 {
-		respondError(w, status, code, msg)
-		return
-	}
-
-	tail := parseTailParam(r, 100, 1000)
-	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "lambda", tail)
-	if err != nil {
-		h.logger.Error("failed to list lambda logs", "project_id", project.ID, "error", err)
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve lambda logs")
-		return
-	}
-	if logs == nil {
-		logs = []*domain.ExecutionLog{}
-	}
-	respondJSON(w, http.StatusOK, map[string]any{"data": logs})
+	h.getExecLogs(w, r, "lambda")
 }
 
 // GetWorkerLogs — GET /orgs/{orgID}/projects/{projectID}/logs/workers/{workerID}
@@ -207,8 +191,21 @@ func (h *LogsHandler) GetWorkerLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetCronLogs — GET /orgs/{orgID}/projects/{projectID}/logs/cron
+// GetCronLogs — GET /orgs/{orgID}/projects/{projectID}/logs/cron[?source_id=]
 func (h *LogsHandler) GetCronLogs(w http.ResponseWriter, r *http.Request) {
+	h.getExecLogs(w, r, "cron")
+}
+
+// GetStorageLogs — GET /orgs/{orgID}/projects/{projectID}/logs/storage[?source_id=]
+func (h *LogsHandler) GetStorageLogs(w http.ResponseWriter, r *http.Request) {
+	h.getExecLogs(w, r, "storage")
+}
+
+// ── shared helper ────────────────────────────────────────────────────────────
+
+// getExecLogs is a shared handler body for lambda/storage/cron.
+// Supports ?source_id= to filter to one specific resource, ?tail= for count.
+func (h *LogsHandler) getExecLogs(w http.ResponseWriter, r *http.Request, source string) {
 	project, status, code, msg := h.resolveProject(r)
 	if status != 0 {
 		respondError(w, status, code, msg)
@@ -216,10 +213,21 @@ func (h *LogsHandler) GetCronLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tail := parseTailParam(r, 100, 1000)
-	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "cron", tail)
+	sourceID := r.URL.Query().Get("source_id")
+
+	var logs []*domain.ExecutionLog
+	var err error
+
+	if sourceID != "" {
+		logs, err = h.exLogs.ListBySource(r.Context(), project.ID, source, sourceID, tail)
+	} else {
+		logs, err = h.exLogs.ListByProject(r.Context(), project.ID, source, tail)
+	}
+
 	if err != nil {
-		h.logger.Error("failed to list cron logs", "project_id", project.ID, "error", err)
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve cron logs")
+		h.logger.Error("failed to list exec logs",
+			"source", source, "source_id", sourceID, "project_id", project.ID, "error", err)
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve logs")
 		return
 	}
 	if logs == nil {
@@ -228,23 +236,32 @@ func (h *LogsHandler) GetCronLogs(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"data": logs})
 }
 
-// GetStorageLogs — GET /orgs/{orgID}/projects/{projectID}/logs/storage
-func (h *LogsHandler) GetStorageLogs(w http.ResponseWriter, r *http.Request) {
+// GetLogSources — GET /orgs/{orgID}/projects/{projectID}/logs/{source}/sources
+// Returns distinct source_id values — used by the UI to populate the resource selector.
+// {source} can be: lambda, cron, storage, runtime
+func (h *LogsHandler) GetLogSources(w http.ResponseWriter, r *http.Request) {
 	project, status, code, msg := h.resolveProject(r)
 	if status != 0 {
 		respondError(w, status, code, msg)
 		return
 	}
 
-	tail := parseTailParam(r, 100, 1000)
-	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "storage", tail)
-	if err != nil {
-		h.logger.Error("failed to list storage logs", "project_id", project.ID, "error", err)
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve storage logs")
+	source := chi.URLParam(r, "source")
+	allowed := map[string]bool{"lambda": true, "cron": true, "storage": true, "runtime": true}
+	if !allowed[source] {
+		respondError(w, http.StatusBadRequest, "INVALID_SOURCE", "source must be lambda|cron|storage|runtime")
 		return
 	}
-	if logs == nil {
-		logs = []*domain.ExecutionLog{}
+
+	sources, err := h.exLogs.ListSources(r.Context(), project.ID, source)
+	if err != nil {
+		h.logger.Error("failed to list log sources",
+			"source", source, "project_id", project.ID, "error", err)
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list sources")
+		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"data": logs})
+	if sources == nil {
+		sources = []string{}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"source": source, "data": sources})
 }

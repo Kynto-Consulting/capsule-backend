@@ -86,6 +86,30 @@ func (r *ExecutionLogRepository) ListBySource(ctx context.Context, projectID uui
 	return scanExecutionLogRows(rows)
 }
 
+// ListSources returns distinct source_id values for a project+source.
+func (r *ExecutionLogRepository) ListSources(ctx context.Context, projectID uuid.UUID, source string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT source_id
+		FROM execution_logs
+		WHERE project_id = $1 AND source = $2
+		ORDER BY source_id`,
+		projectID, source,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing execution log sources: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scanning source_id: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func scanExecutionLogRows(rows pgx.Rows) ([]*domain.ExecutionLog, error) {
 	defer rows.Close()
 	var out []*domain.ExecutionLog

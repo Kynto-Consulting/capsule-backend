@@ -146,4 +146,7 @@ type ExecutionLogRepository interface {
 	Append(ctx context.Context, log *ExecutionLog) error
 	ListByProject(ctx context.Context, projectID uuid.UUID, source string, limit int) ([]*ExecutionLog, error)
 	ListBySource(ctx context.Context, projectID uuid.UUID, source, sourceID string, limit int) ([]*ExecutionLog, error)
+	// ListSources returns distinct source_id values for a project+source combination.
+	// Used to populate the resource selector in the UI (which Lambda fn, which cron job, etc.)
+	ListSources(ctx context.Context, projectID uuid.UUID, source string) ([]string, error)
 }

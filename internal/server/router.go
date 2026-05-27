@@ -213,6 +213,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/workers/{workerID}", logsHandler.GetWorkerLogs)
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/storage", logsHandler.GetStorageLogs)
 			r.Get("/orgs/{orgID}/projects/{projectID}/logs/cron", logsHandler.GetCronLogs)
+			// Source discovery: returns distinct source_ids for a log type
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/{source}/sources", logsHandler.GetLogSources)
 
 			// Cron Jobs (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons", cronHandler.Create)
