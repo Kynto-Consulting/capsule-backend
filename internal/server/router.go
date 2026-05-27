@@ -30,6 +30,7 @@ type Deps struct {
 	APITokenRepo       domain.APITokenRepository
 	WorkerRepo         domain.WorkerRepository
 	CronJobRepo        domain.CronJobRepository
+	ExecLogRepo        domain.ExecutionLogRepository
 	AWSClients         *awsclient.Clients
 	ALBDNSName         string
 	DBSubnetGroup      string
@@ -70,6 +71,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.AWSClients)
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, logger)
+	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -204,6 +206,12 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Delete("/orgs/{orgID}/projects/{projectID}/workers/{workerID}", workerHandler.Delete)
 			r.Post("/orgs/{orgID}/projects/{projectID}/workers/{workerID}/start", workerHandler.Start)
 			r.Post("/orgs/{orgID}/projects/{projectID}/workers/{workerID}/stop", workerHandler.Stop)
+
+			// Logs (scoped to project)
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/runtime", logsHandler.GetRuntimeLogs)
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/lambda", logsHandler.GetLambdaLogs)
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/workers/{workerID}", logsHandler.GetWorkerLogs)
+			r.Get("/orgs/{orgID}/projects/{projectID}/logs/storage", logsHandler.GetStorageLogs)
 
 			// Cron Jobs (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons", cronHandler.Create)

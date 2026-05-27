@@ -140,3 +140,10 @@ type CronJobRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListActive(ctx context.Context) ([]*CronJob, error)
 }
+
+// ExecutionLogRepository handles runtime/lambda/worker/cron execution log persistence.
+type ExecutionLogRepository interface {
+	Append(ctx context.Context, log *ExecutionLog) error
+	ListByProject(ctx context.Context, projectID uuid.UUID, source string, limit int) ([]*ExecutionLog, error)
+	ListBySource(ctx context.Context, projectID uuid.UUID, source, sourceID string, limit int) ([]*ExecutionLog, error)
+}

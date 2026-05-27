@@ -65,6 +65,7 @@ func main() {
 	settingsRepo   := repository.NewSettingsRepository(pool)
 	workerRepo     := repository.NewWorkerRepository(pool)
 	cronJobRepo    := repository.NewCronJobRepository(pool)
+	execLogRepo    := repository.NewExecutionLogRepository(pool)
 	authSvc        := service.NewAuthService(userRepo, settingsRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
 	var cacheStore domain.CacheStore
@@ -105,6 +106,7 @@ func main() {
 		ArtifactsBucket:    cfg.ArtifactsBucket,
 		WorkerRepo:         workerRepo,
 		CronJobRepo:        cronJobRepo,
+		ExecLogRepo:        execLogRepo,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

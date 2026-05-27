@@ -221,6 +221,16 @@ type AuditLog struct {
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
+type ExecutionLog struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Source    string    `json:"source"`
+	SourceID  string    `json:"source_id"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // TokenPair is returned after successful authentication.
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
