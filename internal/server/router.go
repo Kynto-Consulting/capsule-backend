@@ -84,6 +84,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 
 	r.Get("/health", handlers.Health(version))
 
+	// ── Subdomain proxy (*.apps.tumi-ai.com → Next.js rewrite → here) ──────
+	r.Handle("/_proxy/{subdomain}/*", http.HandlerFunc(proxyHandler.ProxyBySlug))
+	r.Handle("/_proxy/{subdomain}", http.HandlerFunc(proxyHandler.ProxyBySlug))
+
+	// ── Legacy path-based proxy ──────────────────────────────────────────────
 	r.Handle("/apps/{orgSlug}/{projectSlug}/*", http.HandlerFunc(proxyHandler.Proxy))
 	r.Handle("/apps/{orgSlug}/{projectSlug}", http.HandlerFunc(proxyHandler.Proxy))
 

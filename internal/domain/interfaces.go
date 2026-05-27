@@ -33,6 +33,7 @@ type ProjectRepository interface {
 	Create(ctx context.Context, project *Project) (*Project, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*Project, error)
 	GetBySlug(ctx context.Context, orgID uuid.UUID, slug string) (*Project, error)
+	GetBySlugGlobal(ctx context.Context, slug string) (*Project, error)
 	ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*Project, int, error)
 	Update(ctx context.Context, project *Project) (*Project, error)
 	Delete(ctx context.Context, id uuid.UUID) error

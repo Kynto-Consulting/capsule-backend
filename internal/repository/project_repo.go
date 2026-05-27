@@ -59,6 +59,15 @@ func (r *ProjectRepository) GetBySlug(ctx context.Context, orgID uuid.UUID, slug
 	return r.scanOne(ctx, q, orgID, slug)
 }
 
+func (r *ProjectRepository) GetBySlugGlobal(ctx context.Context, slug string) (*domain.Project, error) {
+	const q = `
+		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
+		       serverless, replicas, status, labels, created_at, updated_at
+		FROM projects WHERE slug = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC LIMIT 1`
+	return r.scanOne(ctx, q, slug)
+}
+
 func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID, page, perPage int) ([]*domain.Project, int, error) {
 	const q = `
 		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, runtime,
