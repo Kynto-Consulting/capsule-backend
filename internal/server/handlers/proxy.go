@@ -42,6 +42,61 @@ func staticBucketName() string {
 	return "capsule-static-348973061281"
 }
 
+// proxyErrorPage writes a styled HTML error page instead of a raw text error.
+func proxyErrorPage(w http.ResponseWriter, status int, title, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+
+	statusLabel := map[int]string{
+		404: "404 Not Found",
+		502: "502 Bad Gateway",
+		500: "500 Internal Server Error",
+		503: "503 Service Unavailable",
+	}
+	label := statusLabel[status]
+	if label == "" {
+		label = fmt.Sprintf("%d Error", status)
+	}
+
+	const logo = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><path d="M12 3v18M3 12h18" stroke-opacity="0.4"/></svg>`
+
+	page := fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>%s — Capsule</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;color:#ededed;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:460px;width:100%%;text-align:center}
+.logo{display:inline-flex;align-items:center;gap:9px;margin-bottom:36px;text-decoration:none}
+.logo-name{font-size:14px;font-weight:600;color:#ededed;letter-spacing:-.2px}
+.badge{display:inline-flex;align-items:center;gap:6px;background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.22);color:#a78bfa;font-size:11px;font-weight:600;letter-spacing:.5px;padding:4px 12px;border-radius:99px;font-family:ui-monospace,monospace;margin-bottom:22px}
+.dot{width:5px;height:5px;border-radius:50%%;background:currentColor}
+h1{font-size:22px;font-weight:600;letter-spacing:-.4px;margin-bottom:10px;color:#ededed}
+.desc{font-size:14px;color:#666;line-height:1.65;margin-bottom:28px;max-width:340px;margin-left:auto;margin-right:auto}
+.divider{height:1px;background:rgba(255,255,255,0.07);margin:28px 0}
+.hint{font-size:12px;color:#3a3a3a}
+.hint a{color:#7c3aed;text-decoration:none}
+.hint a:hover{color:#a78bfa}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="logo" href="/">%s<span class="logo-name">Capsule</span></a>
+  <div class="badge"><span class="dot"></span>%s</div>
+  <h1>%s</h1>
+  <p class="desc">%s</p>
+  <div class="divider"></div>
+  <p class="hint">Check the <a href="https://app.tumi-ai.com">Capsule dashboard</a> for deployment status.</p>
+</div>
+</body>
+</html>`, title, logo, label, title, detail)
+
+	fmt.Fprint(w, page)
+}
+
 // ProxyBySlug handles /_proxy/{subdomain}/* — called by Next.js rewrites for *.apps.tumi-ai.com.
 // Subdomain patterns:
 //   - {slug}           → HTTP proxy to deployed container
@@ -55,11 +110,11 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 
 	project, err := h.projects.GetBySlugGlobal(r.Context(), projectSlug)
 	if err == domain.ErrNotFound {
-		http.Error(w, fmt.Sprintf("project %q not found", projectSlug), http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", fmt.Sprintf("No project matching %q exists on this platform.", projectSlug))
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		proxyErrorPage(w, http.StatusInternalServerError, "Internal Error", "An unexpected error occurred while looking up the deployment.")
 		return
 	}
 
@@ -79,7 +134,7 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 	case "db":
 		h.handleDBInfo(w, r, project)
 	default:
-		http.Error(w, "unknown resource type", http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Resource Not Found", "The requested resource type is not supported.")
 	}
 }
 
@@ -94,11 +149,11 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 
 	d, err := h.domains.GetByHostname(r.Context(), host)
 	if err == domain.ErrNotFound {
-		http.Error(w, "domain not found", http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Domain Not Configured", "This domain has not been verified or is not pointing to a Capsule deployment.")
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		proxyErrorPage(w, http.StatusInternalServerError, "Internal Error", "An unexpected error occurred while looking up the domain.")
 		return
 	}
 
@@ -111,11 +166,11 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 
 	project, err := h.projects.GetByID(r.Context(), d.ProjectID)
 	if err == domain.ErrNotFound {
-		http.Error(w, "project not found", http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", "No project is linked to this domain.")
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		proxyErrorPage(w, http.StatusInternalServerError, "Internal Error", "An unexpected error occurred while resolving the project for this domain.")
 		return
 	}
 
@@ -137,13 +192,13 @@ func (h *ProxyHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 
 	org, err := h.orgs.GetBySlug(r.Context(), orgSlug)
 	if err != nil {
-		http.Error(w, "org not found", http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Organization Not Found", fmt.Sprintf("No organization matching %q exists.", orgSlug))
 		return
 	}
 
 	project, err := h.projects.GetBySlug(r.Context(), org.ID, projectSlug)
 	if err != nil {
-		http.Error(w, "project not found", http.StatusNotFound)
+		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", fmt.Sprintf("No project matching %q exists in this organization.", projectSlug))
 		return
 	}
 
@@ -202,7 +257,7 @@ func (h *ProxyHandler) proxyToContainer(w http.ResponseWriter, r *http.Request, 
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, fmt.Sprintf("app not running — deploy first: %v", err), http.StatusBadGateway)
+		proxyErrorPage(w, http.StatusBadGateway, "Deployment Unreachable", "The application container is not running. Trigger a new deployment from the Capsule dashboard to start it.")
 	}
 	// Forward original host so the app knows its public URL
 	r.Header.Set("X-Forwarded-Host", r.Host)
@@ -270,7 +325,7 @@ type lambdaHTTPResponse struct {
 
 func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, project *domain.Project, subdomain string) {
 	if h.aws == nil || h.aws.Lambda == nil {
-		http.Error(w, "Lambda client not available", http.StatusServiceUnavailable)
+		proxyErrorPage(w, http.StatusServiceUnavailable, "Service Unavailable", "The Lambda runtime client is not configured on this server.")
 		return
 	}
 
@@ -338,7 +393,7 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 
 	payload, err := json.Marshal(event)
 	if err != nil {
-		http.Error(w, "failed to build lambda event", http.StatusInternalServerError)
+		proxyErrorPage(w, http.StatusInternalServerError, "Internal Error", "Failed to serialize the Lambda invocation payload.")
 		return
 	}
 
@@ -349,7 +404,7 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 	})
 	if err != nil {
 		h.appendLambdaExecLog(project.ID, functionName, r.Method, reqPath, http.StatusBadGateway, time.Since(start))
-		http.Error(w, fmt.Sprintf("lambda invocation failed: %v", err), http.StatusBadGateway)
+		proxyErrorPage(w, http.StatusBadGateway, "Deployment Unreachable", "The Lambda function could not be invoked. Trigger a new deployment from the Capsule dashboard.")
 		return
 	}
 
@@ -438,7 +493,7 @@ func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, p
 
 	req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
 	if err != nil {
-		http.Error(w, "failed to build S3 request", http.StatusInternalServerError)
+		proxyErrorPage(w, http.StatusInternalServerError, "Internal Error", "Failed to construct the request to the static file origin.")
 		return
 	}
 	// Propagate Accept headers (important for content negotiation)
@@ -447,7 +502,7 @@ func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, p
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("S3 fetch failed: %v", err), http.StatusBadGateway)
+		proxyErrorPage(w, http.StatusBadGateway, "Deployment Unreachable", "Could not fetch the static asset from the origin. The deployment may be missing or the storage bucket is unavailable.")
 		return
 	}
 	defer resp.Body.Close()
