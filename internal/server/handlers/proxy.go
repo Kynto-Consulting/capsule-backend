@@ -341,13 +341,34 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
-	// Write headers
-	for k, v := range resp.Headers {
-		w.Header().Set(k, v)
+	// Write headers — prefer multiValueHeaders (superset); skip hop-by-hop headers
+	// that cause parse errors (content-length is computed by the HTTP layer).
+	hopByHop := map[string]bool{
+		"content-length":    true,
+		"transfer-encoding": true,
+		"connection":        true,
+		"keep-alive":        true,
 	}
-	for k, vals := range resp.MultiValueHeaders {
-		for _, v := range vals {
-			w.Header().Add(k, v)
+	// Use multiValueHeaders when present (avoids duplicates from merging both maps)
+	if len(resp.MultiValueHeaders) > 0 {
+		for k, vals := range resp.MultiValueHeaders {
+			if hopByHop[strings.ToLower(k)] {
+				continue
+			}
+			for i, v := range vals {
+				if i == 0 {
+					w.Header().Set(k, v)
+				} else {
+					w.Header().Add(k, v)
+				}
+			}
+		}
+	} else {
+		for k, v := range resp.Headers {
+			if hopByHop[strings.ToLower(k)] {
+				continue
+			}
+			w.Header().Set(k, v)
 		}
 	}
 
