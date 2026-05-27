@@ -3,22 +3,73 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
+	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 type DeploymentHandler struct {
-	deployments domain.DeploymentRepository
-	orgs        domain.OrganizationRepository
-	projects    domain.ProjectRepository
+	deployments    domain.DeploymentRepository
+	orgs           domain.OrganizationRepository
+	projects       domain.ProjectRepository
+	awsClients     *awsclient.Clients
+	artifactsBucket string
 }
 
-func NewDeploymentHandler(deployments domain.DeploymentRepository, orgs domain.OrganizationRepository, projects domain.ProjectRepository) *DeploymentHandler {
-	return &DeploymentHandler{deployments: deployments, orgs: orgs, projects: projects}
+func NewDeploymentHandler(deployments domain.DeploymentRepository, orgs domain.OrganizationRepository, projects domain.ProjectRepository, awsClients *awsclient.Clients, artifactsBucket string) *DeploymentHandler {
+	return &DeploymentHandler{
+		deployments:     deployments,
+		orgs:            orgs,
+		projects:        projects,
+		awsClients:      awsClients,
+		artifactsBucket: artifactsBucket,
+	}
+}
+
+func (h *DeploymentHandler) UploadURL(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	if h.awsClients == nil {
+		respondError(w, http.StatusServiceUnavailable, "AWS_UNAVAILABLE", "AWS clients not configured")
+		return
+	}
+
+	key := "deployments/" + projectID.String() + "/" + uuid.New().String() + ".tar.gz"
+	presignClient := s3.NewPresignClient(h.awsClients.S3)
+	presigned, err := presignClient.PresignPutObject(r.Context(), &s3.PutObjectInput{
+		Bucket: &h.artifactsBucket,
+		Key:    &key,
+	}, s3.WithPresignExpires(15*time.Minute))
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "PRESIGN_ERROR", "failed to generate upload URL")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"upload_url": presigned.URL,
+		"source_key": key,
+	})
 }
 
 func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -46,10 +97,11 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		GitSHA        string `json:"git_sha"`
-		Version       string `json:"version"`
-		BuildStrategy string `json:"build_strategy"`
-		ContainerPort int    `json:"container_port"`
+		GitSHA        string  `json:"git_sha"`
+		Version       string  `json:"version"`
+		BuildStrategy string  `json:"build_strategy"`
+		ContainerPort int     `json:"container_port"`
+		SourceKey     *string `json:"source_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -74,6 +126,7 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ContainerPort: req.ContainerPort,
 		Trigger:       "manual",
 		TriggeredBy:   &uid,
+		SourceKey:     req.SourceKey,
 	})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create deployment")
@@ -200,7 +253,7 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.deployments.UpdateStatus(r.Context(), deploymentID, "cancelled"); err != nil {
+	if err := h.deployments.Cancel(r.Context(), deploymentID); err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to cancel deployment")
 		return
 	}

@@ -31,6 +31,7 @@ type Deps struct {
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
 	SecretKey          string
+	ArtifactsBucket    string
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
@@ -38,7 +39,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	orgHandler        := handlers.NewOrgHandler(deps.OrgRepo)
 	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
 	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
-	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo)
+	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo, deps.AWSClients, deps.ArtifactsBucket)
 	databaseHandler   := handlers.NewDatabaseHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey,
@@ -119,6 +120,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Delete("/orgs/{orgID}/projects/{projectID}/env/{key}", envVarHandler.Delete)
 
 			// Deployments (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/deployments/upload-url", deploymentHandler.UploadURL)
 			r.Post("/orgs/{orgID}/projects/{projectID}/deployments", deploymentHandler.Create)
 			r.Get("/orgs/{orgID}/projects/{projectID}/deployments", deploymentHandler.List)
 			r.Get("/orgs/{orgID}/projects/{projectID}/deployments/{deploymentID}", deploymentHandler.Get)

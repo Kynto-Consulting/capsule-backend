@@ -23,21 +23,21 @@ func NewDeploymentRepository(pool *pgxpool.Pool) *DeploymentRepository {
 func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment) (*domain.Deployment, error) {
 	const q = `
 		INSERT INTO deployments
-		  (project_id, version, git_sha, status, build_strategy, container_port, trigger, triggered_by)
-		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
+		  (project_id, version, git_sha, status, build_strategy, container_port, trigger, triggered_by, source_key)
+		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
 		RETURNING id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		          container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		          started_at, completed_at, created_at`
+		          started_at, completed_at, created_at, source_key`
 
 	var out domain.Deployment
 	var gitSHA, imageTag *string
 	err := r.pool.QueryRow(ctx, q,
-		d.ProjectID, d.Version, d.GitSHA, d.BuildStrategy, d.ContainerPort, d.Trigger, d.TriggeredBy,
+		d.ProjectID, d.Version, d.GitSHA, d.BuildStrategy, d.ContainerPort, d.Trigger, d.TriggeredBy, d.SourceKey,
 	).Scan(
 		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &gitSHA, &out.Status,
 		&imageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
 		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
-		&out.CreatedAt,
+		&out.CreatedAt, &out.SourceKey,
 	)
 	if err != nil {
 		fmt.Printf("DATABASE ERROR IN CREATE DEPLOYMENT: %v\n", err)
@@ -56,7 +56,7 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at
+		       started_at, completed_at, created_at, source_key
 		FROM deployments WHERE id = $1`
 	return r.scanOne(ctx, q, id)
 }
@@ -65,7 +65,7 @@ func (r *DeploymentRepository) ListByProject(ctx context.Context, projectID uuid
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at
+		       started_at, completed_at, created_at, source_key
 		FROM deployments WHERE project_id = $1
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
@@ -151,7 +151,7 @@ func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*do
 		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &gitSHA, &d.Status,
 		&imageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
 		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
-		&d.CreatedAt,
+		&d.CreatedAt, &d.SourceKey,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning deployment: %w", err)
@@ -163,4 +163,12 @@ func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*do
 		d.ImageTag = *imageTag
 	}
 	return &d, nil
+}
+
+func (r *DeploymentRepository) Cancel(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE deployments SET status = 'cancelled', completed_at = now() WHERE id = $1 AND status IN ('queued','building','deploying')`,
+		id,
+	)
+	return err
 }

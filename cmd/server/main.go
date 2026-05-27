@@ -82,6 +82,9 @@ func main() {
 		awsClients = nil
 	}
 
+	worker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, logger)
+	go worker.Run(context.Background())
+
 	srv := server.New(cfg, logger, version, server.Deps{
 		AuthSvc:            authSvc,
 		OrgRepo:            orgRepo,
@@ -97,6 +100,7 @@ func main() {
 		DBSubnetGroup:      cfg.DBSubnetGroup,
 		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
 		SecretKey:          cfg.SecretKey,
+		ArtifactsBucket:    cfg.ArtifactsBucket,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

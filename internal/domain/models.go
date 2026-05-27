@@ -69,6 +69,7 @@ type Deployment struct {
 	StartedAt        *time.Time `json:"started_at,omitempty"`
 	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+	SourceKey        *string    `json:"source_key,omitempty"`
 }
 
 type BuildLog struct {

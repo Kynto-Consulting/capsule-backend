@@ -21,9 +21,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /capsule-server ./cmd/server
 
-FROM scratch AS production
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+FROM alpine:3.20 AS production
+RUN apk add --no-cache ca-certificates tzdata docker-cli
 COPY --from=builder /capsule-server /capsule-server
 EXPOSE 8080
 ENTRYPOINT ["/capsule-server"]
