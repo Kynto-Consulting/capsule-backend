@@ -28,6 +28,7 @@ type AIHandler struct {
 	depsRepo domain.DeploymentRepository
 	aws      *awsclient.Clients
 	logger   *slog.Logger
+	authSvc  domain.AuthService
 }
 
 func NewAIHandler(
@@ -37,6 +38,7 @@ func NewAIHandler(
 	depsRepo domain.DeploymentRepository,
 	awsClients *awsclient.Clients,
 	logger *slog.Logger,
+	authSvc domain.AuthService,
 ) *AIHandler {
 	return &AIHandler{
 		tokens:   tokens,
@@ -45,6 +47,7 @@ func NewAIHandler(
 		depsRepo: depsRepo,
 		aws:      awsClients,
 		logger:   logger,
+		authSvc:  authSvc,
 	}
 }
 
@@ -309,7 +312,16 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 		user = &domain.User{ID: tokenRecord.UserID}
 	} else {
+		// Try session-based auth (JWT) — route is outside auth middleware, so validate manually
 		user = middleware.GetUser(r.Context())
+		if user == nil && h.authSvc != nil {
+			rawToken := strings.TrimPrefix(authHeader, "Bearer ")
+			if rawToken != "" {
+				if validated, err := h.authSvc.ValidateAccessToken(r.Context(), rawToken); err == nil {
+					user = validated
+				}
+			}
+		}
 	}
 
 	if user == nil {

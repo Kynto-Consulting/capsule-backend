@@ -31,6 +31,7 @@ type Deps struct {
 	WorkerRepo         domain.WorkerRepository
 	CronJobRepo        domain.CronJobRepository
 	ExecLogRepo        domain.ExecutionLogRepository
+	EmailLogRepo       domain.EmailLogRepository
 	AWSClients         *awsclient.Clients
 	ALBDNSName         string
 	DBSubnetGroup      string
@@ -60,11 +61,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	)
 	emailHandler := handlers.NewEmailHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
-		deps.AWSClients, deps.SecretKey, logger,
+		deps.EmailLogRepo, deps.AWSClients, deps.SecretKey, logger,
 	)
 	aiHandler := handlers.NewAIHandler(
 		deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo, deps.DeploymentRepo,
-		deps.AWSClients, logger,
+		deps.AWSClients, logger, deps.AuthSvc,
 	)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
@@ -192,6 +193,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/email/status", emailHandler.Status)
 			r.Post("/orgs/{orgID}/projects/{projectID}/email/test", emailHandler.Test)
 			r.Get("/orgs/{orgID}/projects/{projectID}/email/stats", emailHandler.Stats)
+			r.Get("/orgs/{orgID}/projects/{projectID}/email/dns-records", emailHandler.DNSRecords)
+			r.Post("/orgs/{orgID}/projects/{projectID}/email/send", emailHandler.Send)
+			r.Get("/orgs/{orgID}/projects/{projectID}/email/logs", emailHandler.Logs)
+			r.Get("/orgs/{orgID}/projects/{projectID}/email/suppressions", emailHandler.Suppressions)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/email/suppressions/{emailAddr}", emailHandler.DeleteSuppression)
 
 			// Domains (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.Create)

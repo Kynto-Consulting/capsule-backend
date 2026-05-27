@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,29 +24,32 @@ import (
 )
 
 type EmailHandler struct {
-	dbs       domain.DatabaseRepository
-	orgs      domain.OrganizationRepository
-	projects  domain.ProjectRepository
-	aws       *awsclient.Clients
-	secretKey string
-	logger    *slog.Logger
+	dbs          domain.DatabaseRepository
+	orgs         domain.OrganizationRepository
+	projects     domain.ProjectRepository
+	emailLogRepo domain.EmailLogRepository
+	aws          *awsclient.Clients
+	secretKey    string
+	logger       *slog.Logger
 }
 
 func NewEmailHandler(
 	dbs domain.DatabaseRepository,
 	orgs domain.OrganizationRepository,
 	projects domain.ProjectRepository,
+	emailLogRepo domain.EmailLogRepository,
 	awsClients *awsclient.Clients,
 	secretKey string,
 	logger *slog.Logger,
 ) *EmailHandler {
 	return &EmailHandler{
-		dbs:       dbs,
-		orgs:      orgs,
-		projects:  projects,
-		aws:       awsClients,
-		secretKey: secretKey,
-		logger:    logger,
+		dbs:          dbs,
+		orgs:         orgs,
+		projects:     projects,
+		emailLogRepo: emailLogRepo,
+		aws:          awsClients,
+		secretKey:    secretKey,
+		logger:       logger,
 	}
 }
 
@@ -353,6 +358,374 @@ func (h *EmailHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		Quota24H:       quota,
 		SendingEnabled: out.SendingEnabled,
 	})
+}
+
+func (h *EmailHandler) DNSRecords(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	allDBs, err := h.dbs.ListByProject(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list databases")
+		return
+	}
+
+	var emailDB *domain.Database
+	for _, db := range allDBs {
+		if db.Engine == "ses" {
+			emailDB = db
+			break
+		}
+	}
+
+	if emailDB == nil {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "email not configured for this project")
+		return
+	}
+
+	domainName := emailDB.DBName
+
+	type dnsRecord struct {
+		Type   string `json:"type"`
+		Host   string `json:"host"`
+		Value  string `json:"value"`
+		Status string `json:"status"`
+	}
+	type dnsResponse struct {
+		Domain             string      `json:"domain"`
+		Records            []dnsRecord `json:"records"`
+		DKIMStatus         string      `json:"dkim_status"`
+		VerificationStatus string      `json:"verification_status"`
+	}
+
+	if h.aws == nil {
+		// Mock data for local dev
+		resp := dnsResponse{
+			Domain: domainName,
+			Records: []dnsRecord{
+				{Type: "CNAME", Host: "mock1._domainkey." + domainName, Value: "mock1.dkim.amazonses.com", Status: "pending"},
+				{Type: "CNAME", Host: "mock2._domainkey." + domainName, Value: "mock2.dkim.amazonses.com", Status: "pending"},
+				{Type: "CNAME", Host: "mock3._domainkey." + domainName, Value: "mock3.dkim.amazonses.com", Status: "pending"},
+				{Type: "TXT", Host: "_dmarc." + domainName, Value: "v=DMARC1; p=none; rua=mailto:dmarc@" + domainName, Status: "recommended"},
+				{Type: "TXT", Host: domainName, Value: "v=spf1 include:amazonses.com ~all", Status: "recommended"},
+			},
+			DKIMStatus:         "PENDING",
+			VerificationStatus: "PENDING",
+		}
+		respondJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	awsResp, err := h.aws.SES.GetEmailIdentity(r.Context(), &sesv2.GetEmailIdentityInput{
+		EmailIdentity: aws.String(domainName),
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get email identity: "+err.Error())
+		return
+	}
+
+	var records []dnsRecord
+	if awsResp.DkimAttributes != nil {
+		for _, token := range awsResp.DkimAttributes.Tokens {
+			status := "pending"
+			if awsResp.DkimAttributes.Status == sestypes.DkimStatusSuccess {
+				status = "verified"
+			}
+			records = append(records, dnsRecord{
+				Type:   "CNAME",
+				Host:   token + "._domainkey." + domainName,
+				Value:  token + ".dkim.amazonses.com",
+				Status: status,
+			})
+		}
+	}
+	records = append(records,
+		dnsRecord{Type: "TXT", Host: "_dmarc." + domainName, Value: "v=DMARC1; p=none; rua=mailto:dmarc@" + domainName, Status: "recommended"},
+		dnsRecord{Type: "TXT", Host: domainName, Value: "v=spf1 include:amazonses.com ~all", Status: "recommended"},
+	)
+
+	dkimStatus := "PENDING"
+	if awsResp.DkimAttributes != nil {
+		dkimStatus = string(awsResp.DkimAttributes.Status)
+	}
+	verificationStatus := "PENDING"
+	if awsResp.VerifiedForSendingStatus {
+		verificationStatus = "SUCCESS"
+	}
+
+	respondJSON(w, http.StatusOK, dnsResponse{
+		Domain:             domainName,
+		Records:            records,
+		DKIMStatus:         dkimStatus,
+		VerificationStatus: verificationStatus,
+	})
+}
+
+func (h *EmailHandler) Send(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	project, err := h.projects.GetByID(r.Context(), projectID)
+	if err == domain.ErrNotFound || (err == nil && project.OrgID != orgID) {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get project")
+		return
+	}
+
+	var req struct {
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Subject string `json:"subject"`
+		HTML    string `json:"html"`
+		Text    string `json:"text"`
+		ReplyTo string `json:"reply_to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	if req.From == "" || req.To == "" || req.Subject == "" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "from, to, and subject are required")
+		return
+	}
+
+	// Determine domain from from address
+	emailDomain := ""
+	if atIdx := indexOf(req.From, '@'); atIdx >= 0 {
+		emailDomain = req.From[atIdx+1:]
+	}
+
+	messageID := ""
+
+	if h.aws != nil {
+		input := &sesv2.SendEmailInput{
+			FromEmailAddress: aws.String(req.From),
+			Destination: &sestypes.Destination{
+				ToAddresses: []string{req.To},
+			},
+			Content: &sestypes.EmailContent{
+				Simple: &sestypes.Message{
+					Subject: &sestypes.Content{
+						Data: aws.String(req.Subject),
+					},
+					Body: &sestypes.Body{},
+				},
+			},
+		}
+		if req.HTML != "" {
+			input.Content.Simple.Body.Html = &sestypes.Content{Data: aws.String(req.HTML)}
+		}
+		if req.Text != "" {
+			input.Content.Simple.Body.Text = &sestypes.Content{Data: aws.String(req.Text)}
+		}
+		if req.ReplyTo != "" {
+			input.ReplyToAddresses = []string{req.ReplyTo}
+		}
+
+		out, err := h.aws.SES.SendEmail(r.Context(), input)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to send email: "+err.Error())
+			return
+		}
+		if out.MessageId != nil {
+			messageID = *out.MessageId
+		}
+	}
+
+	// Save to email_logs
+	if h.emailLogRepo != nil {
+		logEntry := &domain.EmailLog{
+			ProjectID: projectID,
+			Domain:    emailDomain,
+			FromAddr:  req.From,
+			ToAddr:    req.To,
+			Subject:   req.Subject,
+			Status:    "sent",
+			MessageID: messageID,
+		}
+		if _, err := h.emailLogRepo.Create(r.Context(), logEntry); err != nil {
+			h.logger.Warn("failed to save email log", "error", err)
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message_id": messageID,
+		"status":     "sent",
+	})
+}
+
+func (h *EmailHandler) Logs(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	logs, err := h.emailLogRepo.ListByProject(r.Context(), projectID, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list email logs")
+		return
+	}
+	if logs == nil {
+		logs = []*domain.EmailLog{}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"data": logs})
+}
+
+func (h *EmailHandler) Suppressions(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+	_ = projectID
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	type suppressionEntry struct {
+		Email     string    `json:"email"`
+		Reason    string    `json:"reason"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	if h.aws == nil {
+		respondJSON(w, http.StatusOK, map[string]any{"data": []suppressionEntry{}})
+		return
+	}
+
+	out, err := h.aws.SES.ListSuppressedDestinations(r.Context(), &sesv2.ListSuppressedDestinationsInput{
+		PageSize: aws.Int32(100),
+	})
+	if err != nil {
+		h.logger.Warn("failed to list SES suppressed destinations", "error", err)
+		respondJSON(w, http.StatusOK, map[string]any{"data": []suppressionEntry{}})
+		return
+	}
+
+	entries := make([]suppressionEntry, 0, len(out.SuppressedDestinationSummaries))
+	for _, s := range out.SuppressedDestinationSummaries {
+		email := ""
+		if s.EmailAddress != nil {
+			email = *s.EmailAddress
+		}
+		createdAt := time.Time{}
+		if s.LastUpdateTime != nil {
+			createdAt = *s.LastUpdateTime
+		}
+		entries = append(entries, suppressionEntry{
+			Email:     email,
+			Reason:    string(s.Reason),
+			CreatedAt: createdAt,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"data": entries})
+}
+
+func (h *EmailHandler) DeleteSuppression(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	_, err = uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	emailAddr, err := url.PathUnescape(chi.URLParam(r, "emailAddr"))
+	if err != nil || emailAddr == "" {
+		respondError(w, http.StatusBadRequest, "INVALID_PARAM", "invalid email address")
+		return
+	}
+
+	if h.aws != nil {
+		_, err := h.aws.SES.DeleteSuppressedDestination(r.Context(), &sesv2.DeleteSuppressedDestinationInput{
+			EmailAddress: aws.String(emailAddr),
+		})
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete suppression: "+err.Error())
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// indexOf returns the index of char c in s, or -1 if not found.
+func indexOf(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 func randomString(n int) string {

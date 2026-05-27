@@ -144,6 +144,12 @@ type CronJobRepository interface {
 	ListActive(ctx context.Context) ([]*CronJob, error)
 }
 
+// EmailLogRepository handles email send log persistence.
+type EmailLogRepository interface {
+	Create(ctx context.Context, log *EmailLog) (*EmailLog, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID, limit int) ([]*EmailLog, error)
+}
+
 // ExecutionLogRepository handles runtime/lambda/worker/cron execution log persistence.
 type ExecutionLogRepository interface {
 	Append(ctx context.Context, log *ExecutionLog) error

@@ -235,6 +235,18 @@ type ExecutionLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type EmailLog struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Domain    string    `json:"domain"`
+	FromAddr  string    `json:"from"`
+	ToAddr    string    `json:"to"`
+	Subject   string    `json:"subject"`
+	Status    string    `json:"status"`
+	MessageID string    `json:"message_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // TokenPair is returned after successful authentication.
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
