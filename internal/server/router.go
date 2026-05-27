@@ -86,6 +86,16 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	// Custom domain middleware — intercept requests from non-platform hosts
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Never intercept health checks, API routes, or proxy paths
+			path := r.URL.Path
+			if path == "/health" ||
+				strings.HasPrefix(path, "/api/") ||
+				strings.HasPrefix(path, "/_proxy/") ||
+				strings.HasPrefix(path, "/apps/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			host := r.Host
 			// Strip port
 			if i := strings.LastIndex(host, ":"); i >= 0 {
