@@ -63,6 +63,8 @@ func main() {
 	domainRepo     := repository.NewDomainRepository(pool)
 	apiTokenRepo   := repository.NewAPITokenRepository(pool)
 	settingsRepo   := repository.NewSettingsRepository(pool)
+	workerRepo     := repository.NewWorkerRepository(pool)
+	cronJobRepo    := repository.NewCronJobRepository(pool)
 	authSvc        := service.NewAuthService(userRepo, settingsRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
 	var cacheStore domain.CacheStore
@@ -101,6 +103,8 @@ func main() {
 		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
 		SecretKey:          cfg.SecretKey,
 		ArtifactsBucket:    cfg.ArtifactsBucket,
+		WorkerRepo:         workerRepo,
+		CronJobRepo:        cronJobRepo,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -12,13 +13,22 @@ import (
 )
 
 type ProxyHandler struct {
-	orgs     domain.OrganizationRepository
-	projects domain.ProjectRepository
-	domains  domain.DomainRepository
+	orgs        domain.OrganizationRepository
+	projects    domain.ProjectRepository
+	domains     domain.DomainRepository
+	deployments domain.DeploymentRepository
 }
 
-func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository) *ProxyHandler {
-	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains}
+func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository, deployments domain.DeploymentRepository) *ProxyHandler {
+	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains, deployments: deployments}
+}
+
+// staticBucketName returns the S3 static bucket name, configurable via CAPSULE_STATIC_BUCKET.
+func staticBucketName() string {
+	if b := os.Getenv("CAPSULE_STATIC_BUCKET"); b != "" {
+		return b
+	}
+	return "capsule-static-348973061281"
 }
 
 // ProxyBySlug handles /_proxy/{subdomain}/* — called by Next.js rewrites for *.apps.tumi-ai.com.
@@ -45,9 +55,8 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 	switch resourceType {
 	case "app":
 		if project.DeployType == "static" {
-			staticBucket := "capsule-static-348973061281" // TODO: make configurable
 			websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-				staticBucket, project.ID.String()+"/",
+				staticBucketName(), project.ID.String()+"/",
 				strings.TrimPrefix(r.URL.Path, "/_proxy/"+subdomain))
 			http.Redirect(w, r, websiteURL, http.StatusFound)
 			return
@@ -99,13 +108,12 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if project.DeployType == "static" {
-		staticBucket := "capsule-static-348973061281" // TODO: make configurable
 		path := r.URL.Path
 		if path == "" {
 			path = "/"
 		}
 		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-			staticBucket, project.ID.String(), path)
+			staticBucketName(), project.ID.String(), path)
 		http.Redirect(w, r, websiteURL, http.StatusFound)
 		return
 	}
@@ -136,9 +144,8 @@ func (h *ProxyHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if project.DeployType == "static" {
-		staticBucket := "capsule-static-348973061281" // TODO: make configurable
 		websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-			staticBucket, project.ID.String(), r.URL.Path)
+			staticBucketName(), project.ID.String(), r.URL.Path)
 		http.Redirect(w, r, websiteURL, http.StatusFound)
 		return
 	}
@@ -162,6 +169,42 @@ func containerName(project *domain.Project) string {
 }
 
 func (h *ProxyHandler) proxyToContainer(w http.ResponseWriter, r *http.Request, project *domain.Project, subdomain string) {
+	// Lambda: proxy to Function URL
+	if project.DeployType == "lambda" {
+		dep, err := h.deployments.GetLatestSuccessfulByProject(r.Context(), project.ID)
+		if err != nil || dep.FunctionURL == nil || *dep.FunctionURL == "" {
+			http.Error(w, "lambda function not deployed or URL unavailable", http.StatusBadGateway)
+			return
+		}
+		target, _ := url.Parse(*dep.FunctionURL)
+		// Strip proxy prefix from path
+		prefix := "/_proxy/" + subdomain
+		path := r.URL.Path
+		if strings.HasPrefix(path, prefix) {
+			path = strings.TrimPrefix(path, prefix)
+			if path == "" {
+				path = "/"
+			}
+		}
+		// Build proxied URL
+		target.Path = path
+		target.RawQuery = r.URL.RawQuery
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		// Fix host header — Lambda Function URL requires correct Host
+		origDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			origDirector(req)
+			req.Host = target.Host
+		}
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, fmt.Sprintf("lambda invocation failed: %v", err), http.StatusBadGateway)
+		}
+		r.Header.Set("X-Forwarded-Host", r.Host)
+		proxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Docker container proxy
 	name := containerName(project)
 	target, _ := url.Parse(fmt.Sprintf("http://%s:3000", name))
 

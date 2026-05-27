@@ -73,6 +73,7 @@ type Deployment struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	SourceKey        *string    `json:"source_key,omitempty"`
 	HostPort         *int       `json:"host_port,omitempty"`
+	FunctionURL      *string    `json:"function_url,omitempty"`
 }
 
 type BuildLog struct {

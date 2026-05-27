@@ -28,6 +28,8 @@ type Deps struct {
 	DatabaseRepo       domain.DatabaseRepository
 	DomainRepo         domain.DomainRepository
 	APITokenRepo       domain.APITokenRepository
+	WorkerRepo         domain.WorkerRepository
+	CronJobRepo        domain.CronJobRepository
 	AWSClients         *awsclient.Clients
 	ALBDNSName         string
 	DBSubnetGroup      string
@@ -65,7 +67,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
-	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo)
+	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo)
+	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger)
+	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, logger)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -192,6 +196,21 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.List)
 			r.Post("/orgs/{orgID}/projects/{projectID}/domains/{domainID}/verify", domainHandler.Verify)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/domains/{domainID}", domainHandler.Delete)
+
+			// Workers (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/workers", workerHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/workers", workerHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}/workers/{workerID}", workerHandler.Get)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/workers/{workerID}", workerHandler.Delete)
+			r.Post("/orgs/{orgID}/projects/{projectID}/workers/{workerID}/start", workerHandler.Start)
+			r.Post("/orgs/{orgID}/projects/{projectID}/workers/{workerID}/stop", workerHandler.Stop)
+
+			// Cron Jobs (scoped to project)
+			r.Post("/orgs/{orgID}/projects/{projectID}/crons", cronHandler.Create)
+			r.Get("/orgs/{orgID}/projects/{projectID}/crons", cronHandler.List)
+			r.Get("/orgs/{orgID}/projects/{projectID}/crons/{cronID}", cronHandler.Get)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/crons/{cronID}", cronHandler.Delete)
+			r.Post("/orgs/{orgID}/projects/{projectID}/crons/{cronID}/trigger", cronHandler.Trigger)
 
 			// Bedrock AI Utility Keys and Helpers
 			r.Post("/ai/keys", aiHandler.CreateKey)

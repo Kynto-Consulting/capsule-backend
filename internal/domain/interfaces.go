@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -49,6 +50,8 @@ type DeploymentRepository interface {
 	GetLogs(ctx context.Context, deploymentID uuid.UUID) ([]*BuildLog, error)
 	Cancel(ctx context.Context, id uuid.UUID) error
 	UpdateHostPort(ctx context.Context, id uuid.UUID, hostPort int) error
+	UpdateFunctionURL(ctx context.Context, id uuid.UUID, functionURL string) error
+	GetLatestSuccessfulByProject(ctx context.Context, projectID uuid.UUID) (*Deployment, error)
 }
 
 // EnvVarRepository handles environment variable persistence.
@@ -116,4 +119,24 @@ type CacheStore interface {
 type SettingsRepository interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key, value string) error
+}
+
+// WorkerRepository handles worker process persistence.
+type WorkerRepository interface {
+	Create(ctx context.Context, w *Worker) (*Worker, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*Worker, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Worker, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status, containerID string) error
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// CronJobRepository handles cron job persistence.
+type CronJobRepository interface {
+	Create(ctx context.Context, c *CronJob) (*CronJob, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*CronJob, error)
+	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*CronJob, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
+	UpdateLastRun(ctx context.Context, id uuid.UUID, runStatus string, nextRunAt *time.Time) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	ListActive(ctx context.Context) ([]*CronJob, error)
 }

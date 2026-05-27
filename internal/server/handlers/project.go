@@ -182,6 +182,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		RepoURL       *string `json:"repo_url"`
 		Branch        *string `json:"branch"`
 		BuildStrategy *string `json:"build_strategy"`
+		DeployType    *string `json:"deploy_type"`
 		Runtime       *string `json:"runtime"`
 		Serverless    *bool   `json:"serverless"`
 		Replicas      *int    `json:"replicas"`
@@ -202,6 +203,9 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BuildStrategy != nil {
 		project.BuildStrategy = *req.BuildStrategy
+	}
+	if req.DeployType != nil {
+		project.DeployType = *req.DeployType
 	}
 	if req.Runtime != nil {
 		project.Runtime = *req.Runtime

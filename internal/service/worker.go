@@ -368,6 +368,10 @@ func (w *DeployWorker) runLambdaDeploy(ctx context.Context, id, projectID uuid.U
 
 	w.appendLog(ctx, id, fmt.Sprintf("Lambda deployed. Function URL: %s", functionURL))
 
+	if err := w.deployments.UpdateFunctionURL(ctx, id, functionURL); err != nil {
+		w.logger.Warn("deploy worker: failed to store function url", "id", id, "error", err)
+	}
+
 	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {
 		w.logger.Error("deploy worker: failed to set success status", "id", id, "error", err)
 	}

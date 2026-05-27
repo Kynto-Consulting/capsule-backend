@@ -27,7 +27,7 @@ func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment)
 		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
 		RETURNING id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		          container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		          started_at, completed_at, created_at, source_key, host_port`
+		          started_at, completed_at, created_at, source_key, host_port, function_url`
 
 	var out domain.Deployment
 	var gitSHA, imageTag *string
@@ -37,7 +37,7 @@ func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment)
 		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &gitSHA, &out.Status,
 		&imageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
 		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
-		&out.CreatedAt, &out.SourceKey, &out.HostPort,
+		&out.CreatedAt, &out.SourceKey, &out.HostPort, &out.FunctionURL,
 	)
 	if err != nil {
 		fmt.Printf("DATABASE ERROR IN CREATE DEPLOYMENT: %v\n", err)
@@ -56,7 +56,7 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at, source_key, host_port
+		       started_at, completed_at, created_at, source_key, host_port, function_url
 		FROM deployments WHERE id = $1`
 	return r.scanOne(ctx, q, id)
 }
@@ -65,7 +65,7 @@ func (r *DeploymentRepository) ListByProject(ctx context.Context, projectID uuid
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at, source_key, host_port
+		       started_at, completed_at, created_at, source_key, host_port, function_url
 		FROM deployments WHERE project_id = $1
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
@@ -151,7 +151,7 @@ func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*do
 		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &gitSHA, &d.Status,
 		&imageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
 		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
-		&d.CreatedAt, &d.SourceKey, &d.HostPort,
+		&d.CreatedAt, &d.SourceKey, &d.HostPort, &d.FunctionURL,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning deployment: %w", err)
@@ -171,6 +171,23 @@ func (r *DeploymentRepository) UpdateHostPort(ctx context.Context, id uuid.UUID,
 		hostPort, id,
 	)
 	return err
+}
+
+func (r *DeploymentRepository) UpdateFunctionURL(ctx context.Context, id uuid.UUID, functionURL string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE deployments SET function_url = $1 WHERE id = $2`,
+		functionURL, id)
+	return err
+}
+
+func (r *DeploymentRepository) GetLatestSuccessfulByProject(ctx context.Context, projectID uuid.UUID) (*domain.Deployment, error) {
+	const q = `SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
+	                  container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
+	                  started_at, completed_at, created_at, source_key, host_port, function_url
+	           FROM deployments
+	           WHERE project_id = $1 AND status = 'success'
+	           ORDER BY created_at DESC LIMIT 1`
+	return r.scanOne(ctx, q, projectID)
 }
 
 func (r *DeploymentRepository) Cancel(ctx context.Context, id uuid.UUID) error {
