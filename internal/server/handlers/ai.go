@@ -79,6 +79,33 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 
 	models := []Model{
 		{
+			ID: "nova-pro", Name: "Amazon Nova Pro", Provider: "Amazon",
+			BedrockID: "amazon.nova-pro-v1:0",
+			ContextWindow: 300000, MaxOutput: 5120,
+			Description: "Amazon's most capable multimodal model. Handles complex text, images, and video with high accuracy. No approval required.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.0008, OutputPer1KTokens: 0.0032},
+			Tags:         []string{"amazon", "multimodal", "available"},
+		},
+		{
+			ID: "nova-lite", Name: "Amazon Nova Lite", Provider: "Amazon",
+			BedrockID: "amazon.nova-lite-v1:0",
+			ContextWindow: 300000, MaxOutput: 5120,
+			Description: "Fast and cost-effective multimodal model. Great for summarisation, Q&A, and light reasoning tasks.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00006, OutputPer1KTokens: 0.00024},
+			Tags:         []string{"amazon", "fast", "cheap", "available"},
+		},
+		{
+			ID: "nova-micro", Name: "Amazon Nova Micro", Provider: "Amazon",
+			BedrockID: "amazon.nova-micro-v1:0",
+			ContextWindow: 128000, MaxOutput: 5120,
+			Description: "Smallest and fastest Nova model. Optimised for text tasks at ultra-low cost.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.000035, OutputPer1KTokens: 0.00014},
+			Tags:         []string{"amazon", "ultra-fast", "cheapest", "available"},
+		},
+		{
 			ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Provider: "Anthropic",
 			BedrockID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 			ContextWindow: 200000, MaxOutput: 8192,
@@ -348,57 +375,75 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Map models — use cross-region inference profile IDs (us.* prefix required for on-demand)
-	awsModelID := "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-	switch req.Model {
-	case "claude-haiku-4.5":
-		awsModelID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-	case "claude-opus-4.5":
-		awsModelID = "us.anthropic.claude-opus-4-5-20251101-v1:0"
-	case "llama3-3-70b":
-		awsModelID = "us.meta.llama3-3-70b-instruct-v1:0"
-	case "llama3-2-90b":
-		awsModelID = "us.meta.llama3-2-90b-instruct-v1:0"
-	case "deepseek-r1":
-		awsModelID = "us.deepseek.r1-v1:0"
+	// Map model IDs — Nova models available without use-case form; Claude requires Anthropic approval
+	type modelDef struct {
+		bedrockID string
+		isNova    bool
 	}
+	modelMap := map[string]modelDef{
+		"nova-pro":       {"amazon.nova-pro-v1:0", true},
+		"nova-lite":      {"amazon.nova-lite-v1:0", true},
+		"nova-micro":     {"amazon.nova-micro-v1:0", true},
+		"claude-haiku-4.5":  {"us.anthropic.claude-haiku-4-5-20251001-v1:0", false},
+		"claude-sonnet-4.5": {"us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		"claude-opus-4.5":   {"us.anthropic.claude-opus-4-5-20251101-v1:0", false},
+		"llama3-3-70b":      {"us.meta.llama3-3-70b-instruct-v1:0", false},
+		"llama3-2-90b":      {"us.meta.llama3-2-90b-instruct-v1:0", false},
+		"deepseek-r1":       {"us.deepseek.r1-v1:0", false},
+	}
+	selected, ok := modelMap[req.Model]
+	if !ok {
+		selected = modelDef{"amazon.nova-lite-v1:0", true}
+	}
+	awsModelID := selected.bedrockID
 
-	// Build Anthropic messages payload
+	// Build payload — Nova uses a different schema from Anthropic
 	type bedrockMsg struct {
-		Role    string `json:"role"`
+		Role    string           `json:"role"`
 		Content []map[string]any `json:"content"`
 	}
 
 	var systemPrompt string
 	var bedrockMessages []bedrockMsg
 
+	var novaMessages []bedrockMsg
 	for _, m := range req.Messages {
 		if m.Role == "system" {
 			systemPrompt = m.Content
 			continue
 		}
-		
+		// Anthropic format: {"type":"text","text":"..."}  Nova format: {"text":"..."}
 		bedrockMessages = append(bedrockMessages, bedrockMsg{
-			Role: m.Role,
-			Content: []map[string]any{
-				{
-					"type": "text",
-					"text": m.Content,
-				},
-			},
+			Role:    m.Role,
+			Content: []map[string]any{{"type": "text", "text": m.Content}},
+		})
+		novaMessages = append(novaMessages, bedrockMsg{
+			Role:    m.Role,
+			Content: []map[string]any{{"text": m.Content}},
 		})
 	}
 
-	bedrockPayload := map[string]any{
-		"anthropic_version": "bedrock-2023-05-31",
-		"max_tokens":        2000,
-		"messages":          bedrockMessages,
+	var payloadBytes []byte
+	if selected.isNova {
+		novaPayload := map[string]any{
+			"messages":        novaMessages,
+			"inferenceConfig": map[string]any{"maxTokens": 2000},
+		}
+		if systemPrompt != "" {
+			novaPayload["system"] = []map[string]any{{"text": systemPrompt}}
+		}
+		payloadBytes, _ = json.Marshal(novaPayload)
+	} else {
+		anthropicPayload := map[string]any{
+			"anthropic_version": "bedrock-2023-05-31",
+			"max_tokens":        2000,
+			"messages":          bedrockMessages,
+		}
+		if systemPrompt != "" {
+			anthropicPayload["system"] = systemPrompt
+		}
+		payloadBytes, _ = json.Marshal(anthropicPayload)
 	}
-	if systemPrompt != "" {
-		bedrockPayload["system"] = systemPrompt
-	}
-
-	payloadBytes, _ := json.Marshal(bedrockPayload)
 
 	var aiResponseText string
 
@@ -414,18 +459,31 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var bedrockResponse struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		}
-		if err := json.Unmarshal(output.Body, &bedrockResponse); err == nil && len(bedrockResponse.Content) > 0 {
-			aiResponseText = bedrockResponse.Content[0].Text
+		if selected.isNova {
+			var novaResp struct {
+				Output struct {
+					Message struct {
+						Content []struct{ Text string `json:"text"` } `json:"content"`
+					} `json:"message"`
+				} `json:"output"`
+			}
+			if err := json.Unmarshal(output.Body, &novaResp); err == nil &&
+				len(novaResp.Output.Message.Content) > 0 {
+				aiResponseText = novaResp.Output.Message.Content[0].Text
+			}
 		} else {
-			aiResponseText = "Received empty response from Claude Bedrock client."
+			var anthropicResp struct {
+				Content []struct{ Text string `json:"text"` } `json:"content"`
+			}
+			if err := json.Unmarshal(output.Body, &anthropicResp); err == nil &&
+				len(anthropicResp.Content) > 0 {
+				aiResponseText = anthropicResp.Content[0].Text
+			}
+		}
+		if aiResponseText == "" {
+			aiResponseText = "Received empty response from model."
 		}
 	} else {
-		// Mock responses for local dev when Bedrock credentials aren't loaded
 		aiResponseText = getMockAIResponse(req.Messages[len(req.Messages)-1].Content)
 	}
 
