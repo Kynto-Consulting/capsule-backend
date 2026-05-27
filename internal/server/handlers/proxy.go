@@ -55,9 +55,12 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 	switch resourceType {
 	case "app":
 		if project.DeployType == "static" {
+			subPath := strings.TrimPrefix(r.URL.Path, "/_proxy/"+subdomain)
+			if subPath == "" || subPath == "/" {
+				subPath = "/index.html"
+			}
 			websiteURL := fmt.Sprintf("http://%s.s3-website-us-east-1.amazonaws.com/%s%s",
-				staticBucketName(), project.ID.String()+"/",
-				strings.TrimPrefix(r.URL.Path, "/_proxy/"+subdomain))
+				staticBucketName(), project.ID.String(), subPath)
 			http.Redirect(w, r, websiteURL, http.StatusFound)
 			return
 		}
