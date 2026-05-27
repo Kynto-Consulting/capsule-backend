@@ -114,7 +114,11 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.ContainerPort = 8080
 	}
 	if req.BuildStrategy == "" {
-		req.BuildStrategy = project.BuildStrategy
+		if project.DeployType != "" {
+			req.BuildStrategy = project.DeployType
+		} else {
+			req.BuildStrategy = project.BuildStrategy
+		}
 	}
 
 	uid := user.ID
