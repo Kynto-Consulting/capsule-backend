@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
 type BillingHandler struct {
@@ -18,7 +19,8 @@ func NewBillingHandler(dbs domain.DatabaseRepository) *BillingHandler {
 
 func (h *BillingHandler) GetBillingSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	projects, rdsDbs, s3Buckets, domains, err := h.dbs.GetGlobalStats(ctx)
+	user := middleware.GetUser(ctx)
+	projects, rdsDbs, s3Buckets, domains, err := h.dbs.GetUserStats(ctx, user.ID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to calculate global stats: "+err.Error())
 		return

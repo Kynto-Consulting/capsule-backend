@@ -194,16 +194,20 @@ type CronJob struct {
 }
 
 type APIToken struct {
-	ID         uuid.UUID  `json:"id"`
-	UserID     uuid.UUID  `json:"user_id"`
-	Name       string     `json:"name"`
-	TokenHash  string     `json:"-"`
-	Prefix     string     `json:"prefix"`
-	Scopes     string     `json:"scopes"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	ID              uuid.UUID  `json:"id"`
+	UserID          uuid.UUID  `json:"user_id"`
+	Name            string     `json:"name"`
+	TokenHash       string     `json:"-"`
+	Prefix          string     `json:"prefix"`
+	Scopes          string     `json:"scopes"`
+	RateLimitRPM    int        `json:"rate_limit_rpm"`
+	IPAllowlist     string     `json:"ip_allowlist"`
+	RequestCount    int64      `json:"request_count"`
+	LastCountReset  time.Time  `json:"last_count_reset"`
+	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
 }
 
 type AuditLog struct {

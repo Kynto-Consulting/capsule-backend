@@ -20,36 +20,37 @@ func NewAPITokenRepository(pool *pgxpool.Pool) *APITokenRepository {
 	return &APITokenRepository{pool: pool}
 }
 
+const tokenCols = `id, user_id, name, token_hash, prefix, scopes,
+	rate_limit_rpm, ip_allowlist, request_count, last_count_reset,
+	last_used_at, expires_at, created_at, revoked_at`
+
+func scanToken(row interface{ Scan(...any) error }, t *domain.APIToken) error {
+	return row.Scan(
+		&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Prefix, &t.Scopes,
+		&t.RateLimitRPM, &t.IPAllowlist, &t.RequestCount, &t.LastCountReset,
+		&t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt, &t.RevokedAt,
+	)
+}
+
 func (r *APITokenRepository) Create(ctx context.Context, token *domain.APIToken) (*domain.APIToken, error) {
 	const q = `
 		INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, user_id, name, token_hash, prefix, scopes, last_used_at, expires_at, created_at, revoked_at`
+		RETURNING ` + tokenCols
 
 	var out domain.APIToken
-	err := r.pool.QueryRow(ctx, q,
+	if err := scanToken(r.pool.QueryRow(ctx, q,
 		token.UserID, token.Name, token.TokenHash, token.Prefix, token.Scopes, token.ExpiresAt,
-	).Scan(
-		&out.ID, &out.UserID, &out.Name, &out.TokenHash, &out.Prefix, &out.Scopes,
-		&out.LastUsedAt, &out.ExpiresAt, &out.CreatedAt, &out.RevokedAt,
-	)
-	if err != nil {
+	), &out); err != nil {
 		return nil, fmt.Errorf("creating api token: %w", err)
 	}
 	return &out, nil
 }
 
 func (r *APITokenRepository) GetByHash(ctx context.Context, hash string) (*domain.APIToken, error) {
-	const q = `
-		SELECT id, user_id, name, token_hash, prefix, scopes, last_used_at, expires_at, created_at, revoked_at
-		FROM api_tokens
-		WHERE token_hash = $1 AND revoked_at IS NULL`
-
+	q := `SELECT ` + tokenCols + ` FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL`
 	var out domain.APIToken
-	err := r.pool.QueryRow(ctx, q, hash).Scan(
-		&out.ID, &out.UserID, &out.Name, &out.TokenHash, &out.Prefix, &out.Scopes,
-		&out.LastUsedAt, &out.ExpiresAt, &out.CreatedAt, &out.RevokedAt,
-	)
+	err := scanToken(r.pool.QueryRow(ctx, q, hash), &out)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -60,12 +61,7 @@ func (r *APITokenRepository) GetByHash(ctx context.Context, hash string) (*domai
 }
 
 func (r *APITokenRepository) ListByUser(ctx context.Context, userID uuid.UUID) ([]*domain.APIToken, error) {
-	const q = `
-		SELECT id, user_id, name, token_hash, prefix, scopes, last_used_at, expires_at, created_at, revoked_at
-		FROM api_tokens
-		WHERE user_id = $1 AND revoked_at IS NULL
-		ORDER BY created_at DESC`
-
+	q := `SELECT ` + tokenCols + ` FROM api_tokens WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC`
 	rows, err := r.pool.Query(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("listing api tokens: %w", err)
@@ -75,11 +71,7 @@ func (r *APITokenRepository) ListByUser(ctx context.Context, userID uuid.UUID) (
 	var out []*domain.APIToken
 	for rows.Next() {
 		var token domain.APIToken
-		err := rows.Scan(
-			&token.ID, &token.UserID, &token.Name, &token.TokenHash, &token.Prefix, &token.Scopes,
-			&token.LastUsedAt, &token.ExpiresAt, &token.CreatedAt, &token.RevokedAt,
-		)
-		if err != nil {
+		if err := scanToken(rows, &token); err != nil {
 			return nil, fmt.Errorf("scanning api token: %w", err)
 		}
 		out = append(out, &token)
@@ -87,13 +79,25 @@ func (r *APITokenRepository) ListByUser(ctx context.Context, userID uuid.UUID) (
 	return out, nil
 }
 
-func (r *APITokenRepository) Revoke(ctx context.Context, id uuid.UUID) error {
-	const q = `
-		UPDATE api_tokens
-		SET revoked_at = now()
-		WHERE id = $1 AND revoked_at IS NULL`
+func (r *APITokenRepository) Update(ctx context.Context, id uuid.UUID, rateLimitRPM int, ipAllowlist string) (*domain.APIToken, error) {
+	q := `UPDATE api_tokens SET rate_limit_rpm=$2, ip_allowlist=$3 WHERE id=$1 AND revoked_at IS NULL RETURNING ` + tokenCols
+	var out domain.APIToken
+	if err := scanToken(r.pool.QueryRow(ctx, q, id, rateLimitRPM, ipAllowlist), &out); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("updating api token: %w", err)
+	}
+	return &out, nil
+}
 
-	tag, err := r.pool.Exec(ctx, q, id)
+func (r *APITokenRepository) IncrementUsage(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE api_tokens SET request_count = request_count+1, last_used_at=now() WHERE id=$1`, id)
+	return err
+}
+
+func (r *APITokenRepository) Revoke(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, id)
 	if err != nil {
 		return fmt.Errorf("revoking api token: %w", err)
 	}
@@ -104,17 +108,6 @@ func (r *APITokenRepository) Revoke(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *APITokenRepository) TouchLastUsed(ctx context.Context, id uuid.UUID) error {
-	const q = `
-		UPDATE api_tokens
-		SET last_used_at = now()
-		WHERE id = $1`
-
-	tag, err := r.pool.Exec(ctx, q, id)
-	if err != nil {
-		return fmt.Errorf("touching api token last used: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	_, err := r.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, id)
+	return err
 }

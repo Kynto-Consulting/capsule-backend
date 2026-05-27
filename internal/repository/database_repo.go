@@ -159,3 +159,20 @@ func (r *DatabaseRepository) GetGlobalStats(ctx context.Context) (projects int, 
 	}
 	return projects, rdsDatabases, s3Buckets, domains, nil
 }
+
+func (r *DatabaseRepository) GetUserStats(ctx context.Context, userID uuid.UUID) (projects int, rdsDatabases int, s3Buckets int, domains int, err error) {
+	const q = `
+		WITH user_orgs AS (
+			SELECT org_id FROM org_members WHERE user_id = $1
+		),
+		user_projects AS (
+			SELECT id FROM projects WHERE org_id IN (SELECT org_id FROM user_orgs) AND deleted_at IS NULL
+		)
+		SELECT
+			(SELECT COUNT(*) FROM user_projects),
+			(SELECT COUNT(*) FROM databases WHERE project_id IN (SELECT id FROM user_projects) AND engine != 's3' AND deleted_at IS NULL),
+			(SELECT COUNT(*) FROM databases WHERE project_id IN (SELECT id FROM user_projects) AND engine = 's3' AND deleted_at IS NULL),
+			(SELECT COUNT(*) FROM domains WHERE project_id IN (SELECT id FROM user_projects))`
+	err = r.pool.QueryRow(ctx, q, userID).Scan(&projects, &rdsDatabases, &s3Buckets, &domains)
+	return
+}

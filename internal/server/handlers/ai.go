@@ -48,6 +48,128 @@ func NewAIHandler(
 	}
 }
 
+// Model catalog — static definition of available Bedrock models
+func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
+	type ModelCapabilities struct {
+		TextGeneration  bool `json:"text_generation"`
+		CodeGeneration  bool `json:"code_generation"`
+		VisionAnalysis  bool `json:"vision_analysis"`
+		FunctionCalling bool `json:"function_calling"`
+		Streaming       bool `json:"streaming"`
+	}
+	type ModelPricing struct {
+		InputPer1KTokens  float64 `json:"input_per_1k_tokens"`
+		OutputPer1KTokens float64 `json:"output_per_1k_tokens"`
+	}
+	type Model struct {
+		ID            string            `json:"id"`
+		Name          string            `json:"name"`
+		Provider      string            `json:"provider"`
+		BedrockID     string            `json:"bedrock_id"`
+		ContextWindow int               `json:"context_window"`
+		MaxOutput     int               `json:"max_output"`
+		Description   string            `json:"description"`
+		Capabilities  ModelCapabilities `json:"capabilities"`
+		Pricing       ModelPricing      `json:"pricing"`
+		Tags          []string          `json:"tags"`
+	}
+
+	models := []Model{
+		{
+			ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Provider: "Anthropic",
+			BedrockID: "anthropic.claude-3-5-haiku-20241022-v1:0",
+			ContextWindow: 200000, MaxOutput: 8192,
+			Description: "Fastest and most compact Claude model. Ideal for classification, extraction, and simple Q&A at high throughput.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, FunctionCalling: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00025, OutputPer1KTokens: 0.00125},
+			Tags:         []string{"fast", "cheap", "classification"},
+		},
+		{
+			ID: "claude-sonnet-4", Name: "Claude Sonnet 4", Provider: "Anthropic",
+			BedrockID: "anthropic.claude-sonnet-4-5",
+			ContextWindow: 200000, MaxOutput: 16000,
+			Description: "Best balance of intelligence and speed. Recommended for most production workloads including reasoning, coding, and analysis.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+			Tags:         []string{"balanced", "vision", "recommended"},
+		},
+		{
+			ID: "claude-opus-4", Name: "Claude Opus 4", Provider: "Anthropic",
+			BedrockID: "anthropic.claude-opus-4-5",
+			ContextWindow: 200000, MaxOutput: 32000,
+			Description: "Most powerful Claude model. Best for complex reasoning, research synthesis, and tasks requiring deep analysis.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.015, OutputPer1KTokens: 0.075},
+			Tags:         []string{"powerful", "complex-reasoning", "research"},
+		},
+		{
+			ID: "titan-text-express", Name: "Amazon Titan Text Express", Provider: "Amazon",
+			BedrockID: "amazon.titan-text-express-v1",
+			ContextWindow: 8192, MaxOutput: 8192,
+			Description: "Amazon's general-purpose text model. Cost-effective for summarisation, paraphrase, and open-ended generation.",
+			Capabilities: ModelCapabilities{TextGeneration: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.0002, OutputPer1KTokens: 0.0006},
+			Tags:         []string{"amazon", "budget"},
+		},
+		{
+			ID: "llama3-70b", Name: "Meta Llama 3 70B Instruct", Provider: "Meta",
+			BedrockID: "meta.llama3-70b-instruct-v1:0",
+			ContextWindow: 128000, MaxOutput: 8192,
+			Description: "Meta's flagship open model. Strong performance on instruction-following, coding assistance, and multilingual tasks.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00265, OutputPer1KTokens: 0.0035},
+			Tags:         []string{"open-source", "multilingual"},
+		},
+		{
+			ID: "mistral-7b", Name: "Mistral 7B Instruct", Provider: "Mistral AI",
+			BedrockID: "mistral.mistral-7b-instruct-v0:2",
+			ContextWindow: 32768, MaxOutput: 8192,
+			Description: "Efficient 7B model with strong reasoning relative to size. Good for low-latency workloads with moderate complexity.",
+			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
+			Pricing:      ModelPricing{InputPer1KTokens: 0.00015, OutputPer1KTokens: 0.0002},
+			Tags:         []string{"efficient", "low-latency"},
+		},
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"data": models})
+}
+
+// UpdateKey updates rate limit and IP allowlist for an API key
+func (h *AIHandler) UpdateKey(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing authenticated user")
+		return
+	}
+
+	keyID, err := uuid.Parse(chi.URLParam(r, "keyID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid key id")
+		return
+	}
+
+	var req struct {
+		RateLimitRPM int    `json:"rate_limit_rpm"`
+		IPAllowlist  string `json:"ip_allowlist"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+
+	updated, err := h.tokens.Update(r.Context(), keyID, req.RateLimitRPM, req.IPAllowlist)
+	if err == domain.ErrNotFound {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "key not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update key")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, updated)
+}
+
 // Keys management
 func (h *AIHandler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
@@ -147,19 +269,45 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(authHeader, "Bearer csk_live_") {
 		plainToken := strings.TrimPrefix(authHeader, "Bearer ")
 		hashed := hashToken(plainToken)
-		
+
 		tokenRecord, err := h.tokens.GetByHash(r.Context(), hashed)
 		if err != nil {
 			respondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid API token")
 			return
 		}
-		
-		_ = h.tokens.TouchLastUsed(r.Context(), tokenRecord.ID)
-		
-		// Map a mock user based on token record
-		user = &domain.User{
-			ID: tokenRecord.UserID,
+
+		// Enforce IP allowlist
+		if tokenRecord.IPAllowlist != "" {
+			clientIP := r.Header.Get("X-Forwarded-For")
+			if clientIP == "" {
+				clientIP = r.RemoteAddr
+			}
+			if idx := strings.LastIndex(clientIP, ":"); idx != -1 {
+				clientIP = clientIP[:idx]
+			}
+			clientIP = strings.TrimSpace(strings.Split(clientIP, ",")[0])
+			allowed := false
+			for _, ip := range strings.Split(tokenRecord.IPAllowlist, ",") {
+				if strings.TrimSpace(ip) == clientIP {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				respondError(w, http.StatusForbidden, "IP_BLOCKED", "request IP not in allowlist")
+				return
+			}
 		}
+
+		// Enforce rate limit (simple count-based, resets every minute)
+		if tokenRecord.RateLimitRPM > 0 && tokenRecord.RequestCount >= int64(tokenRecord.RateLimitRPM) {
+			respondError(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", fmt.Sprintf("rate limit of %d RPM exceeded", tokenRecord.RateLimitRPM))
+			return
+		}
+
+		_ = h.tokens.IncrementUsage(r.Context(), tokenRecord.ID)
+
+		user = &domain.User{ID: tokenRecord.UserID}
 	} else {
 		user = middleware.GetUser(r.Context())
 	}

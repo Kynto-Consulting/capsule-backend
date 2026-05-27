@@ -179,6 +179,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Name          *string `json:"name"`
+		Slug          *string `json:"slug"`
 		RepoURL       *string `json:"repo_url"`
 		Branch        *string `json:"branch"`
 		BuildStrategy *string `json:"build_strategy"`
@@ -194,6 +195,17 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name != nil {
 		project.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Slug != nil {
+		newSlug := strings.TrimSpace(strings.ToLower(*req.Slug))
+		if newSlug != project.Slug {
+			existing, _ := h.projects.GetBySlug(r.Context(), orgID, newSlug)
+			if existing != nil {
+				respondError(w, http.StatusConflict, "SLUG_TAKEN", "project slug already exists in this org")
+				return
+			}
+			project.Slug = newSlug
+		}
 	}
 	if req.RepoURL != nil {
 		project.RepoURL = *req.RepoURL

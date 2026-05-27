@@ -69,6 +69,8 @@ type APITokenRepository interface {
 	ListByUser(ctx context.Context, userID uuid.UUID) ([]*APIToken, error)
 	Revoke(ctx context.Context, id uuid.UUID) error
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+	Update(ctx context.Context, id uuid.UUID, rateLimitRPM int, ipAllowlist string) (*APIToken, error)
+	IncrementUsage(ctx context.Context, id uuid.UUID) error
 }
 
 // AuditRepository handles audit log persistence.
@@ -86,6 +88,7 @@ type DatabaseRepository interface {
 	UpdateCredentials(ctx context.Context, id uuid.UUID, credsEnc []byte) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	GetGlobalStats(ctx context.Context) (projects int, rdsDatabases int, s3Buckets int, domains int, err error)
+	GetUserStats(ctx context.Context, userID uuid.UUID) (projects int, rdsDatabases int, s3Buckets int, domains int, err error)
 }
 
 // DomainRepository handles domain record persistence.

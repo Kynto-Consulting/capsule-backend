@@ -224,8 +224,10 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons/{cronID}/trigger", cronHandler.Trigger)
 
 			// Bedrock AI Utility Keys and Helpers
+			r.Get("/ai/models", aiHandler.ListModels)
 			r.Post("/ai/keys", aiHandler.CreateKey)
 			r.Get("/ai/keys", aiHandler.ListKeys)
+			r.Patch("/ai/keys/{keyID}", aiHandler.UpdateKey)
 			r.Delete("/ai/keys/{keyID}", aiHandler.RevokeKey)
 
 			r.Post("/ai/dockerfile", aiHandler.Dockerfile)
