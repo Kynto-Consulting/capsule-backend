@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /capsule-server ./cmd/server
 
 FROM alpine:3.20 AS production
-RUN apk add --no-cache ca-certificates tzdata docker-cli
+RUN apk add --no-cache ca-certificates tzdata docker-cli nodejs npm zip
 COPY --from=builder /capsule-server /capsule-server
 EXPOSE 8080
 ENTRYPOINT ["/capsule-server"]
