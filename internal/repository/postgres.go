@@ -54,6 +54,12 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("creating schema_migrations table: %w", err)
 	}
 
+	// Ensure compatibility with golang-migrate schema (dirty column).
+	// ADD COLUMN IF NOT EXISTS is a no-op when already present; SET DEFAULT
+	// ensures existing NOT NULL columns without a default accept our inserts.
+	_, _ = pool.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS dirty boolean NOT NULL DEFAULT false`)
+	_, _ = pool.Exec(ctx, `ALTER TABLE schema_migrations ALTER COLUMN dirty SET DEFAULT false`)
+
 	// 2. Read migration files from embedded FS
 	entries, err := MigrationsFS.ReadDir("migrations")
 	if err != nil {
@@ -128,7 +134,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_class WHERE relname = $1 AND relkind = 'r')", tblName).Scan(&tblExists)
 			if err == nil && tblExists {
 				fmt.Printf("Migration %s: table '%s' already exists. Recording version in schema_migrations.\n", m.name, tblName)
-				_, _ = pool.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING", m.version)
+				_, _ = pool.Exec(ctx, "INSERT INTO schema_migrations (version, dirty) VALUES ($1, false) ON CONFLICT (version) DO NOTHING", m.version)
 				continue
 			}
 		}
@@ -152,7 +158,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 
 		// Record migration
-		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING", m.version); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version, dirty) VALUES ($1, false) ON CONFLICT (version) DO NOTHING", m.version); err != nil {
 			return fmt.Errorf("recording migration %d: %w", m.version, err)
 		}
 
