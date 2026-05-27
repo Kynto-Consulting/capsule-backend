@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
@@ -285,14 +286,37 @@ func (w *DeployWorker) runLambdaContainerDeploy(ctx context.Context, id, project
 		return
 	}
 
-	// ECR login via CLI (uses instance role / env credentials)
-	loginScript := fmt.Sprintf(
-		"aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s",
-		w.aws.Region, registry,
+	// ECR login via SDK (no aws-cli needed — works inside Docker container with instance role)
+	authOut, err := w.aws.ECR.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
+	if err != nil {
+		w.failDeployment(ctx, id, "ECR GetAuthorizationToken failed", err)
+		return
+	}
+	if len(authOut.AuthorizationData) == 0 {
+		w.failDeployment(ctx, id, "ECR GetAuthorizationToken returned no data", nil)
+		return
+	}
+	// Token is base64-encoded "AWS:{password}"
+	rawToken := aws.ToString(authOut.AuthorizationData[0].AuthorizationToken)
+	decoded, err := base64.StdEncoding.DecodeString(rawToken)
+	if err != nil {
+		w.failDeployment(ctx, id, "decoding ECR auth token", err)
+		return
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		w.failDeployment(ctx, id, "unexpected ECR auth token format", nil)
+		return
+	}
+	ecrUser, ecrPass := parts[0], parts[1]
+	loginCmd := exec.CommandContext(ctx, "docker", "login",
+		"--username", ecrUser,
+		"--password-stdin",
+		registry,
 	)
-	loginCmd := exec.CommandContext(ctx, "sh", "-c", loginScript)
+	loginCmd.Stdin = strings.NewReader(ecrPass)
 	if out, err := loginCmd.CombinedOutput(); err != nil {
-		w.failDeployment(ctx, id, "ECR login failed: "+string(out), err)
+		w.failDeployment(ctx, id, "docker login ECR failed: "+string(out), err)
 		return
 	}
 	w.appendLog(ctx, id, "ECR login successful")
