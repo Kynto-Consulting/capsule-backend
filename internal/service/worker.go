@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -254,11 +255,121 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	w.logger.Info("deploy worker: deployment succeeded", "id", id, "image", imageName)
 }
 
-// runLambdaDeploy builds and deploys a Lambda function from the source.
+// runLambdaDeploy routes to container image deploy (if Dockerfile present) or zip deploy.
 func (w *DeployWorker) runLambdaDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir string) {
+	if _, err := os.Stat(filepath.Join(buildDir, "Dockerfile")); err == nil {
+		w.runLambdaContainerDeploy(ctx, id, projectID, buildDir)
+		return
+	}
+	w.runLambdaZipDeploy(ctx, id, projectID, buildDir)
+}
+
+// runLambdaContainerDeploy builds a Docker image, pushes to ECR, and deploys as a Lambda container image.
+// The image should include the AWS Lambda Web Adapter extension for HTTP bridging.
+func (w *DeployWorker) runLambdaContainerDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir string) {
+	shortID := strings.ReplaceAll(projectID.String(), "-", "")[:12]
+	functionName := "capsule-" + shortID
+	repoName := "capsule-apps/" + shortID
+	registry := w.aws.Account + ".dkr.ecr." + w.aws.Region + ".amazonaws.com"
+	imageURI := registry + "/" + repoName + ":latest"
+
+	w.appendLog(ctx, id, "Building Lambda container image (ECR)...")
+
+	// Ensure ECR repository exists
+	_, err := w.aws.ECR.CreateRepository(ctx, &ecr.CreateRepositoryInput{
+		RepositoryName: aws.String(repoName),
+	})
+	// Ignore AlreadyExistsException
+	if err != nil && !strings.Contains(err.Error(), "RepositoryAlreadyExistsException") {
+		w.failDeployment(ctx, id, "creating ECR repository", err)
+		return
+	}
+
+	// ECR login via CLI (uses instance role / env credentials)
+	loginScript := fmt.Sprintf(
+		"aws ecr get-login-password --region %s | docker login --username AWS --password-stdin %s",
+		w.aws.Region, registry,
+	)
+	loginCmd := exec.CommandContext(ctx, "sh", "-c", loginScript)
+	if out, err := loginCmd.CombinedOutput(); err != nil {
+		w.failDeployment(ctx, id, "ECR login failed: "+string(out), err)
+		return
+	}
+	w.appendLog(ctx, id, "ECR login successful")
+
+	// docker build (linux/amd64 — Lambda runs on x86)
+	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageURI))
+	buildCmd := exec.CommandContext(ctx, "docker", "build",
+		"--platform", "linux/amd64",
+		"-t", imageURI, ".")
+	buildCmd.Dir = buildDir
+	buildOut, err := buildCmd.CombinedOutput()
+	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
+		if line != "" {
+			w.appendLog(ctx, id, line)
+		}
+	}
+	if err != nil {
+		w.failDeployment(ctx, id, "docker build failed", err)
+		return
+	}
+
+	// docker push
+	w.appendLog(ctx, id, "Pushing image to ECR...")
+	pushCmd := exec.CommandContext(ctx, "docker", "push", imageURI)
+	pushOut, err := pushCmd.CombinedOutput()
+	for _, line := range strings.Split(strings.TrimSpace(string(pushOut)), "\n") {
+		if line != "" {
+			w.appendLog(ctx, id, line)
+		}
+	}
+	if err != nil {
+		w.failDeployment(ctx, id, "docker push failed", err)
+		return
+	}
+
+	if err := w.deployments.UpdateStatus(ctx, id, "deploying"); err != nil {
+		w.failDeployment(ctx, id, "updating status", err)
+		return
+	}
+
+	role := "arn:aws:iam::" + w.aws.Account + ":role/capsule-lambda-role"
+	lambdaClient := w.aws.Lambda
+
+	// Try update first (function already exists)
+	_, err = lambdaClient.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
+		FunctionName: aws.String(functionName),
+		ImageUri:     aws.String(imageURI),
+	})
+	if err != nil {
+		// Create new image-based function
+		_, err = lambdaClient.CreateFunction(ctx, &lambda.CreateFunctionInput{
+			FunctionName: aws.String(functionName),
+			Role:         aws.String(role),
+			PackageType:  lambdatypes.PackageTypeImage,
+			Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(imageURI)},
+			Timeout:      aws.Int32(30),
+			MemorySize:   aws.Int32(512),
+		})
+		if err != nil {
+			w.failDeployment(ctx, id, "creating lambda function", err)
+			return
+		}
+	}
+
+	w.appendLog(ctx, id, fmt.Sprintf("Lambda container function deployed: %s", functionName))
+	if err := w.deployments.UpdateStatus(ctx, id, "success"); err != nil {
+		w.logger.Error("deploy worker: failed to set success status", "id", id, "error", err)
+	}
+	w.appendLog(ctx, id, "Lambda container deployment completed successfully")
+	w.logger.Info("deploy worker: lambda container deployment succeeded", "id", id, "function", functionName)
+}
+
+// runLambdaZipDeploy builds and deploys a Lambda function as a zip package (no Dockerfile).
+func (w *DeployWorker) runLambdaZipDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir string) {
 	functionName := "capsule-" + strings.ReplaceAll(projectID.String(), "-", "")[:12]
 
-	w.appendLog(ctx, id, "Building Lambda function...")
+	w.appendLog(ctx, id, "Building Lambda function (zip)...")
 
 	// Detect runtime
 	runtime := lambdatypes.RuntimeProvidedal2023
