@@ -97,7 +97,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusUnauthorized, "INVALID_CREDENTIALS", "invalid email or password")
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "login failed")
 		return
 	}
 
