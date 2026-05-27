@@ -105,13 +105,13 @@ func splitLines(b []byte) []string {
 
 // appContainerName returns the deterministic docker container name for a deployed project app.
 func appContainerName(projectID uuid.UUID) string {
-	short := strings.ReplaceAll(projectID.String(), "-", "")[:8]
+	short := strings.ReplaceAll(projectID.String(), "-", "")[:12]
 	return "capsule-app-" + short
 }
 
 // workerContainerNameFromShort returns the worker container name from a workerID string.
 func workerContainerNameFromID(workerID uuid.UUID) string {
-	short := strings.ReplaceAll(workerID.String(), "-", "")[:8]
+	short := strings.ReplaceAll(workerID.String(), "-", "")[:12]
 	return "capsule-worker-" + short
 }
 

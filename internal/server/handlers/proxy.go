@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,10 +11,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/google/uuid"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
@@ -23,11 +26,12 @@ type ProxyHandler struct {
 	projects    domain.ProjectRepository
 	domains     domain.DomainRepository
 	deployments domain.DeploymentRepository
+	exLogs      domain.ExecutionLogRepository
 	aws         *awsclient.Clients
 }
 
-func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository, deployments domain.DeploymentRepository, aws *awsclient.Clients) *ProxyHandler {
-	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains, deployments: deployments, aws: aws}
+func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository, deployments domain.DeploymentRepository, exLogs domain.ExecutionLogRepository, aws *awsclient.Clients) *ProxyHandler {
+	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains, deployments: deployments, exLogs: exLogs, aws: aws}
 }
 
 // staticBucketName returns the S3 static bucket name, configurable via CAPSULE_STATIC_BUCKET.
@@ -205,6 +209,29 @@ func (h *ProxyHandler) proxyToContainer(w http.ResponseWriter, r *http.Request, 
 	proxy.ServeHTTP(w, r)
 }
 
+// appendLambdaExecLog persists a Lambda invocation record to execution_logs in the background.
+func (h *ProxyHandler) appendLambdaExecLog(projectID uuid.UUID, functionName, method, path string, statusCode int, dur time.Duration) {
+	if h.exLogs == nil {
+		return
+	}
+	level := "info"
+	if statusCode >= 500 {
+		level = "error"
+	} else if statusCode >= 400 {
+		level = "warn"
+	}
+	msg := fmt.Sprintf("%s %s → %d (%s)", method, path, statusCode, dur.Round(time.Millisecond))
+	go func() {
+		_ = h.exLogs.Append(context.Background(), &domain.ExecutionLog{
+			ProjectID: projectID,
+			Source:    "lambda",
+			SourceID:  functionName,
+			Level:     level,
+			Message:   msg,
+		})
+	}()
+}
+
 // lambdaHTTPEvent is the Lambda HTTP API Gateway V2 payload format.
 // Serverless frameworks (Next.js via Lambda Web Adapter, Express, etc.) all understand this.
 type lambdaHTTPEvent struct {
@@ -246,6 +273,8 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 		http.Error(w, "Lambda client not available", http.StatusServiceUnavailable)
 		return
 	}
+
+	start := time.Now()
 
 	// Derive function name from project ID (same as deploy worker)
 	shortID := strings.ReplaceAll(project.ID.String(), "-", "")[:12]
@@ -319,12 +348,14 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 		Payload:      payload,
 	})
 	if err != nil {
+		h.appendLambdaExecLog(project.ID, functionName, r.Method, reqPath, http.StatusBadGateway, time.Since(start))
 		http.Error(w, fmt.Sprintf("lambda invocation failed: %v", err), http.StatusBadGateway)
 		return
 	}
 
 	// Handle Lambda errors
 	if result.FunctionError != nil {
+		h.appendLambdaExecLog(project.ID, functionName, r.Method, reqPath, http.StatusBadGateway, time.Since(start))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		w.Write(result.Payload)
@@ -335,6 +366,7 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 	var resp lambdaHTTPResponse
 	if err := json.Unmarshal(result.Payload, &resp); err != nil {
 		// Raw response (non-HTTP format function) — return payload as-is
+		h.appendLambdaExecLog(project.ID, functionName, r.Method, reqPath, http.StatusOK, time.Since(start))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write(result.Payload)
@@ -376,6 +408,7 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 	if statusCode == 0 {
 		statusCode = http.StatusOK
 	}
+	h.appendLambdaExecLog(project.ID, functionName, r.Method, reqPath, statusCode, time.Since(start))
 	w.WriteHeader(statusCode)
 
 	// Write body
@@ -396,6 +429,7 @@ func (h *ProxyHandler) proxyToLambda(w http.ResponseWriter, r *http.Request, pro
 // proxyToStaticS3 reverse-proxies to S3 website hosting without redirecting the client.
 // subPath must start with '/'. The user URL stays on the Capsule domain.
 func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, projectID, subPath string) {
+	start := time.Now()
 	s3Host := fmt.Sprintf("%s.s3-website-us-east-1.amazonaws.com", staticBucketName())
 	targetURL := fmt.Sprintf("http://%s/%s%s", s3Host, projectID, subPath)
 	if r.URL.RawQuery != "" {
@@ -417,6 +451,28 @@ func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	defer resp.Body.Close()
+
+	// Log S3 access to execution_logs
+	if h.exLogs != nil {
+		if pid, parseErr := uuid.Parse(projectID); parseErr == nil {
+			level := "info"
+			if resp.StatusCode >= 500 {
+				level = "error"
+			} else if resp.StatusCode >= 400 {
+				level = "warn"
+			}
+			msg := fmt.Sprintf("GET %s → %d (%s)", subPath, resp.StatusCode, time.Since(start).Round(time.Millisecond))
+			go func() {
+				_ = h.exLogs.Append(context.Background(), &domain.ExecutionLog{
+					ProjectID: pid,
+					Source:    "storage",
+					SourceID:  "s3:" + staticBucketName(),
+					Level:     level,
+					Message:   msg,
+				})
+			}()
+		}
+	}
 
 	// Forward content-type and cache headers
 	for _, hdr := range []string{"Content-Type", "Cache-Control", "ETag", "Last-Modified", "Content-Encoding"} {

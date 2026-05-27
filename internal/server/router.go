@@ -68,7 +68,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo)
-	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.AWSClients)
+	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.ExecLogRepo, deps.AWSClients)
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, logger)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
