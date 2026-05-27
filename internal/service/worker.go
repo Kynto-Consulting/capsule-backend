@@ -213,6 +213,16 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	containerID := strings.TrimSpace(string(runOut))
 	w.appendLog(ctx, id, fmt.Sprintf("Container started: %s (port %d)", containerID, hostPort))
 
+	// Connect deployed container to backend network so proxy can reach it
+	networkName := "capsule-prod_capsule-net"
+	netCmd := exec.CommandContext(ctx, "docker", "network", "connect", networkName, imageName)
+	if netOut, netErr := netCmd.CombinedOutput(); netErr != nil {
+		w.logger.Warn("deploy worker: could not connect to backend network (proxy disabled)",
+			"id", id, "error", string(netOut))
+	} else {
+		w.appendLog(ctx, id, "Connected to backend network")
+	}
+
 	// --- store host port ---
 	if err := w.deployments.UpdateHostPort(ctx, id, hostPort); err != nil {
 		w.logger.Warn("deploy worker: failed to store host port", "id", id, "error", err)
