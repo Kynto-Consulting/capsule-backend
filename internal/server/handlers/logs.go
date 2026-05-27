@@ -236,7 +236,8 @@ func (h *LogsHandler) GetStorageLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "storage", 100)
+	tail := parseTailParam(r, 100, 1000)
+	logs, err := h.exLogs.ListByProject(r.Context(), project.ID, "storage", tail)
 	if err != nil {
 		h.logger.Error("failed to list storage logs", "project_id", project.ID, "error", err)
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to retrieve storage logs")
