@@ -149,24 +149,12 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
 		return
 	}
-	if req.Engine != "postgres" && req.Engine != "mysql" && req.Engine != "redis" && req.Engine != "mongodb" {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "engine must be postgres, mysql, redis or mongodb")
+	if !validEngine(req.Engine) {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unsupported engine")
 		return
 	}
 
-	// Determine defaults per engine
-	port := 5432
-	dbVersion := "15.4"
-	if req.Engine == "mysql" {
-		port = 3306
-		dbVersion = "8.0"
-	} else if req.Engine == "redis" {
-		port = 6379
-		dbVersion = "7.0"
-	} else if req.Engine == "mongodb" {
-		port = 27017
-		dbVersion = "6.0"
-	}
+	port, dbVersion := engineDefaults(req.Engine)
 	if req.Version != "" {
 		dbVersion = req.Version
 	}
@@ -189,7 +177,7 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Launch background provisioning goroutine
-	if req.Engine == "redis" || req.Engine == "mongodb" {
+	if isDockerEngine(req.Engine) {
 		go func(dbID uuid.UUID, engine string, dbPort int) {
 			time.Sleep(100 * time.Millisecond)
 			host := fmt.Sprintf("capsule-%s.internal", engine)
@@ -346,21 +334,12 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
 		return
 	}
-	if req.Engine != "postgres" && req.Engine != "mysql" && req.Engine != "redis" && req.Engine != "mongodb" {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "engine must be postgres, mysql, redis or mongodb")
+	if !validEngine(req.Engine) {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unsupported engine")
 		return
 	}
 
-	port := 5432
-	dbVersion := "15.4"
-	switch req.Engine {
-	case "mysql":
-		port, dbVersion = 3306, "8.0"
-	case "redis":
-		port, dbVersion = 6379, "7.0"
-	case "mongodb":
-		port, dbVersion = 27017, "6.0"
-	}
+	port, dbVersion := engineDefaults(req.Engine)
 	if req.Version != "" {
 		dbVersion = req.Version
 	}
@@ -381,7 +360,7 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.Engine == "redis" || req.Engine == "mongodb" {
+	if isDockerEngine(req.Engine) {
 		go func(dbID uuid.UUID, engine string, dbPort int) {
 			time.Sleep(100 * time.Millisecond)
 			host := fmt.Sprintf("capsule-%s.internal", engine)
@@ -587,10 +566,64 @@ func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
 			return fmt.Sprintf("redis://:%s@%s:%d", creds.Password, db.Host, db.Port)
 		}
 		return fmt.Sprintf("redis://%s:%d", db.Host, db.Port)
+	case "mariadb":
+		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
+			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+	case "cassandra":
+		return fmt.Sprintf("cassandra://%s:%s@%s:%d",
+			creds.Username, creds.Password, db.Host, db.Port)
+	case "clickhouse":
+		return fmt.Sprintf("clickhouse://%s:%s@%s:%d/%s",
+			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+	case "elasticsearch":
+		return fmt.Sprintf("http://%s:%s@%s:%d",
+			creds.Username, creds.Password, db.Host, db.Port)
+	case "cockroachdb":
+		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable",
+			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
 	default:
 		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
 			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
 	}
+}
+
+func validEngine(e string) bool {
+	switch e {
+	case "postgres", "mysql", "mariadb", "redis", "mongodb", "cassandra", "clickhouse", "elasticsearch", "cockroachdb":
+		return true
+	}
+	return false
+}
+
+func engineDefaults(e string) (port int, version string) {
+	switch e {
+	case "mysql", "mariadb":
+		return 3306, "8.0"
+	case "redis":
+		return 6379, "7.0"
+	case "mongodb":
+		return 27017, "6.0"
+	case "cassandra":
+		return 9042, "4.1"
+	case "clickhouse":
+		return 8123, "24.3"
+	case "elasticsearch":
+		return 9200, "8.13"
+	case "cockroachdb":
+		return 26257, "23.2"
+	default: // postgres
+		return 5432, "15.4"
+	}
+}
+
+// isDockerEngine returns true for engines provisioned as internal Docker containers
+// rather than via AWS RDS.
+func isDockerEngine(e string) bool {
+	switch e {
+	case "redis", "mongodb", "cassandra", "clickhouse", "elasticsearch", "cockroachdb":
+		return true
+	}
+	return false
 }
 
 const passwordChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
