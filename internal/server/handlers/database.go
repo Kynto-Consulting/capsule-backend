@@ -173,7 +173,8 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Create DB record with status "provisioning"
 	db, err := h.dbs.Create(r.Context(), &domain.Database{
-		ProjectID:      projectID,
+		OrgID:          orgID,
+		ProjectID:      &projectID,
 		Name:           req.Name,
 		Engine:         req.Engine,
 		Version:        dbVersion,
@@ -287,6 +288,112 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	respondNoContent(w)
 }
 
+// ListByOrg returns all databases for an org (including those not tied to a project).
+func (h *DatabaseHandler) ListByOrg(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	dbs, err := h.dbs.ListByOrg(r.Context(), orgID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list databases")
+		return
+	}
+
+	type dbResponse struct {
+		domain.Database
+		ConnectionURL string `json:"connection_url"`
+	}
+	results := make([]dbResponse, 0, len(dbs))
+	for _, db := range dbs {
+		results = append(results, dbResponse{Database: *db, ConnectionURL: "****"})
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"data": results})
+}
+
+// CreateOrgLevel provisions a database not tied to any project.
+func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	_ = user
+
+	var req struct {
+		Name    string `json:"name"`
+		Engine  string `json:"engine"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
+		return
+	}
+	if req.Engine != "postgres" && req.Engine != "mysql" && req.Engine != "redis" && req.Engine != "mongodb" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "engine must be postgres, mysql, redis or mongodb")
+		return
+	}
+
+	port := 5432
+	dbVersion := "15.4"
+	switch req.Engine {
+	case "mysql":
+		port, dbVersion = 3306, "8.0"
+	case "redis":
+		port, dbVersion = 6379, "7.0"
+	case "mongodb":
+		port, dbVersion = 27017, "6.0"
+	}
+	if req.Version != "" {
+		dbVersion = req.Version
+	}
+
+	db, err := h.dbs.Create(r.Context(), &domain.Database{
+		OrgID:          orgID,
+		ProjectID:      nil,
+		Name:           req.Name,
+		Engine:         req.Engine,
+		Version:        dbVersion,
+		Port:           port,
+		DBName:         req.Name,
+		Status:         "provisioning",
+		CredentialsEnc: []byte{},
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create database record")
+		return
+	}
+
+	if req.Engine == "redis" || req.Engine == "mongodb" {
+		go func(dbID uuid.UUID, engine string, dbPort int) {
+			time.Sleep(100 * time.Millisecond)
+			host := fmt.Sprintf("capsule-%s.internal", engine)
+			_ = h.dbs.UpdateStatus(context.Background(), dbID, "available", host, dbPort)
+		}(db.ID, req.Engine, port)
+	} else {
+		go h.provisionRDS(db)
+	}
+
+	respondJSON(w, http.StatusCreated, db)
+}
+
 // --- helpers ---
 
 func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
@@ -306,7 +413,11 @@ func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
 		return
 	}
 
-	instanceID := fmt.Sprintf("capsule-%s-%s", db.ProjectID.String()[:8], db.Name)
+	scopeID := db.OrgID
+	if db.ProjectID != nil {
+		scopeID = *db.ProjectID
+	}
+	instanceID := fmt.Sprintf("capsule-%s-%s", scopeID.String()[:8], db.Name)
 
 	var engineStr, engineVersion string
 	var port int32
@@ -437,7 +548,11 @@ func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
 
 func (h *DatabaseHandler) deleteRDSInstance(db *domain.Database) {
 	ctx := context.Background()
-	instanceID := fmt.Sprintf("capsule-%s-%s", db.ProjectID.String()[:8], db.Name)
+	scopeID := db.OrgID
+	if db.ProjectID != nil {
+		scopeID = *db.ProjectID
+	}
+	instanceID := fmt.Sprintf("capsule-%s-%s", scopeID.String()[:8], db.Name)
 
 	_, err := h.aws.RDS.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
 		DBInstanceIdentifier:   aws.String(instanceID),
@@ -463,12 +578,19 @@ func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
 		return "****"
 	}
 
-	if db.Engine == "postgres" {
+	switch db.Engine {
+	case "postgres":
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
 			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+	case "redis":
+		if creds.Password != "" {
+			return fmt.Sprintf("redis://:%s@%s:%d", creds.Password, db.Host, db.Port)
+		}
+		return fmt.Sprintf("redis://%s:%d", db.Host, db.Port)
+	default:
+		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
+			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
 	}
-	return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
-		creds.Username, creds.Password, db.Host, db.Port, db.DBName)
 }
 
 const passwordChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

@@ -113,7 +113,8 @@ func (h *EmailHandler) Setup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db, err := h.dbs.Create(r.Context(), &domain.Database{
-		ProjectID:       projectID,
+		OrgID:           orgID,
+		ProjectID:       &projectID,
 		Name:            "email-" + req.Domain,
 		Engine:          "ses",
 		Version:         "latest",

@@ -99,7 +99,8 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	bucketName := fmt.Sprintf("capsule-%s-%s", org.Slug, req.Name)
 
 	db, err := h.dbs.Create(r.Context(), &domain.Database{
-		ProjectID:      projectID,
+		OrgID:          orgID,
+		ProjectID:      &projectID,
 		Name:           req.Name,
 		Engine:         "s3",
 		Version:        "latest",

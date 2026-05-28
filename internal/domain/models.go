@@ -86,7 +86,8 @@ type BuildLog struct {
 
 type Database struct {
 	ID             uuid.UUID  `json:"id"`
-	ProjectID      uuid.UUID  `json:"project_id"`
+	OrgID          uuid.UUID  `json:"org_id"`
+	ProjectID      *uuid.UUID `json:"project_id,omitempty"`
 	Name           string     `json:"name"`
 	Engine         string     `json:"engine"`
 	Version        string     `json:"version"`

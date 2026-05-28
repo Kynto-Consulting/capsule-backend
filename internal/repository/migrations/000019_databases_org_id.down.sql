@@ -1,0 +1,6 @@
+BEGIN;
+ALTER TABLE databases ALTER COLUMN project_id SET NOT NULL;
+ALTER TABLE databases ALTER COLUMN org_id DROP NOT NULL;
+DROP INDEX IF EXISTS idx_databases_org;
+ALTER TABLE databases DROP COLUMN IF EXISTS org_id;
+COMMIT;

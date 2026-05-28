@@ -84,6 +84,7 @@ type DatabaseRepository interface {
 	Create(ctx context.Context, db *Database) (*Database, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*Database, error)
 	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Database, error)
+	ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*Database, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status, host string, port int) error
 	UpdateCredentials(ctx context.Context, id uuid.UUID, credsEnc []byte) error
 	Delete(ctx context.Context, id uuid.UUID) error

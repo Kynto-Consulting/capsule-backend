@@ -180,6 +180,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/databases", databaseHandler.List)
 			r.Get("/orgs/{orgID}/projects/{projectID}/databases/{dbID}", databaseHandler.Get)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/databases/{dbID}", databaseHandler.Delete)
+			r.Get("/orgs/{orgID}/databases", databaseHandler.ListByOrg)
+			r.Post("/orgs/{orgID}/databases", databaseHandler.CreateOrgLevel)
 
 			// Storage Buckets (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.Create)

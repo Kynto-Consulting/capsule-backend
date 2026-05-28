@@ -23,18 +23,18 @@ func NewDatabaseRepository(pool *pgxpool.Pool) *DatabaseRepository {
 func (r *DatabaseRepository) Create(ctx context.Context, db *domain.Database) (*domain.Database, error) {
 	const q = `
 		INSERT INTO databases
-			(project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb, container_id, volume_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
+			(org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb, container_id, volume_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
 		          container_id, volume_name, created_at, updated_at`
 
 	var out domain.Database
 	err := r.pool.QueryRow(ctx, q,
-		db.ProjectID, db.Name, db.Engine, db.Version,
+		db.OrgID, db.ProjectID, db.Name, db.Engine, db.Version,
 		db.Host, db.Port, db.DBName, db.CredentialsEnc,
 		db.Status, db.SizeMB, db.ContainerID, db.VolumeName,
 	).Scan(
-		&out.ID, &out.ProjectID, &out.Name, &out.Engine, &out.Version,
+		&out.ID, &out.OrgID, &out.ProjectID, &out.Name, &out.Engine, &out.Version,
 		&out.Host, &out.Port, &out.DBName, &out.CredentialsEnc,
 		&out.Status, &out.SizeMB, &out.ContainerID, &out.VolumeName,
 		&out.CreatedAt, &out.UpdatedAt,
@@ -47,14 +47,14 @@ func (r *DatabaseRepository) Create(ctx context.Context, db *domain.Database) (*
 
 func (r *DatabaseRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Database, error) {
 	const q = `
-		SELECT id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
+		SELECT id, org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
 		       container_id, volume_name, created_at, updated_at
 		FROM databases
 		WHERE id = $1 AND deleted_at IS NULL`
 
 	var out domain.Database
 	err := r.pool.QueryRow(ctx, q, id).Scan(
-		&out.ID, &out.ProjectID, &out.Name, &out.Engine, &out.Version,
+		&out.ID, &out.OrgID, &out.ProjectID, &out.Name, &out.Engine, &out.Version,
 		&out.Host, &out.Port, &out.DBName, &out.CredentialsEnc,
 		&out.Status, &out.SizeMB, &out.ContainerID, &out.VolumeName,
 		&out.CreatedAt, &out.UpdatedAt,
@@ -70,13 +70,28 @@ func (r *DatabaseRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 
 func (r *DatabaseRepository) ListByProject(ctx context.Context, projectID uuid.UUID) ([]*domain.Database, error) {
 	const q = `
-		SELECT id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
+		SELECT id, org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
 		       container_id, volume_name, created_at, updated_at
 		FROM databases
 		WHERE project_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC`
 
-	rows, err := r.pool.Query(ctx, q, projectID)
+	return r.scanDatabases(ctx, q, projectID)
+}
+
+func (r *DatabaseRepository) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*domain.Database, error) {
+	const q = `
+		SELECT id, org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status, size_mb,
+		       container_id, volume_name, created_at, updated_at
+		FROM databases
+		WHERE org_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC`
+
+	return r.scanDatabases(ctx, q, orgID)
+}
+
+func (r *DatabaseRepository) scanDatabases(ctx context.Context, q string, arg any) ([]*domain.Database, error) {
+	rows, err := r.pool.Query(ctx, q, arg)
 	if err != nil {
 		return nil, fmt.Errorf("listing databases: %w", err)
 	}
@@ -86,7 +101,7 @@ func (r *DatabaseRepository) ListByProject(ctx context.Context, projectID uuid.U
 	for rows.Next() {
 		var db domain.Database
 		if err := rows.Scan(
-			&db.ID, &db.ProjectID, &db.Name, &db.Engine, &db.Version,
+			&db.ID, &db.OrgID, &db.ProjectID, &db.Name, &db.Engine, &db.Version,
 			&db.Host, &db.Port, &db.DBName, &db.CredentialsEnc,
 			&db.Status, &db.SizeMB, &db.ContainerID, &db.VolumeName,
 			&db.CreatedAt, &db.UpdatedAt,
@@ -164,15 +179,14 @@ func (r *DatabaseRepository) GetUserStats(ctx context.Context, userID uuid.UUID)
 	const q = `
 		WITH user_orgs AS (
 			SELECT org_id FROM org_members WHERE user_id = $1
-		),
-		user_projects AS (
-			SELECT id FROM projects WHERE org_id IN (SELECT org_id FROM user_orgs) AND deleted_at IS NULL
 		)
 		SELECT
-			(SELECT COUNT(*) FROM user_projects),
-			(SELECT COUNT(*) FROM databases WHERE project_id IN (SELECT id FROM user_projects) AND engine != 's3' AND deleted_at IS NULL),
-			(SELECT COUNT(*) FROM databases WHERE project_id IN (SELECT id FROM user_projects) AND engine = 's3' AND deleted_at IS NULL),
-			(SELECT COUNT(*) FROM domains WHERE project_id IN (SELECT id FROM user_projects))`
+			(SELECT COUNT(*) FROM projects WHERE org_id IN (SELECT org_id FROM user_orgs) AND deleted_at IS NULL),
+			(SELECT COUNT(*) FROM databases WHERE org_id IN (SELECT org_id FROM user_orgs) AND engine != 's3' AND deleted_at IS NULL),
+			(SELECT COUNT(*) FROM databases WHERE org_id IN (SELECT org_id FROM user_orgs) AND engine = 's3' AND deleted_at IS NULL),
+			(SELECT COUNT(*) FROM domains WHERE project_id IN (
+				SELECT id FROM projects WHERE org_id IN (SELECT org_id FROM user_orgs) AND deleted_at IS NULL
+			))`
 	err = r.pool.QueryRow(ctx, q, userID).Scan(&projects, &rdsDatabases, &s3Buckets, &domains)
 	return
 }
