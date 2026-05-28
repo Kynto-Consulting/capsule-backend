@@ -149,9 +149,9 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 		// Execute migration content
 		sqlContent := m.content
-		sqlContent = strings.ReplaceAll(sqlContent, "CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
-		sqlContent = strings.ReplaceAll(sqlContent, "CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ")
-		sqlContent = strings.ReplaceAll(sqlContent, "CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ")
+		sqlContent = safeAddIfNotExists(sqlContent, "CREATE TABLE ")
+		sqlContent = safeAddIfNotExists(sqlContent, "CREATE UNIQUE INDEX ")
+		sqlContent = safeAddIfNotExists(sqlContent, "CREATE INDEX ")
 
 		if _, err := tx.Exec(ctx, sqlContent); err != nil {
 			return fmt.Errorf("executing migration %s: %w", m.name, err)
@@ -169,5 +169,29 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 
 	return nil
+}
+
+// safeAddIfNotExists adds "IF NOT EXISTS" after keyword only when not already present.
+func safeAddIfNotExists(sql, keyword string) string {
+	suffix := "IF NOT EXISTS "
+	withSuffix := keyword + suffix
+	var b strings.Builder
+	remaining := sql
+	for {
+		idx := strings.Index(remaining, keyword)
+		if idx == -1 {
+			b.WriteString(remaining)
+			break
+		}
+		b.WriteString(remaining[:idx])
+		after := remaining[idx+len(keyword):]
+		if strings.HasPrefix(after, suffix) {
+			b.WriteString(keyword)
+		} else {
+			b.WriteString(withSuffix)
+		}
+		remaining = after
+	}
+	return b.String()
 }
 

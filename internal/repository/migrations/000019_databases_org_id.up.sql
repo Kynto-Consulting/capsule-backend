@@ -12,6 +12,6 @@ WHERE d.project_id = p.id AND d.org_id IS NULL;
 ALTER TABLE databases ALTER COLUMN project_id DROP NOT NULL;
 ALTER TABLE databases ALTER COLUMN org_id SET NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_databases_org ON databases(org_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_databases_org ON databases(org_id) WHERE deleted_at IS NULL;
 
 COMMIT;
