@@ -182,7 +182,7 @@ func (h *EmailHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := "pending"
+	status := emailDB.Status // default: reflect persisted status (pending/verified/etc.)
 	if h.aws != nil {
 		resp, err := h.aws.SES.GetEmailIdentity(r.Context(), &sesv2.GetEmailIdentityInput{
 			EmailIdentity: aws.String(emailDB.DBName),
@@ -192,11 +192,6 @@ func (h *EmailHandler) Status(w http.ResponseWriter, r *http.Request) {
 			_ = h.dbs.UpdateStatus(r.Context(), emailDB.ID, "verified", emailDB.Host, emailDB.Port)
 			emailDB.Status = "verified"
 		}
-	} else {
-		// Mock auto-verify in local dev
-		status = "verified"
-		_ = h.dbs.UpdateStatus(r.Context(), emailDB.ID, "verified", emailDB.Host, emailDB.Port)
-		emailDB.Status = "verified"
 	}
 
 	type emailStatusResponse struct {
@@ -414,20 +409,7 @@ func (h *EmailHandler) DNSRecords(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.aws == nil {
-		// Mock data for local dev
-		resp := dnsResponse{
-			Domain: domainName,
-			Records: []dnsRecord{
-				{Type: "CNAME", Host: "mock1._domainkey." + domainName, Value: "mock1.dkim.amazonses.com", Status: "pending"},
-				{Type: "CNAME", Host: "mock2._domainkey." + domainName, Value: "mock2.dkim.amazonses.com", Status: "pending"},
-				{Type: "CNAME", Host: "mock3._domainkey." + domainName, Value: "mock3.dkim.amazonses.com", Status: "pending"},
-				{Type: "TXT", Host: "_dmarc." + domainName, Value: "v=DMARC1; p=none; rua=mailto:dmarc@" + domainName, Status: "recommended"},
-				{Type: "TXT", Host: domainName, Value: "v=spf1 include:amazonses.com ~all", Status: "recommended"},
-			},
-			DKIMStatus:         "PENDING",
-			VerificationStatus: "PENDING",
-		}
-		respondJSON(w, http.StatusOK, resp)
+		respondError(w, http.StatusServiceUnavailable, "AWS_UNAVAILABLE", "email features require AWS SES configuration")
 		return
 	}
 

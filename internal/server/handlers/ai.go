@@ -484,7 +484,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			aiResponseText = "Received empty response from model."
 		}
 	} else {
-		aiResponseText = getMockAIResponse(req.Messages[len(req.Messages)-1].Content)
+		respondError(w, http.StatusServiceUnavailable, "AI_UNAVAILABLE", "AI features require AWS Bedrock configuration")
+		return
 	}
 
 	// Format as OpenAI Chat Completion response
@@ -518,6 +519,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 // Generate Dockerfile
 func (h *AIHandler) Dockerfile(w http.ResponseWriter, r *http.Request) {
+	if h.aws == nil {
+		respondError(w, http.StatusServiceUnavailable, "AI_UNAVAILABLE", "AI features require AWS Bedrock configuration")
+		return
+	}
+
 	var req struct {
 		Runtime string `json:"runtime"`
 	}
@@ -527,7 +533,12 @@ func (h *AIHandler) Dockerfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prompt := fmt.Sprintf("Generate an optimized multi-stage build Dockerfile for a production app using runtime: %s. Respond ONLY with the Dockerfile contents inside a fenced code block.", req.Runtime)
-	responseText := callMockOrRealClaude(r.Context(), h.aws, prompt)
+	responseText, err := callBedrock(r.Context(), h.aws, prompt)
+	if err != nil {
+		h.logger.Warn("bedrock dockerfile generation failed", "error", err)
+		respondError(w, http.StatusServiceUnavailable, "AI_ERROR", "AI request failed: "+err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"dockerfile": responseText})
 }
@@ -564,8 +575,18 @@ func (h *AIHandler) ExplainFailure(w http.ResponseWriter, r *http.Request) {
 		fullLogs = "No build logs available."
 	}
 
+	if h.aws == nil {
+		respondError(w, http.StatusServiceUnavailable, "AI_UNAVAILABLE", "AI features require AWS Bedrock configuration")
+		return
+	}
+
 	prompt := fmt.Sprintf("Review the following deployment build logs and explain the failure in a clean, developer-focused summary, suggesting immediate fixes:\n\n%s", fullLogs)
-	explanation := callMockOrRealClaude(r.Context(), h.aws, prompt)
+	explanation, err := callBedrock(r.Context(), h.aws, prompt)
+	if err != nil {
+		h.logger.Warn("bedrock explain-failure failed", "error", err)
+		respondError(w, http.StatusServiceUnavailable, "AI_ERROR", "AI request failed: "+err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"explanation": explanation})
 }
@@ -592,10 +613,20 @@ func (h *AIHandler) OptimizeCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.aws == nil {
+		respondError(w, http.StatusServiceUnavailable, "AI_UNAVAILABLE", "AI features require AWS Bedrock configuration")
+		return
+	}
+
 	prompt := fmt.Sprintf("Analyze the active cloud infrastructure configuration for the project '%s' (Runtime: %s, Container Replicas: %d, Serverless Deployed: %t). Provide immediate cost-saving recommendations (e.g. switching to serverless Lambda, auto-scaling cooldown times, RDS sizing) formatted beautifully as developer-ready markdown advice.",
 		project.Name, project.Runtime, project.Replicas, project.Serverless)
-	
-	recommendations := callMockOrRealClaude(r.Context(), h.aws, prompt)
+
+	recommendations, err := callBedrock(r.Context(), h.aws, prompt)
+	if err != nil {
+		h.logger.Warn("bedrock optimize-costs failed", "error", err)
+		respondError(w, http.StatusServiceUnavailable, "AI_ERROR", "AI request failed: "+err.Error())
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"recommendations": recommendations})
 }
@@ -607,176 +638,43 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func callMockOrRealClaude(ctx context.Context, awsClients *awsclient.Clients, prompt string) string {
-	if awsClients == nil {
-		return getMockAIResponse(prompt)
-	}
-
-	bedrockMessages := []map[string]any{
-		{
-			"role": "user",
-			"content": []map[string]any{
-				{
-					"type": "text",
-					"text": prompt,
-				},
+// callBedrock invokes Amazon Nova Lite via Bedrock (no Anthropic approval required).
+// Returns the model response text or an error — no mock fallback.
+func callBedrock(ctx context.Context, awsClients *awsclient.Clients, prompt string) (string, error) {
+	novaPayload := map[string]any{
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": []map[string]any{{"text": prompt}},
 			},
 		},
+		"inferenceConfig": map[string]any{"maxTokens": 2000},
 	}
 
-	bedrockPayload := map[string]any{
-		"anthropic_version": "bedrock-2023-05-31",
-		"max_tokens":        2000,
-		"messages":          bedrockMessages,
-	}
-
-	payloadBytes, _ := json.Marshal(bedrockPayload)
+	payloadBytes, _ := json.Marshal(novaPayload)
 
 	output, err := awsClients.Bedrock.InvokeModel(ctx, &bedrockruntime.InvokeModelInput{
-		ModelId:     aws.String("anthropic.claude-3-5-sonnet-20241022-v2:0"),
+		ModelId:     aws.String("amazon.nova-lite-v1:0"),
 		ContentType: aws.String("application/json"),
 		Accept:      aws.String("application/json"),
 		Body:        payloadBytes,
 	})
 	if err != nil {
-		slog.Warn("Bedrock invoke failed, falling back to mock response", "error", err)
-		return getMockAIResponse(prompt)
+		return "", fmt.Errorf("bedrock invoke: %w", err)
 	}
 
-	var bedrockResponse struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
+	var novaResp struct {
+		Output struct {
+			Message struct {
+				Content []struct{ Text string `json:"text"` } `json:"content"`
+			} `json:"message"`
+		} `json:"output"`
 	}
-	if err := json.Unmarshal(output.Body, &bedrockResponse); err == nil && len(bedrockResponse.Content) > 0 {
-		return bedrockResponse.Content[0].Text
+	if err := json.Unmarshal(output.Body, &novaResp); err != nil {
+		return "", fmt.Errorf("parsing bedrock response: %w", err)
 	}
-	return "No text response found from Claude Bedrock client."
-}
-
-func getMockAIResponse(userPrompt string) string {
-	lower := strings.ToLower(userPrompt)
-	if strings.Contains(lower, "dockerfile") {
-		switch {
-		case strings.Contains(lower, "node"):
-			return `# Stage 1: Build
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-
-# Stage 2: Production image
-FROM node:20-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-EXPOSE 3000
-CMD ["node", "dist/index.js"]`
-		case strings.Contains(lower, "python"):
-			return `# Stage 1: Build
-FROM python:3.12-slim AS builder
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-COPY . .
-
-# Stage 2: Production image
-FROM python:3.12-slim
-WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-COPY --from=builder /install /usr/local
-COPY --from=builder /app .
-EXPOSE 8000
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`
-		case strings.Contains(lower, "rust"):
-			return `# Stage 1: Build
-FROM rust:1.77-alpine AS builder
-RUN apk add --no-cache musl-dev
-WORKDIR /app
-COPY Cargo.* ./
-RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --release
-COPY src ./src
-RUN touch src/main.rs && cargo build --release
-
-# Stage 2: Final minimal image
-FROM scratch
-COPY --from=builder /app/target/release/app /app
-EXPOSE 8080
-ENTRYPOINT ["/app"]`
-		default: // go
-			return `# Stage 1: Build
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o server ./cmd/server
-
-# Stage 2: Final minimal image
-FROM scratch
-WORKDIR /
-COPY --from=builder /app/server /server
-EXPOSE 8080
-ENTRYPOINT ["/server"]`
-		}
+	if len(novaResp.Output.Message.Content) == 0 {
+		return "", fmt.Errorf("empty response from bedrock")
 	}
-	if strings.Contains(lower, "build log") || strings.Contains(lower, "fail") {
-		// Extract actual error lines from the prompt (which contains real build logs)
-		var errorLines []string
-		for _, line := range strings.Split(userPrompt, "\n") {
-			l := strings.ToLower(line)
-			if strings.Contains(l, "[error]") || strings.Contains(l, "error:") ||
-				strings.Contains(l, "failed") || strings.Contains(l, "non-zero code") ||
-				strings.Contains(l, "exit status") || strings.Contains(l, "unexpected") {
-				trimmed := strings.TrimSpace(line)
-				if trimmed != "" {
-					errorLines = append(errorLines, trimmed)
-				}
-			}
-		}
-
-		snippet := "No specific error lines detected in logs."
-		if len(errorLines) > 0 {
-			if len(errorLines) > 4 {
-				errorLines = errorLines[:4]
-			}
-			snippet = strings.Join(errorLines, "\n")
-		}
-
-		return fmt.Sprintf(`### Build Failure Analysis 🔍
-
-**Detected Error(s):**
-`+"```"+`
-%s
-`+"```"+`
-
-**Recommended Fixes:**
-1. Review the error above — it points to the root cause.
-2. Check your Dockerfile, dependency files, and source code for typos or missing files.
-3. Run the build command locally to reproduce and fix the issue.
-4. Ensure all required files are included in your source archive.`, snippet)
-	}
-	if strings.Contains(lower, "optimize") || strings.Contains(lower, "cost") {
-		return `### Cost Optimization Recommendation 💡
-
-Based on your configuration, switching to **Serverless Lambda** deployments can immediately trim down your recurring costs.
-
-**Current Cost Overview:**
-- EC2 t3.small Serverless Container: ~$15.00/month
-- Shared ALB segment: ~$22.00/month
-- Total: **~$37.00/month**
-
-**Optimized Cost Overview:**
-- Switching to AWS Lambda for request-driven load (assuming 1M request average):
-- Lambda execution charges: ~$0.20/month
-- API Gateway charges: ~$3.50/month
-- Total: **~$3.70/month**
-
-**Net Monthly Savings:** **~90% savings ($33.30/month saved!)**`
-	}
-
-	return "Hi there! I am your Capsule Bedrock AI Assistant. I can help you configure Dockerfiles, analyze failed builds, verify Route53 setups, or calculate the exact monthly pricing of your ECS replicas. What can I help you build?"
+	return novaResp.Output.Message.Content[0].Text, nil
 }

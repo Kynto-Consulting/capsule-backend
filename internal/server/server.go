@@ -25,10 +25,10 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start mock builder when CAPSULE_MOCK_BUILDER=true or AWS clients are absent.
-	// This simulates docker deployment state transitions so the CLI/frontend can
-	// observe queued → building → deploying → running without real ECS/ECR.
-	if os.Getenv("CAPSULE_MOCK_BUILDER") == "true" || deps.AWSClients == nil {
+	// Start mock builder ONLY when explicitly requested (local dev / demo).
+	// Never auto-activate based on AWS client state — real deploy worker handles
+	// all production builds.
+	if os.Getenv("CAPSULE_MOCK_BUILDER") == "true" {
 		StartMockBuilder(ctx, deps.DeploymentRepo, logger)
 	}
 
