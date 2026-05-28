@@ -8,11 +8,10 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/rds"
-	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -24,14 +23,15 @@ import (
 
 // DatabaseHandler handles managed database operations.
 type DatabaseHandler struct {
-	dbs               domain.DatabaseRepository
-	orgs              domain.OrganizationRepository
-	projects          domain.ProjectRepository
-	aws               *awsclient.Clients
-	secretKey         string
-	dbSubnetGroup     string
+	dbs                domain.DatabaseRepository
+	orgs               domain.OrganizationRepository
+	projects           domain.ProjectRepository
+	aws                *awsclient.Clients
+	secretKey          string
+	dbSubnetGroup      string
 	rdsSecurityGroupID string
-	logger            *slog.Logger
+	publicHost         string
+	logger             *slog.Logger
 }
 
 // NewDatabaseHandler creates a DatabaseHandler.
@@ -43,8 +43,12 @@ func NewDatabaseHandler(
 	secretKey string,
 	dbSubnetGroup string,
 	rdsSecurityGroupID string,
+	publicHost string,
 	logger *slog.Logger,
 ) *DatabaseHandler {
+	if publicHost == "" {
+		publicHost = "13.218.92.228"
+	}
 	return &DatabaseHandler{
 		dbs:                dbs,
 		orgs:               orgs,
@@ -53,6 +57,7 @@ func NewDatabaseHandler(
 		secretKey:          secretKey,
 		dbSubnetGroup:      dbSubnetGroup,
 		rdsSecurityGroupID: rdsSecurityGroupID,
+		publicHost:         publicHost,
 		logger:             logger,
 	}
 }
@@ -92,17 +97,7 @@ func (h *DatabaseHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type dbResponse struct {
-		domain.Database
-		ConnectionURL string `json:"connection_url"`
-	}
-
-	results := make([]dbResponse, 0, len(dbs))
-	for _, db := range dbs {
-		results = append(results, dbResponse{Database: *db, ConnectionURL: "****"})
-	}
-
-	respondJSON(w, http.StatusOK, map[string]any{"data": results})
+	respondJSON(w, http.StatusOK, map[string]any{"data": h.toResponseList(dbs)})
 }
 
 // Create provisions a new managed database.
@@ -134,63 +129,17 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = user // suppress unused warning; user is checked via org membership
+	_ = user
 
-	var req struct {
-		Name    string `json:"name"`
-		Engine  string `json:"engine"`
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
-		return
-	}
-	if req.Name == "" {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
-		return
-	}
-	if !validEngine(req.Engine) {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unsupported engine")
-		return
-	}
-
-	port, dbVersion := engineDefaults(req.Engine)
-	if req.Version != "" {
-		dbVersion = req.Version
-	}
-
-	// Create DB record with status "provisioning"
-	db, err := h.dbs.Create(r.Context(), &domain.Database{
-		OrgID:          orgID,
-		ProjectID:      &projectID,
-		Name:           req.Name,
-		Engine:         req.Engine,
-		Version:        dbVersion,
-		Port:           port,
-		DBName:         req.Name,
-		Status:         "provisioning",
-		CredentialsEnc: []byte{},
-	})
+	db, err := h.parseAndCreate(r, orgID, &projectID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create database record")
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
 		return
 	}
-
-	// Launch background provisioning goroutine
-	if isDockerEngine(req.Engine) {
-		go func(dbID uuid.UUID, engine string, dbPort int) {
-			time.Sleep(100 * time.Millisecond)
-			host := fmt.Sprintf("capsule-%s.internal", engine)
-			_ = h.dbs.UpdateStatus(context.Background(), dbID, "available", host, dbPort)
-		}(db.ID, req.Engine, port)
-	} else {
-		go h.provisionRDS(db)
-	}
-
-	respondJSON(w, http.StatusCreated, db)
+	respondJSON(w, http.StatusCreated, h.toResponse(db))
 }
 
-// Get returns a single database with decrypted connection URL.
+// Get returns a single database with connection URL.
 func (h *DatabaseHandler) Get(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
@@ -219,20 +168,10 @@ func (h *DatabaseHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connURL := "****"
-	if len(db.CredentialsEnc) > 0 {
-		connURL = h.buildConnectionURL(db)
-	}
-
-	type dbResponse struct {
-		domain.Database
-		ConnectionURL string `json:"connection_url"`
-	}
-
-	respondJSON(w, http.StatusOK, dbResponse{Database: *db, ConnectionURL: connURL})
+	respondJSON(w, http.StatusOK, h.toResponse(db))
 }
 
-// Delete soft-deletes a database and removes the RDS instance in the background.
+// Delete removes a database and its Docker container.
 func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
@@ -268,10 +207,7 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove RDS instance in background if AWS clients are available
-	if h.aws != nil {
-		go h.deleteRDSInstance(db)
-	}
+	go h.removeDockerContainer(db)
 
 	respondNoContent(w)
 }
@@ -295,15 +231,7 @@ func (h *DatabaseHandler) ListByOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type dbResponse struct {
-		domain.Database
-		ConnectionURL string `json:"connection_url"`
-	}
-	results := make([]dbResponse, 0, len(dbs))
-	for _, db := range dbs {
-		results = append(results, dbResponse{Database: *db, ConnectionURL: "****"})
-	}
-	respondJSON(w, http.StatusOK, map[string]any{"data": results})
+	respondJSON(w, http.StatusOK, map[string]any{"data": h.toResponseList(dbs)})
 }
 
 // CreateOrgLevel provisions a database not tied to any project.
@@ -321,22 +249,30 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 
 	_ = user
 
+	db, err := h.parseAndCreate(r, orgID, nil)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
+	}
+	respondJSON(w, http.StatusCreated, h.toResponse(db))
+}
+
+// --- shared create logic ---
+
+func (h *DatabaseHandler) parseAndCreate(r *http.Request, orgID uuid.UUID, projectID *uuid.UUID) (*domain.Database, error) {
 	var req struct {
 		Name    string `json:"name"`
 		Engine  string `json:"engine"`
 		Version string `json:"version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
-		return
+		return nil, fmt.Errorf("invalid request body")
 	}
 	if req.Name == "" {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
-		return
+		return nil, fmt.Errorf("name is required")
 	}
 	if !validEngine(req.Engine) {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unsupported engine")
-		return
+		return nil, fmt.Errorf("unsupported engine")
 	}
 
 	port, dbVersion := engineDefaults(req.Engine)
@@ -346,7 +282,7 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 
 	db, err := h.dbs.Create(r.Context(), &domain.Database{
 		OrgID:          orgID,
-		ProjectID:      nil,
+		ProjectID:      projectID,
 		Name:           req.Name,
 		Engine:         req.Engine,
 		Version:        dbVersion,
@@ -356,34 +292,19 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 		CredentialsEnc: []byte{},
 	})
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create database record")
-		return
+		return nil, fmt.Errorf("failed to create database record")
 	}
 
-	if isDockerEngine(req.Engine) {
-		go func(dbID uuid.UUID, engine string, dbPort int) {
-			time.Sleep(100 * time.Millisecond)
-			host := fmt.Sprintf("capsule-%s.internal", engine)
-			_ = h.dbs.UpdateStatus(context.Background(), dbID, "available", host, dbPort)
-		}(db.ID, req.Engine, port)
-	} else {
-		go h.provisionRDS(db)
-	}
+	go h.provisionDocker(db)
 
-	respondJSON(w, http.StatusCreated, db)
+	return db, nil
 }
 
-// --- helpers ---
+// --- Docker provisioning ---
 
-func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
+func (h *DatabaseHandler) provisionDocker(db *domain.Database) {
 	ctx := context.Background()
-	logger := h.logger.With("db_id", db.ID, "db_name", db.Name, "engine", db.Engine)
-
-	if h.aws == nil {
-		logger.Warn("AWS clients not initialised; skipping RDS provisioning")
-		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
-		return
-	}
+	logger := h.logger.With("db_id", db.ID, "name", db.Name, "engine", db.Engine)
 
 	password, err := generatePassword(24)
 	if err != nil {
@@ -392,105 +313,57 @@ func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
 		return
 	}
 
-	scopeID := db.OrgID
-	if db.ProjectID != nil {
-		scopeID = *db.ProjectID
-	}
-	instanceID := fmt.Sprintf("capsule-%s-%s", scopeID.String()[:8], db.Name)
+	image, envVars := dockerImageAndEnv(db.Engine, db.Version, db.DBName, password)
+	containerName := fmt.Sprintf("capsule-db-%s", db.ID.String())
+	containerPort := fmt.Sprintf("%d/tcp", db.Port)
 
-	var engineStr, engineVersion string
-	var port int32
-	if db.Engine == "postgres" {
-		engineStr = "postgres"
-		engineVersion = "15.4"
-		port = 5432
+	// Build docker run args
+	args := []string{"run", "-d", "--name", containerName,
+		"-p", fmt.Sprintf("0:%d", db.Port),
+		"--restart", "unless-stopped",
+	}
+	for _, e := range envVars {
+		args = append(args, "-e", e)
+	}
+	if db.Engine == "cockroachdb" {
+		args = append(args, image, "start-single-node", "--insecure", "--advertise-addr=localhost")
 	} else {
-		engineStr = "mysql"
-		engineVersion = "8.0"
-		port = 3306
-	}
-	if db.Version != "" {
-		engineVersion = db.Version
+		args = append(args, image)
 	}
 
-	input := &rds.CreateDBInstanceInput{
-		DBInstanceIdentifier: aws.String(instanceID),
-		DBInstanceClass:      aws.String("db.t3.micro"),
-		Engine:               aws.String(engineStr),
-		EngineVersion:        aws.String(engineVersion),
-		MasterUsername:       aws.String("capsuleadmin"),
-		MasterUserPassword:   aws.String(password),
-		DBName:               aws.String(db.DBName),
-		AllocatedStorage:     aws.Int32(20),
-		PubliclyAccessible:   aws.Bool(false),
-		MultiAZ:              aws.Bool(false),
-		Port:                 aws.Int32(port),
-	}
-
-	if h.dbSubnetGroup != "" {
-		input.DBSubnetGroupName = aws.String(h.dbSubnetGroup)
-	}
-	if h.rdsSecurityGroupID != "" {
-		input.VpcSecurityGroupIds = []string{h.rdsSecurityGroupID}
-	}
-
-	_, err = h.aws.RDS.CreateDBInstance(ctx, input)
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
 	if err != nil {
-		logger.Error("failed to create RDS instance", "error", err)
+		logger.Error("docker run failed", "error", err, "output", string(out))
+		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
+		return
+	}
+	containerID := strings.TrimSpace(string(out))
+
+	// Wait a moment for container to start and port to bind
+	time.Sleep(3 * time.Second)
+
+	// Get the mapped host port
+	portOut, err := exec.CommandContext(ctx, "docker", "port", containerID, containerPort).Output()
+	if err != nil {
+		logger.Error("docker port failed", "error", err)
 		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
 		return
 	}
 
-	// Poll until available (max 20 minutes, every 30 seconds)
-	deadline := time.Now().Add(20 * time.Minute)
-	var host string
-	var actualPort int
-
-	for time.Now().Before(deadline) {
-		time.Sleep(30 * time.Second)
-
-		desc, err := h.aws.RDS.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
-			DBInstanceIdentifier: aws.String(instanceID),
-		})
-		if err != nil {
-			logger.Warn("error describing RDS instance", "error", err)
-			continue
-		}
-		if len(desc.DBInstances) == 0 {
-			continue
-		}
-
-		inst := desc.DBInstances[0]
-		if inst.DBInstanceStatus == nil {
-			continue
-		}
-
-		logger.Info("RDS instance status", "status", *inst.DBInstanceStatus)
-
-		if *inst.DBInstanceStatus == "available" {
-			if inst.Endpoint != nil {
-				host = aws.ToString(inst.Endpoint.Address)
-				actualPort = int(aws.ToInt32(inst.Endpoint.Port))
-			}
-			break
-		}
-
-		// Terminal failure states
-		switch *inst.DBInstanceStatus {
-		case "failed", "incompatible-parameters", "incompatible-restore":
-			logger.Error("RDS instance entered failure state", "status", *inst.DBInstanceStatus)
-			_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
-			return
-		}
+	// portOut format: "0.0.0.0:54321\n" or ":::54321\n"
+	portStr := strings.TrimSpace(string(portOut))
+	if idx := strings.LastIndex(portStr, ":"); idx >= 0 {
+		portStr = portStr[idx+1:]
 	}
 
-	if host == "" {
-		logger.Error("RDS provisioning timed out")
+	var hostPort int
+	if _, err := fmt.Sscanf(portStr, "%d", &hostPort); err != nil || hostPort == 0 {
+		logger.Error("could not parse host port", "raw", string(portOut))
 		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
 		return
 	}
 
-	// Encrypt credentials
+	// Store encrypted credentials
 	credsJSON, _ := json.Marshal(map[string]string{
 		"username": "capsuleadmin",
 		"password": password,
@@ -502,51 +375,50 @@ func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
 		return
 	}
 
-	// Persist credentials directly via a raw update (extend UpdateStatus to also set creds)
-	// We use a direct pool update via a thin helper to avoid polluting the interface.
-	// For now store them via a separate approach: update status then patch creds.
-	if err := h.dbs.UpdateStatus(ctx, db.ID, "available", host, actualPort); err != nil {
+	if err := h.dbs.UpdateStatus(ctx, db.ID, "available", h.publicHost, hostPort); err != nil {
 		logger.Error("failed to update database status", "error", err)
 		return
 	}
+	if err := h.dbs.UpdateCredentials(ctx, db.ID, enc); err != nil {
+		logger.Error("failed to store credentials", "error", err)
+	}
 
-	// Store encrypted credentials via a secondary update — retrieve the record and re-save.
-	// Because DatabaseRepository.Create is the only write that accepts CredentialsEnc,
-	// we reach into the concrete type through the interface. Instead, we implement a
-	// thin unexported helper using the concrete *DatabaseRepository directly by passing
-	// the pool — but since we only have the interface here, we do a best-effort approach:
-	// the credentials are stored in the provisioning step via the concrete repo's pool
-	// if the handler was wired with a concrete type.
-	// A clean solution: expose UpdateCredentials on the interface. For now we store via
-	// a context value or accept the interface limitation and log.
-	logger.Info("RDS instance available", "host", host, "port", actualPort, "db_id", db.ID)
-	logger.Info("credentials encrypted and ready", "enc_len", len(enc))
-	// TODO: call UpdateCredentials once the interface is extended.
-	_ = enc
+	logger.Info("database provisioned", "host", h.publicHost, "port", hostPort, "container", containerName)
 }
 
-func (h *DatabaseHandler) deleteRDSInstance(db *domain.Database) {
-	ctx := context.Background()
-	scopeID := db.OrgID
-	if db.ProjectID != nil {
-		scopeID = *db.ProjectID
-	}
-	instanceID := fmt.Sprintf("capsule-%s-%s", scopeID.String()[:8], db.Name)
+func (h *DatabaseHandler) removeDockerContainer(db *domain.Database) {
+	name := fmt.Sprintf("capsule-db-%s", db.ID.String())
+	_ = exec.Command("docker", "stop", name).Run()
+	_ = exec.Command("docker", "rm", name).Run()
+}
 
-	_, err := h.aws.RDS.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
-		DBInstanceIdentifier:   aws.String(instanceID),
-		SkipFinalSnapshot:      aws.Bool(true),
-		DeleteAutomatedBackups: aws.Bool(true),
-	})
-	if err != nil {
-		h.logger.Error("failed to delete RDS instance", "instance_id", instanceID, "error", err)
+// --- response helpers ---
+
+type dbResponse struct {
+	domain.Database
+	ConnectionURL string `json:"connection_url"`
+}
+
+func (h *DatabaseHandler) toResponse(db *domain.Database) dbResponse {
+	return dbResponse{Database: *db, ConnectionURL: h.buildConnectionURL(db)}
+}
+
+func (h *DatabaseHandler) toResponseList(dbs []*domain.Database) []dbResponse {
+	out := make([]dbResponse, 0, len(dbs))
+	for _, db := range dbs {
+		out = append(out, h.toResponse(db))
 	}
+	return out
 }
 
 func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
+	if len(db.CredentialsEnc) == 0 || db.Host == "" || db.Port == 0 {
+		return ""
+	}
+
 	plain, err := crypto.Decrypt(db.CredentialsEnc, h.secretKey)
 	if err != nil {
-		return "****"
+		return ""
 	}
 
 	var creds struct {
@@ -554,36 +426,94 @@ func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
 		Password string `json:"password"`
 	}
 	if err := json.Unmarshal(plain, &creds); err != nil {
-		return "****"
+		return ""
 	}
 
+	h2, p2 := db.Host, db.Port
 	switch db.Engine {
 	case "postgres":
-		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
-			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
+	case "mysql", "mariadb":
+		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
 	case "redis":
 		if creds.Password != "" {
-			return fmt.Sprintf("redis://:%s@%s:%d", creds.Password, db.Host, db.Port)
+			return fmt.Sprintf("redis://:%s@%s:%d", creds.Password, h2, p2)
 		}
-		return fmt.Sprintf("redis://%s:%d", db.Host, db.Port)
-	case "mariadb":
-		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
-			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+		return fmt.Sprintf("redis://%s:%d", h2, p2)
+	case "mongodb":
+		return fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
 	case "cassandra":
-		return fmt.Sprintf("cassandra://%s:%s@%s:%d",
-			creds.Username, creds.Password, db.Host, db.Port)
+		return fmt.Sprintf("cassandra://%s:%s@%s:%d", creds.Username, creds.Password, h2, p2)
 	case "clickhouse":
-		return fmt.Sprintf("clickhouse://%s:%s@%s:%d/%s",
-			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+		return fmt.Sprintf("clickhouse://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
 	case "elasticsearch":
-		return fmt.Sprintf("http://%s:%s@%s:%d",
-			creds.Username, creds.Password, db.Host, db.Port)
+		return fmt.Sprintf("http://%s:%s@%s:%d", creds.Username, creds.Password, h2, p2)
 	case "cockroachdb":
-		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable",
-			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable", creds.Username, creds.Password, h2, p2, db.DBName)
 	default:
-		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s",
-			creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+		return fmt.Sprintf("%s://%s:%s@%s:%d/%s", db.Engine, creds.Username, creds.Password, h2, p2, db.DBName)
+	}
+}
+
+// --- engine metadata ---
+
+func dockerImageAndEnv(engine, version, dbName, password string) (image string, envVars []string) {
+	switch engine {
+	case "postgres":
+		return fmt.Sprintf("postgres:%s", version), []string{
+			"POSTGRES_USER=capsuleadmin",
+			"POSTGRES_PASSWORD=" + password,
+			"POSTGRES_DB=" + dbName,
+		}
+	case "mysql":
+		return fmt.Sprintf("mysql:%s", version), []string{
+			"MYSQL_ROOT_PASSWORD=" + password,
+			"MYSQL_USER=capsuleadmin",
+			"MYSQL_PASSWORD=" + password,
+			"MYSQL_DATABASE=" + dbName,
+		}
+	case "mariadb":
+		return fmt.Sprintf("mariadb:%s", version), []string{
+			"MARIADB_ROOT_PASSWORD=" + password,
+			"MARIADB_USER=capsuleadmin",
+			"MARIADB_PASSWORD=" + password,
+			"MARIADB_DATABASE=" + dbName,
+		}
+	case "redis":
+		return fmt.Sprintf("redis:%s-alpine", version), []string{
+			"REDIS_PASSWORD=" + password,
+		}
+	case "mongodb":
+		return fmt.Sprintf("mongo:%s", version), []string{
+			"MONGO_INITDB_ROOT_USERNAME=capsuleadmin",
+			"MONGO_INITDB_ROOT_PASSWORD=" + password,
+			"MONGO_INITDB_DATABASE=" + dbName,
+		}
+	case "cassandra":
+		return fmt.Sprintf("cassandra:%s", version), []string{
+			"CASSANDRA_USER=capsuleadmin",
+			"CASSANDRA_PASSWORD=" + password,
+		}
+	case "clickhouse":
+		return fmt.Sprintf("clickhouse/clickhouse-server:%s", version), []string{
+			"CLICKHOUSE_USER=capsuleadmin",
+			"CLICKHOUSE_PASSWORD=" + password,
+			"CLICKHOUSE_DB=" + dbName,
+		}
+	case "elasticsearch":
+		return fmt.Sprintf("elasticsearch:%s", version), []string{
+			"discovery.type=single-node",
+			"ELASTIC_PASSWORD=" + password,
+			"xpack.security.enabled=true",
+		}
+	case "cockroachdb":
+		return "cockroachdb/cockroach:latest", nil
+	default:
+		return fmt.Sprintf("postgres:%s", version), []string{
+			"POSTGRES_USER=capsuleadmin",
+			"POSTGRES_PASSWORD=" + password,
+			"POSTGRES_DB=" + dbName,
+		}
 	}
 }
 
@@ -600,7 +530,7 @@ func engineDefaults(e string) (port int, version string) {
 	case "mysql", "mariadb":
 		return 3306, "8.0"
 	case "redis":
-		return 6379, "7.0"
+		return 6379, "7"
 	case "mongodb":
 		return 27017, "6.0"
 	case "cassandra":
@@ -608,22 +538,12 @@ func engineDefaults(e string) (port int, version string) {
 	case "clickhouse":
 		return 8123, "24.3"
 	case "elasticsearch":
-		return 9200, "8.13"
+		return 9200, "8.13.0"
 	case "cockroachdb":
-		return 26257, "23.2"
+		return 26257, "latest"
 	default: // postgres
-		return 5432, "15.4"
+		return 5432, "15"
 	}
-}
-
-// isDockerEngine returns true for engines provisioned as internal Docker containers
-// rather than via AWS RDS.
-func isDockerEngine(e string) bool {
-	switch e {
-	case "redis", "mongodb", "cassandra", "clickhouse", "elasticsearch", "cockroachdb":
-		return true
-	}
-	return false
 }
 
 const passwordChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -640,17 +560,3 @@ func generatePassword(length int) (string, error) {
 	}
 	return string(buf), nil
 }
-
-// rdsInstanceStatus returns the current status string for an RDS instance.
-func rdsInstanceStatus(instances []rdstypes.DBInstance) string {
-	if len(instances) == 0 {
-		return ""
-	}
-	if instances[0].DBInstanceStatus == nil {
-		return ""
-	}
-	return *instances[0].DBInstanceStatus
-}
-
-// ensure the helper is used (suppress unused warning).
-var _ = rdsInstanceStatus

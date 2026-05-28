@@ -103,6 +103,7 @@ func main() {
 		ALBDNSName:         cfg.ALBDNSName,
 		DBSubnetGroup:      cfg.DBSubnetGroup,
 		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
+		PublicHost:         cfg.PublicHost,
 		SecretKey:          cfg.SecretKey,
 		ArtifactsBucket:    cfg.ArtifactsBucket,
 		WorkerRepo:         workerRepo,

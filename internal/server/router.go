@@ -36,6 +36,7 @@ type Deps struct {
 	ALBDNSName         string
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
+	PublicHost         string
 	SecretKey          string
 	ArtifactsBucket    string
 }
@@ -49,7 +50,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	databaseHandler   := handlers.NewDatabaseHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey,
-		deps.DBSubnetGroup, deps.RDSSecurityGroupID, logger,
+		deps.DBSubnetGroup, deps.RDSSecurityGroupID, deps.PublicHost, logger,
 	)
 	domainHandler := handlers.NewDomainHandler(
 		deps.DomainRepo, deps.OrgRepo, deps.ProjRepo,

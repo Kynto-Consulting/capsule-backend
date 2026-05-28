@@ -35,6 +35,7 @@ type Config struct {
 	ALBDNSName         string
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
+	PublicHost         string
 
 	// Platform domain (e.g. apps.tumi-ai.com) — used to build default URLs shown to users
 	AppsDomain   string
@@ -90,6 +91,7 @@ func Load() (*Config, error) {
 		ALBDNSName:         os.Getenv("ALB_DNS_NAME"),
 		DBSubnetGroup:      getEnv("DB_SUBNET_GROUP", "capsule"),
 		RDSSecurityGroupID: os.Getenv("RDS_SECURITY_GROUP_ID"),
+		PublicHost:         getEnv("CAPSULE_PUBLIC_HOST", "13.218.92.228"),
 
 		AppsDomain:   getEnv("CAPSULE_APPS_DOMAIN", "apps.tumi-ai.com"),
 		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", "capsule-static-348973061281"),
