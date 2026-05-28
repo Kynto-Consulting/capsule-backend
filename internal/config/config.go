@@ -37,7 +37,7 @@ type Config struct {
 	RDSSecurityGroupID string
 	PublicHost         string
 
-	// Platform domain (e.g. apps.tumi-ai.com) — used to build default URLs shown to users
+	// Platform domain (e.g. apps.example.com) — used to build default URLs shown to users
 	AppsDomain   string
 	StaticBucket string
 }
@@ -70,6 +70,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("CAPSULE_SECRET_KEY is required")
 	}
 
+	accountID := os.Getenv("AWS_ACCOUNT_ID")
+
 	return &Config{
 		Env:                env,
 		Port:               port,
@@ -83,19 +85,33 @@ func Load() (*Config, error) {
 		RateLimitBurst:     burst,
 		CORSAllowedOrigins: splitEnvList("CORS_ALLOWED_ORIGINS", defaultCORSAllowedOrigins(env)),
 
-		AWSRegion:          getEnv("AWS_DEFAULT_REGION", "us-east-1"),
-		AWSAccountID:       os.Getenv("AWS_ACCOUNT_ID"),
-		ECRRegistry:        os.Getenv("ECR_REGISTRY"),
-		ArtifactsBucket:    getEnv("ARTIFACTS_BUCKET", "capsule-artifacts-348973061281"),
+		AWSRegion:       getEnv("AWS_DEFAULT_REGION", "us-east-1"),
+		AWSAccountID:    accountID,
+		ECRRegistry:     os.Getenv("ECR_REGISTRY"),
+		ArtifactsBucket: getEnv("ARTIFACTS_BUCKET", artifactsBucketDefault(accountID)),
 
 		ALBDNSName:         os.Getenv("ALB_DNS_NAME"),
 		DBSubnetGroup:      getEnv("DB_SUBNET_GROUP", "capsule"),
 		RDSSecurityGroupID: os.Getenv("RDS_SECURITY_GROUP_ID"),
-		PublicHost:         getEnv("CAPSULE_PUBLIC_HOST", "13.218.92.228"),
+		PublicHost:         os.Getenv("CAPSULE_PUBLIC_HOST"),
 
-		AppsDomain:   getEnv("CAPSULE_APPS_DOMAIN", "apps.tumi-ai.com"),
-		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", "capsule-static-348973061281"),
+		AppsDomain:   os.Getenv("CAPSULE_APPS_DOMAIN"),
+		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", staticBucketDefault(accountID)),
 	}, nil
+}
+
+func artifactsBucketDefault(accountID string) string {
+	if accountID != "" {
+		return "capsule-artifacts-" + accountID
+	}
+	return "capsule-artifacts"
+}
+
+func staticBucketDefault(accountID string) string {
+	if accountID != "" {
+		return "capsule-static-" + accountID
+	}
+	return "capsule-static"
 }
 
 func getEnv(key, fallback string) string {
@@ -107,9 +123,11 @@ func getEnv(key, fallback string) string {
 
 func defaultCORSAllowedOrigins(env string) []string {
 	if env == "production" {
-		return []string{"https://app.tumi-ai.com"}
+		if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
+			return strings.Split(origins, ",")
+		}
+		return []string{}
 	}
-
 	return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
 }
 
