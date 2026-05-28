@@ -41,6 +41,14 @@ type Config struct {
 	AppsDomain   string
 	StaticBucket string
 
+	// ECS Fargate deploy targets
+	ECSCluster          string // ARN or name of the ECS cluster
+	ECSSubnets          string // comma-separated subnet IDs for Fargate tasks
+	ECSSecurityGroup    string // SG ID attached to Fargate tasks
+	ECSExecutionRoleARN string // IAM role ARN for ECS task execution (ECR pull + CloudWatch logs)
+	ALBListenerARN      string // ARN of the ALB HTTPS/HTTP listener for dynamic rules
+	VpcID               string // VPC ID used when creating ALB target groups
+
 	// Observability
 	SentryDSN string
 }
@@ -100,6 +108,13 @@ func Load() (*Config, error) {
 
 		AppsDomain:   os.Getenv("CAPSULE_APPS_DOMAIN"),
 		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", staticBucketDefault(accountID)),
+
+		ECSCluster:          os.Getenv("ECS_CLUSTER"),
+		ECSSubnets:          os.Getenv("ECS_SUBNETS"),
+		ECSSecurityGroup:    os.Getenv("ECS_SECURITY_GROUP"),
+		ECSExecutionRoleARN: os.Getenv("ECS_EXECUTION_ROLE_ARN"),
+		ALBListenerARN:      os.Getenv("ALB_LISTENER_ARN"),
+		VpcID:               os.Getenv("VPC_ID"),
 
 		SentryDSN: os.Getenv("SENTRY_DSN"),
 	}, nil

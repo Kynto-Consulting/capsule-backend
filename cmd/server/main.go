@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -109,7 +110,17 @@ func main() {
 	// Worker runs with a cancellable context so graceful shutdown waits for
 	// in-flight deployments to finish before the process exits.
 	workerCtx, workerCancel := context.WithCancel(context.Background())
-	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, logger)
+	fargateConfig := service.FargateConfig{
+		Cluster:          cfg.ECSCluster,
+		Subnets:          splitComma(cfg.ECSSubnets),
+		SecurityGroup:    cfg.ECSSecurityGroup,
+		ExecutionRoleARN: cfg.ECSExecutionRoleARN,
+		ALBListenerARN:   cfg.ALBListenerARN,
+		VpcID:            cfg.VpcID,
+		AppsDomain:       cfg.AppsDomain,
+		ECRRegistry:      cfg.ECRRegistry,
+	}
+	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, fargateConfig, logger)
 	workerDone := make(chan struct{})
 	go func() {
 		deployWorker.Run(workerCtx)
@@ -158,4 +169,17 @@ func main() {
 		logger.Error("server exited with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func splitComma(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

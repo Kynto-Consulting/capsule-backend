@@ -57,6 +57,7 @@ type DeploymentRepository interface {
 	Cancel(ctx context.Context, id uuid.UUID) error
 	UpdateHostPort(ctx context.Context, id uuid.UUID, hostPort int) error
 	UpdateFunctionURL(ctx context.Context, id uuid.UUID, functionURL string) error
+	UpdateECSInfo(ctx context.Context, id uuid.UUID, serviceARN, taskDefARN, appURL string) error
 	GetLatestSuccessfulByProject(ctx context.Context, projectID uuid.UUID) (*Deployment, error)
 	ListQueued(ctx context.Context, page, perPage int) ([]*Deployment, int, error)
 }

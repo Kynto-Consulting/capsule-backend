@@ -27,7 +27,8 @@ func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment)
 		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
 		RETURNING id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		          container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		          started_at, completed_at, created_at, source_key, host_port, function_url`
+		          started_at, completed_at, created_at, source_key, host_port, function_url,
+		          ecs_service_arn, ecs_task_def_arn, app_url`
 
 	var out domain.Deployment
 	var gitSHA, imageTag *string
@@ -38,6 +39,7 @@ func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment)
 		&imageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
 		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
 		&out.CreatedAt, &out.SourceKey, &out.HostPort, &out.FunctionURL,
+		&out.ECSServiceARN, &out.ECSTaskDefARN, &out.AppURL,
 	)
 	if err != nil {
 		fmt.Printf("DATABASE ERROR IN CREATE DEPLOYMENT: %v\n", err)
@@ -56,7 +58,8 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at, source_key, host_port, function_url
+		       started_at, completed_at, created_at, source_key, host_port, function_url,
+		       ecs_service_arn, ecs_task_def_arn, app_url
 		FROM deployments WHERE id = $1`
 	return r.scanOne(ctx, q, id)
 }
@@ -65,7 +68,8 @@ func (r *DeploymentRepository) ListByProject(ctx context.Context, projectID uuid
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at, source_key, host_port, function_url
+		       started_at, completed_at, created_at, source_key, host_port, function_url,
+		       ecs_service_arn, ecs_task_def_arn, app_url
 		FROM deployments WHERE project_id = $1
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
@@ -152,6 +156,7 @@ func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*do
 		&imageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
 		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
 		&d.CreatedAt, &d.SourceKey, &d.HostPort, &d.FunctionURL,
+		&d.ECSServiceARN, &d.ECSTaskDefARN, &d.AppURL,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning deployment: %w", err)
@@ -180,10 +185,19 @@ func (r *DeploymentRepository) UpdateFunctionURL(ctx context.Context, id uuid.UU
 	return err
 }
 
+func (r *DeploymentRepository) UpdateECSInfo(ctx context.Context, id uuid.UUID, serviceARN, taskDefARN, appURL string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE deployments SET ecs_service_arn = $1, ecs_task_def_arn = $2, app_url = $3 WHERE id = $4`,
+		serviceARN, taskDefARN, appURL, id,
+	)
+	return err
+}
+
 func (r *DeploymentRepository) GetLatestSuccessfulByProject(ctx context.Context, projectID uuid.UUID) (*domain.Deployment, error) {
 	const q = `SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 	                  container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-	                  started_at, completed_at, created_at, source_key, host_port, function_url
+	                  started_at, completed_at, created_at, source_key, host_port, function_url,
+	                  ecs_service_arn, ecs_task_def_arn, app_url
 	           FROM deployments
 	           WHERE project_id = $1 AND status = 'success'
 	           ORDER BY created_at DESC LIMIT 1`
@@ -194,9 +208,10 @@ func (r *DeploymentRepository) ListQueued(ctx context.Context, page, perPage int
 	const q = `
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
-		       started_at, completed_at, created_at, source_key, host_port, function_url
+		       started_at, completed_at, created_at, source_key, host_port, function_url,
+		       ecs_service_arn, ecs_task_def_arn, app_url
 		FROM deployments
-		WHERE status = 'queued' AND (build_strategy = 'docker' OR build_strategy = '' OR build_strategy IS NULL)
+		WHERE status = 'queued' AND (build_strategy IN ('docker', 'fargate') OR build_strategy = '' OR build_strategy IS NULL)
 		ORDER BY created_at ASC LIMIT $1 OFFSET $2`
 
 	rows, err := r.pool.Query(ctx, q, perPage, (page-1)*perPage)
@@ -216,7 +231,7 @@ func (r *DeploymentRepository) ListQueued(ctx context.Context, page, perPage int
 
 	var total int
 	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND (build_strategy = 'docker' OR build_strategy = '' OR build_strategy IS NULL)`,
+		`SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND (build_strategy IN ('docker', 'fargate') OR build_strategy = '' OR build_strategy IS NULL)`,
 	).Scan(&total)
 
 	return out, total, nil

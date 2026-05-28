@@ -74,6 +74,10 @@ type Deployment struct {
 	SourceKey        *string    `json:"source_key,omitempty"`
 	HostPort         *int       `json:"host_port,omitempty"`
 	FunctionURL      *string    `json:"function_url,omitempty"`
+	// ECS Fargate fields
+	ECSServiceARN *string `json:"ecs_service_arn,omitempty"`
+	ECSTaskDefARN *string `json:"ecs_task_def_arn,omitempty"`
+	AppURL        *string `json:"app_url,omitempty"`
 }
 
 type BuildLog struct {
