@@ -79,6 +79,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger, deps.AWSClients)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
 	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
+	adminHandler   := handlers.NewAdminHandler(deps.UserRepo)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
@@ -271,6 +272,14 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 
 			// AWS Spend and Credits tracking
 			r.Get("/aws/billing", billingHandler.GetBillingSummary)
+
+			// Admin — user management (admin role enforced per-handler)
+			r.Get("/admin/users", adminHandler.ListUsers)
+			r.Post("/admin/users", adminHandler.CreateUser)
+			r.Patch("/admin/users/{userID}/suspend", adminHandler.SuspendUser)
+			r.Patch("/admin/users/{userID}/unsuspend", adminHandler.UnsuspendUser)
+			r.Patch("/admin/users/{userID}/role", adminHandler.SetUserRole)
+			r.Delete("/admin/users/{userID}", adminHandler.DeleteUser)
 		})
 	})
 

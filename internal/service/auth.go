@@ -136,6 +136,10 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*domai
 		return nil, nil, domain.ErrUnauthorized
 	}
 
+	if user.Role == "suspended" {
+		return nil, nil, domain.ErrUnauthorized
+	}
+
 	pair, err := s.issueTokenPair(user)
 	if err != nil {
 		return nil, nil, err

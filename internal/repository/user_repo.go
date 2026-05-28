@@ -113,3 +113,59 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// ListAll returns all users (including suspended) ordered by created_at, excluding hard-deleted.
+func (r *UserRepository) ListAll(ctx context.Context, page, perPage int) ([]*domain.User, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 200 {
+		perPage = 50
+	}
+	offset := (page - 1) * perPage
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting users: %w", err)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, password_hash, name, avatar_url, role,
+		       email_verified_at, last_login_at, created_at, updated_at
+		FROM users WHERE deleted_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2`, perPage, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing users: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(
+			&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.AvatarURL, &u.Role,
+			&u.EmailVerifiedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scanning user: %w", err)
+		}
+		out = append(out, &u)
+	}
+	return out, total, nil
+}
+
+// SetRole updates a user's role (used by admin to suspend/restore/promote users).
+func (r *UserRepository) SetRole(ctx context.Context, id uuid.UUID, role string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET role = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+		id, role)
+	if err != nil {
+		return fmt.Errorf("setting user role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

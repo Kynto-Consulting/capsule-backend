@@ -657,7 +657,57 @@ func callMockOrRealClaude(ctx context.Context, awsClients *awsclient.Clients, pr
 func getMockAIResponse(userPrompt string) string {
 	lower := strings.ToLower(userPrompt)
 	if strings.Contains(lower, "dockerfile") {
-		return `# Stage 1: Build
+		switch {
+		case strings.Contains(lower, "node"):
+			return `# Stage 1: Build
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+RUN npm run build
+
+# Stage 2: Production image
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["node", "dist/index.js"]`
+		case strings.Contains(lower, "python"):
+			return `# Stage 1: Build
+FROM python:3.12-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+COPY . .
+
+# Stage 2: Production image
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY --from=builder /install /usr/local
+COPY --from=builder /app .
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`
+		case strings.Contains(lower, "rust"):
+			return `# Stage 1: Build
+FROM rust:1.77-alpine AS builder
+RUN apk add --no-cache musl-dev
+WORKDIR /app
+COPY Cargo.* ./
+RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --release
+COPY src ./src
+RUN touch src/main.rs && cargo build --release
+
+# Stage 2: Final minimal image
+FROM scratch
+COPY --from=builder /app/target/release/app /app
+EXPOSE 8080
+ENTRYPOINT ["/app"]`
+		default: // go
+			return `# Stage 1: Build
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -671,6 +721,7 @@ WORKDIR /
 COPY --from=builder /app/server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]`
+		}
 	}
 	if strings.Contains(lower, "build log") || strings.Contains(lower, "fail") {
 		return `### Build Failure Analysis 🔍

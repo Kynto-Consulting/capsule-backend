@@ -14,6 +14,9 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	Update(ctx context.Context, user *User) (*User, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+	// Admin operations
+	ListAll(ctx context.Context, page, perPage int) ([]*User, int, error)
+	SetRole(ctx context.Context, id uuid.UUID, role string) error
 }
 
 // OrganizationRepository handles org persistence.
