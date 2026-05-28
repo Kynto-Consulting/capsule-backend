@@ -17,10 +17,21 @@ type Server struct {
 	http    *http.Server
 	logger  *slog.Logger
 	version string
+	cancel  context.CancelFunc
 }
 
 func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Server {
 	router := newRouter(cfg, logger, version, deps)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start mock builder when CAPSULE_MOCK_BUILDER=true or AWS clients are absent.
+	// This simulates docker deployment state transitions so the CLI/frontend can
+	// observe queued → building → deploying → running without real ECS/ECR.
+	if os.Getenv("CAPSULE_MOCK_BUILDER") == "true" || deps.AWSClients == nil {
+		StartMockBuilder(ctx, deps.DeploymentRepo, logger)
+	}
+
 	return &Server{
 		http: &http.Server{
 			Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -31,6 +42,7 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 		},
 		logger:  logger,
 		version: version,
+		cancel:  cancel,
 	}
 }
 
@@ -53,10 +65,13 @@ func (s *Server) Run() error {
 
 	select {
 	case err := <-errCh:
+		s.cancel()
 		return fmt.Errorf("server error: %w", err)
 	case sig := <-quit:
 		s.logger.Info("shutting down", "signal", sig)
 	}
+
+	s.cancel() // stop background workers
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

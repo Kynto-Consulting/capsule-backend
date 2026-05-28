@@ -58,6 +58,7 @@ type DeploymentRepository interface {
 	UpdateHostPort(ctx context.Context, id uuid.UUID, hostPort int) error
 	UpdateFunctionURL(ctx context.Context, id uuid.UUID, functionURL string) error
 	GetLatestSuccessfulByProject(ctx context.Context, projectID uuid.UUID) (*Deployment, error)
+	ListQueued(ctx context.Context, page, perPage int) ([]*Deployment, int, error)
 }
 
 // EnvVarRepository handles environment variable persistence.

@@ -190,6 +190,38 @@ func (r *DeploymentRepository) GetLatestSuccessfulByProject(ctx context.Context,
 	return r.scanOne(ctx, q, projectID)
 }
 
+func (r *DeploymentRepository) ListQueued(ctx context.Context, page, perPage int) ([]*domain.Deployment, int, error) {
+	const q = `
+		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
+		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
+		       started_at, completed_at, created_at, source_key, host_port, function_url
+		FROM deployments
+		WHERE status = 'queued' AND (build_strategy = 'docker' OR build_strategy = '' OR build_strategy IS NULL)
+		ORDER BY created_at ASC LIMIT $1 OFFSET $2`
+
+	rows, err := r.pool.Query(ctx, q, perPage, (page-1)*perPage)
+	if err != nil {
+		return nil, 0, fmt.Errorf("querying queued deployments: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Deployment
+	for rows.Next() {
+		d, err := r.scanRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, d)
+	}
+
+	var total int
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM deployments WHERE status = 'queued' AND (build_strategy = 'docker' OR build_strategy = '' OR build_strategy IS NULL)`,
+	).Scan(&total)
+
+	return out, total, nil
+}
+
 func (r *DeploymentRepository) Cancel(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE deployments SET status = 'cancelled', completed_at = now() WHERE id = $1 AND status IN ('queued','building','deploying')`,
