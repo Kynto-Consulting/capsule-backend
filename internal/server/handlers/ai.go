@@ -724,19 +724,40 @@ ENTRYPOINT ["/server"]`
 		}
 	}
 	if strings.Contains(lower, "build log") || strings.Contains(lower, "fail") {
-		return `### Build Failure Analysis 🔍
+		// Extract actual error lines from the prompt (which contains real build logs)
+		var errorLines []string
+		for _, line := range strings.Split(userPrompt, "\n") {
+			l := strings.ToLower(line)
+			if strings.Contains(l, "[error]") || strings.Contains(l, "error:") ||
+				strings.Contains(l, "failed") || strings.Contains(l, "non-zero code") ||
+				strings.Contains(l, "exit status") || strings.Contains(l, "unexpected") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed != "" {
+					errorLines = append(errorLines, trimmed)
+				}
+			}
+		}
 
-**Reason:** The build failed during Go package dependency downloading due to an invalid package path in ` + "`" + `go.mod` + "`" + `.
+		snippet := "No specific error lines detected in logs."
+		if len(errorLines) > 0 {
+			if len(errorLines) > 4 {
+				errorLines = errorLines[:4]
+			}
+			snippet = strings.Join(errorLines, "\n")
+		}
 
-**Error Log Snippet:**
-` + "```" + `
-go: kynto/capsule/broken-pkg@v1.0.0: malformed module path
-` + "```" + `
+		return fmt.Sprintf(`### Build Failure Analysis 🔍
+
+**Detected Error(s):**
+`+"```"+`
+%s
+`+"```"+`
 
 **Recommended Fixes:**
-1. Check ` + "`" + `go.mod` + "`" + ` at line 14 and verify the path to dependencies.
-2. Run ` + "`" + `go mod tidy` + "`" + ` locally to clean up the module structure.
-3. Commit and push the updated dependencies.`
+1. Review the error above — it points to the root cause.
+2. Check your Dockerfile, dependency files, and source code for typos or missing files.
+3. Run the build command locally to reproduce and fix the issue.
+4. Ensure all required files are included in your source archive.`, snippet)
 	}
 	if strings.Contains(lower, "optimize") || strings.Contains(lower, "cost") {
 		return `### Cost Optimization Recommendation 💡
