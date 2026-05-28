@@ -22,7 +22,7 @@ func NewOrgHandler(repo domain.OrganizationRepository) *OrgHandler {
 
 type createOrgRequest struct {
 	Name string `json:"name" validate:"required,min=1,max=100"`
-	Slug string `json:"slug" validate:"required,min=1,max=50,alphanum"`
+	Slug string `json:"slug" validate:"required,min=1,max=50,slug"`
 }
 
 func (h *OrgHandler) Create(w http.ResponseWriter, r *http.Request) {
