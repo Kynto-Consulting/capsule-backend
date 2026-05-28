@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -230,6 +232,32 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 }
 
+// detectExposePort reads a Dockerfile and returns the first EXPOSE port.
+// Falls back to 3000 if none found.
+func detectExposePort(dockerfilePath string) int {
+	f, err := os.Open(dockerfilePath)
+	if err != nil {
+		return 3000
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		upper := strings.ToUpper(line)
+		if strings.HasPrefix(upper, "EXPOSE ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				// Strip /tcp or /udp suffix
+				portStr := strings.Split(parts[1], "/")[0]
+				if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+					return p
+				}
+			}
+		}
+	}
+	return 3000
+}
+
 // runDockerDeploy handles the docker build + run flow.
 func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.UUID, buildDir, imageName string, hostPort int) {
 	// --- ensure Dockerfile exists ---
@@ -264,6 +292,10 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	}
 	w.appendLog(ctx, id, "Deploying container...")
 
+	// --- detect container port from Dockerfile ---
+	containerPort := detectExposePort(dockerfilePath)
+	w.appendLog(ctx, id, fmt.Sprintf("Detected container port: %d", containerPort))
+
 	// --- stop and remove old container ---
 	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
 	_ = rmCmd.Run()
@@ -272,8 +304,8 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	runCmd := exec.CommandContext(ctx, "docker", "run", "-d",
 		"--name", imageName,
 		"--restart", "unless-stopped",
-		"-e", "PORT=3000",
-		"-p", fmt.Sprintf("%d:3000", hostPort),
+		"-e", fmt.Sprintf("PORT=%d", containerPort),
+		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
 		imageName,
 	)
 	runOut, err := runCmd.CombinedOutput()
