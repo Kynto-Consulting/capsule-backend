@@ -14,21 +14,25 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // Clients holds initialised AWS service clients.
 type Clients struct {
-	ECR     *ecr.Client
-	RDS     *rds.Client
-	Route53 *route53.Client
-	Bedrock *bedrockruntime.Client
-	S3      *s3.Client
-	SES     *sesv2.Client
-	Lambda  *lambda.Client
-	CE      *costexplorer.Client
-	Region  string
-	Account string
+	ECR       *ecr.Client
+	RDS       *rds.Client
+	Route53   *route53.Client
+	Bedrock   *bedrockruntime.Client
+	S3        *s3.Client
+	SES       *sesv2.Client
+	Lambda    *lambda.Client
+	CE        *costexplorer.Client
+	Scheduler *scheduler.Client
+	SQS       *sqs.Client
+	Region    string
+	Account   string
 }
 
 // New creates AWS service clients using static credentials.
@@ -70,15 +74,17 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 	}
 
 	return &Clients{
-		ECR:     ecr.NewFromConfig(cfg),
-		RDS:     rds.NewFromConfig(cfg),
-		Route53: route53.NewFromConfig(cfg),
-		Bedrock: bedrockruntime.NewFromConfig(cfg),
-		S3:      s3.NewFromConfig(cfg),
-		SES:     sesv2.NewFromConfig(cfg),
-		Lambda:  lambda.NewFromConfig(cfg),
-		CE:      costexplorer.NewFromConfig(ceCfg),
-		Region:  region,
-		Account: account,
+		ECR:       ecr.NewFromConfig(cfg),
+		RDS:       rds.NewFromConfig(cfg),
+		Route53:   route53.NewFromConfig(cfg),
+		Bedrock:   bedrockruntime.NewFromConfig(cfg),
+		S3:        s3.NewFromConfig(cfg),
+		SES:       sesv2.NewFromConfig(cfg),
+		Lambda:    lambda.NewFromConfig(cfg),
+		CE:        costexplorer.NewFromConfig(ceCfg),
+		Scheduler: scheduler.NewFromConfig(cfg),
+		SQS:       sqs.NewFromConfig(cfg),
+		Region:    region,
+		Account:   account,
 	}, nil
 }

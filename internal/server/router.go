@@ -20,6 +20,7 @@ import (
 type Deps struct {
 	AuthSvc        domain.AuthService
 	OrgRepo        domain.OrganizationRepository
+	UserRepo       domain.UserRepository
 	ProjRepo       domain.ProjectRepository
 	EnvVarRepo     domain.EnvVarRepository
 	DeploymentRepo domain.DeploymentRepository
@@ -46,7 +47,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	orgHandler        := handlers.NewOrgHandler(deps.OrgRepo)
 	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
 	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
-	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo, deps.AWSClients, deps.ArtifactsBucket)
+	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo, deps.AWSClients, deps.ArtifactsBucket, logger)
 	databaseHandler   := handlers.NewDatabaseHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey,
@@ -71,8 +72,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo, deps.AWSClients)
 	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.ExecLogRepo, deps.AWSClients)
-	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger)
-	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
+	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger, deps.AWSClients)
+	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
+	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
@@ -156,6 +158,12 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Patch("/orgs/{orgID}", orgHandler.Update)
 			r.Delete("/orgs/{orgID}", orgHandler.Delete)
 
+			// Org members
+			r.Get("/orgs/{orgID}/members", membersHandler.List)
+			r.Post("/orgs/{orgID}/members", membersHandler.Invite)
+			r.Patch("/orgs/{orgID}/members/{userID}", membersHandler.UpdateRole)
+			r.Delete("/orgs/{orgID}/members/{userID}", membersHandler.Remove)
+
 			// Projects (scoped to org)
 			r.Post("/orgs/{orgID}/projects", projectHandler.Create)
 			r.Get("/orgs/{orgID}/projects", projectHandler.List)
@@ -185,6 +193,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/databases", databaseHandler.CreateOrgLevel)
 			r.Get("/orgs/{orgID}/databases/{dbID}", databaseHandler.Get)
 			r.Delete("/orgs/{orgID}/databases/{dbID}", databaseHandler.Delete)
+			r.Post("/orgs/{orgID}/databases/{dbID}/query", databaseHandler.Query)
+			r.Post("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/query", databaseHandler.Query)
 
 			// Storage Buckets (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.Create)

@@ -146,6 +146,54 @@ func (r *OrgRepository) IsMember(ctx context.Context, orgID, userID uuid.UUID) (
 	return exists, err
 }
 
+func (r *OrgRepository) GetMembers(ctx context.Context, orgID uuid.UUID) ([]*domain.OrgMember, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.user_id, u.email, u.name, m.role, m.joined_at
+		FROM org_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.org_id = $1
+		ORDER BY m.joined_at ASC
+	`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("querying members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []*domain.OrgMember
+	for rows.Next() {
+		m := &domain.OrgMember{}
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Name, &m.Role, &m.JoinedAt); err != nil {
+			return nil, fmt.Errorf("scanning member: %w", err)
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}
+
+func (r *OrgRepository) UpdateMemberRole(ctx context.Context, orgID, userID uuid.UUID, role string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE org_members SET role=$1 WHERE org_id=$2 AND user_id=$3`,
+		role, orgID, userID)
+	if err != nil {
+		return fmt.Errorf("updating member role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (r *OrgRepository) GetMemberRole(ctx context.Context, orgID, userID uuid.UUID) (string, error) {
+	var role string
+	err := r.pool.QueryRow(ctx,
+		`SELECT role FROM org_members WHERE org_id=$1 AND user_id=$2`,
+		orgID, userID).Scan(&role)
+	if err != nil {
+		return "", domain.ErrNotFound
+	}
+	return role, nil
+}
+
 func (r *OrgRepository) scanOne(ctx context.Context, q string, args ...any) (*domain.Organization, error) {
 	var o domain.Organization
 	err := r.pool.QueryRow(ctx, q, args...).Scan(

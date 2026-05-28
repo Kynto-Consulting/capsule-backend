@@ -27,6 +27,9 @@ type OrganizationRepository interface {
 	AddMember(ctx context.Context, orgID, userID uuid.UUID, role string) error
 	RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 	IsMember(ctx context.Context, orgID, userID uuid.UUID) (bool, error)
+	GetMembers(ctx context.Context, orgID uuid.UUID) ([]*OrgMember, error)
+	UpdateMemberRole(ctx context.Context, orgID, userID uuid.UUID, role string) error
+	GetMemberRole(ctx context.Context, orgID, userID uuid.UUID) (string, error)
 }
 
 // ProjectRepository handles project persistence.

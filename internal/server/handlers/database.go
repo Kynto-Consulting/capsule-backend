@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
@@ -257,6 +264,151 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, http.StatusCreated, h.toResponse(db))
 }
 
+// Query executes a read-only SQL query against a postgres or mysql database.
+// Route: POST /orgs/{orgID}/databases/{dbID}/query (or with projectID)
+func (h *DatabaseHandler) Query(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	dbID, err := uuid.Parse(chi.URLParam(r, "dbID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid database id")
+		return
+	}
+
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	db, err := h.dbs.GetByID(r.Context(), dbID)
+	if err == domain.ErrNotFound {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "database not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if db.Engine != "postgres" && db.Engine != "mysql" {
+		respondError(w, http.StatusBadRequest, "UNSUPPORTED_ENGINE", "SQL Explorer not supported for this engine")
+		return
+	}
+
+	var body struct {
+		SQL string `json:"sql"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.SQL) == "" {
+		respondError(w, http.StatusBadRequest, "INVALID_BODY", "sql field is required")
+		return
+	}
+
+	// Reject mutating statements
+	upperSQL := strings.ToUpper(body.SQL)
+	forbidden := []string{"DROP", "TRUNCATE", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "GRANT", "REVOKE"}
+	for _, kw := range forbidden {
+		if strings.Contains(upperSQL, kw) {
+			respondError(w, http.StatusBadRequest, "FORBIDDEN_STATEMENT", fmt.Sprintf("keyword %s is not allowed in SQL Explorer (read-only)", kw))
+			return
+		}
+	}
+
+	if db.Host == "" || db.Port == 0 || len(db.CredentialsEnc) == 0 {
+		respondError(w, http.StatusBadRequest, "DB_NOT_READY", "database is not yet available")
+		return
+	}
+
+	plain, err := crypto.Decrypt(db.CredentialsEnc, h.secretKey)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to decrypt credentials")
+		return
+	}
+	var creds struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(plain, &creds); err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to parse credentials")
+		return
+	}
+
+	var (
+		driverName string
+		dsn        string
+	)
+	switch db.Engine {
+	case "postgres":
+		driverName = "pgx"
+		dsn = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+	case "mysql":
+		driverName = "mysql"
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", creds.Username, creds.Password, db.Host, db.Port, db.DBName)
+	}
+
+	sqlDB, err := sql.Open(driverName, dsn)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "CONNECTION_ERROR", "failed to open database connection")
+		return
+	}
+	defer sqlDB.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	rows, err := sqlDB.QueryContext(ctx, body.SQL)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "QUERY_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to read columns")
+		return
+	}
+
+	var resultRows [][]any
+	for rows.Next() {
+		if len(resultRows) >= 200 {
+			break
+		}
+		vals := make([]any, len(columns))
+		valPtrs := make([]any, len(columns))
+		for i := range vals {
+			valPtrs[i] = &vals[i]
+		}
+		if err := rows.Scan(valPtrs...); err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to scan row")
+			return
+		}
+		// Convert []byte values to string for JSON serialisation
+		row := make([]any, len(vals))
+		for i, v := range vals {
+			if b, ok := v.([]byte); ok {
+				row[i] = string(b)
+			} else {
+				row[i] = v
+			}
+		}
+		resultRows = append(resultRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"columns":   columns,
+		"rows":      resultRows,
+		"row_count": len(resultRows),
+	})
+}
+
 // --- shared create logic ---
 
 func (h *DatabaseHandler) parseAndCreate(r *http.Request, orgID uuid.UUID, projectID *uuid.UUID) (*domain.Database, error) {
@@ -264,6 +416,7 @@ func (h *DatabaseHandler) parseAndCreate(r *http.Request, orgID uuid.UUID, proje
 		Name    string `json:"name"`
 		Engine  string `json:"engine"`
 		Version string `json:"version"`
+		Tier    string `json:"tier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return nil, fmt.Errorf("invalid request body")
@@ -273,6 +426,14 @@ func (h *DatabaseHandler) parseAndCreate(r *http.Request, orgID uuid.UUID, proje
 	}
 	if !validEngine(req.Engine) {
 		return nil, fmt.Errorf("unsupported engine")
+	}
+
+	tier := req.Tier
+	if tier == "" {
+		tier = "dev"
+	}
+	if tier != "dev" && tier != "prod" {
+		return nil, fmt.Errorf("tier must be 'dev' or 'prod'")
 	}
 
 	port, dbVersion := engineDefaults(req.Engine)
@@ -289,15 +450,120 @@ func (h *DatabaseHandler) parseAndCreate(r *http.Request, orgID uuid.UUID, proje
 		Port:           port,
 		DBName:         req.Name,
 		Status:         "provisioning",
+		Tier:           tier,
 		CredentialsEnc: []byte{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database record")
 	}
 
-	go h.provisionDocker(db)
+	if tier == "prod" {
+		go h.provisionRDS(db)
+	} else {
+		go h.provisionDocker(db)
+	}
 
 	return db, nil
+}
+
+// --- RDS Aurora Serverless v2 provisioning ---
+
+func (h *DatabaseHandler) provisionRDS(db *domain.Database) {
+	ctx := context.Background()
+	logger := h.logger.With("db_id", db.ID, "name", db.Name, "engine", db.Engine, "tier", "prod")
+
+	if h.aws == nil || h.aws.RDS == nil || h.dbSubnetGroup == "" {
+		logger.Warn("RDS client or subnet group not configured, falling back to Docker provisioning")
+		h.provisionDocker(db)
+		return
+	}
+
+	password, err := generatePassword(24)
+	if err != nil {
+		logger.Error("failed to generate password", "error", err)
+		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
+		return
+	}
+
+	clusterID := fmt.Sprintf("capsule-%s", db.ID.String())
+
+	input := &rds.CreateDBClusterInput{
+		DBClusterIdentifier: aws.String(clusterID),
+		Engine:              aws.String("aurora-postgresql"),
+		EngineMode:          aws.String("provisioned"),
+		MasterUsername:      aws.String("capsuleadmin"),
+		MasterUserPassword:  aws.String(password),
+		DatabaseName:        aws.String(db.DBName),
+		DBSubnetGroupName:   aws.String(h.dbSubnetGroup),
+		ServerlessV2ScalingConfiguration: &rdstypes.ServerlessV2ScalingConfiguration{
+			MinCapacity: aws.Float64(0.5),
+			MaxCapacity: aws.Float64(8),
+		},
+	}
+	if h.rdsSecurityGroupID != "" {
+		input.VpcSecurityGroupIds = []string{h.rdsSecurityGroupID}
+	}
+
+	result, err := h.aws.RDS.CreateDBCluster(ctx, input)
+	if err != nil {
+		logger.Error("failed to create RDS cluster", "error", err)
+		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
+		return
+	}
+
+	clusterEndpoint := ""
+	if result.DBCluster != nil && result.DBCluster.Endpoint != nil {
+		clusterEndpoint = *result.DBCluster.Endpoint
+	}
+
+	// Poll until the cluster endpoint is available (up to 20 minutes)
+	if clusterEndpoint == "" {
+		for i := 0; i < 40; i++ {
+			time.Sleep(30 * time.Second)
+			desc, err := h.aws.RDS.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
+				DBClusterIdentifier: aws.String(clusterID),
+			})
+			if err != nil {
+				logger.Warn("polling RDS cluster status failed", "error", err)
+				continue
+			}
+			if len(desc.DBClusters) > 0 {
+				c := desc.DBClusters[0]
+				if c.Endpoint != nil && *c.Endpoint != "" {
+					clusterEndpoint = *c.Endpoint
+					break
+				}
+			}
+		}
+	}
+
+	if clusterEndpoint == "" {
+		logger.Error("RDS cluster endpoint still empty after polling")
+		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
+		return
+	}
+
+	// Store encrypted credentials
+	credsJSON, _ := json.Marshal(map[string]string{
+		"username": "capsuleadmin",
+		"password": password,
+	})
+	enc, err := crypto.Encrypt(credsJSON, h.secretKey)
+	if err != nil {
+		logger.Error("failed to encrypt credentials", "error", err)
+		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
+		return
+	}
+
+	if err := h.dbs.UpdateStatus(ctx, db.ID, "available", clusterEndpoint, db.Port); err != nil {
+		logger.Error("failed to update database status", "error", err)
+		return
+	}
+	if err := h.dbs.UpdateCredentials(ctx, db.ID, enc); err != nil {
+		logger.Error("failed to store credentials", "error", err)
+	}
+
+	logger.Info("RDS Aurora cluster provisioned", "cluster_id", clusterID, "endpoint", clusterEndpoint)
 }
 
 // --- Docker provisioning ---
@@ -450,6 +716,8 @@ func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
 		return fmt.Sprintf("http://%s:%s@%s:%d", creds.Username, creds.Password, h2, p2)
 	case "cockroachdb":
 		return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable", creds.Username, creds.Password, h2, p2, db.DBName)
+	case "graphql":
+		return fmt.Sprintf("http://%s:%d/v1/graphql", h2, p2)
 	default:
 		return fmt.Sprintf("%s://%s:%s@%s:%d/%s", db.Engine, creds.Username, creds.Password, h2, p2, db.DBName)
 	}
@@ -508,6 +776,13 @@ func dockerImageAndEnv(engine, version, dbName, password string) (image string, 
 		}
 	case "cockroachdb":
 		return "cockroachdb/cockroach:latest", nil
+	case "graphql":
+		return "hasura/graphql-engine:v2.40.0", []string{
+			"HASURA_GRAPHQL_METADATA_DATABASE_URL=postgres://capsuleadmin:" + password + "@localhost:5432/hasura_metadata",
+			"HASURA_GRAPHQL_ENABLE_CONSOLE=true",
+			"HASURA_GRAPHQL_DEV_MODE=true",
+			"HASURA_GRAPHQL_ENABLED_LOG_TYPES=startup,http-log,webhook-log,websocket-log,query-log",
+		}
 	default:
 		return fmt.Sprintf("postgres:%s", version), []string{
 			"POSTGRES_USER=capsuleadmin",
@@ -519,7 +794,7 @@ func dockerImageAndEnv(engine, version, dbName, password string) (image string, 
 
 func validEngine(e string) bool {
 	switch e {
-	case "postgres", "mysql", "mariadb", "redis", "mongodb", "cassandra", "clickhouse", "elasticsearch", "cockroachdb":
+	case "postgres", "mysql", "mariadb", "redis", "mongodb", "cassandra", "clickhouse", "elasticsearch", "cockroachdb", "graphql":
 		return true
 	}
 	return false
@@ -541,6 +816,8 @@ func engineDefaults(e string) (port int, version string) {
 		return 9200, "8.13.0"
 	case "cockroachdb":
 		return 26257, "latest"
+	case "graphql":
+		return 8080, "v2.40.0"
 	default: // postgres
 		return 5432, "15"
 	}

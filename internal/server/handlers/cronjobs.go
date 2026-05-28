@@ -7,38 +7,51 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	schedulerpkg "github.com/aws/aws-sdk-go-v2/service/scheduler"
+	schedulertypes "github.com/aws/aws-sdk-go-v2/service/scheduler/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
+	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 // CronJobHandler handles cron job operations.
 type CronJobHandler struct {
-	crons    domain.CronJobRepository
-	orgs     domain.OrganizationRepository
-	projects domain.ProjectRepository
-	exLogs   domain.ExecutionLogRepository
-	logger   *slog.Logger
+	crons      domain.CronJobRepository
+	orgs       domain.OrganizationRepository
+	projects   domain.ProjectRepository
+	exLogs     domain.ExecutionLogRepository
+	logger     *slog.Logger
+	awsClients *awsclient.Clients
 }
 
 // NewCronJobHandler creates a CronJobHandler.
+// awsClients is optional; pass nil (or omit) to disable EventBridge Scheduler integration.
 func NewCronJobHandler(
 	crons domain.CronJobRepository,
 	orgs domain.OrganizationRepository,
 	projects domain.ProjectRepository,
 	exLogs domain.ExecutionLogRepository,
 	logger *slog.Logger,
+	awsClients ...*awsclient.Clients,
 ) *CronJobHandler {
+	var clients *awsclient.Clients
+	if len(awsClients) > 0 {
+		clients = awsClients[0]
+	}
 	return &CronJobHandler{
-		crons:    crons,
-		orgs:     orgs,
-		projects: projects,
-		exLogs:   exLogs,
-		logger:   logger,
+		crons:      crons,
+		orgs:       orgs,
+		projects:   projects,
+		exLogs:     exLogs,
+		logger:     logger,
+		awsClients: clients,
 	}
 }
 
@@ -109,6 +122,8 @@ func (h *CronJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create cron job")
 		return
 	}
+
+	go h.scheduleEventBridge(context.Background(), cron)
 
 	respondJSON(w, http.StatusCreated, cron)
 }
@@ -220,6 +235,16 @@ func (h *CronJobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go func() {
+		if h.awsClients != nil && h.awsClients.Scheduler != nil {
+			name := "capsule-cron-" + cronID.String()
+			_, delErr := h.awsClients.Scheduler.DeleteSchedule(context.Background(), &schedulerpkg.DeleteScheduleInput{Name: &name})
+			if delErr != nil {
+				h.logger.Warn("failed to delete EventBridge schedule", "cron_id", cronID, "error", delErr)
+			}
+		}
+	}()
+
 	respondNoContent(w)
 }
 
@@ -284,4 +309,53 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	}(cron)
 
 	respondJSON(w, http.StatusAccepted, map[string]any{"message": "cron job triggered"})
+}
+
+// scheduleEventBridge creates an EventBridge Scheduler schedule for the given cron job.
+// It is non-fatal: if AWS is unavailable or misconfigured the cron is still saved in DB.
+func (h *CronJobHandler) scheduleEventBridge(ctx context.Context, cron *domain.CronJob) {
+	if h.awsClients == nil || h.awsClients.Scheduler == nil {
+		return
+	}
+
+	region := h.awsClients.Region
+	account := h.awsClients.Account
+
+	name := "capsule-cron-" + cron.ID.String()
+	targetArn := "arn:aws:lambda:" + region + ":" + account + ":function:capsule-cron-runner"
+	roleArn := "arn:aws:iam::" + account + ":role/capsule-scheduler-role"
+	input := `{"cron_id":"` + cron.ID.String() + `","command":"` + cron.Command + `"}`
+
+	tz := cron.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+
+	_, err := h.awsClients.Scheduler.CreateSchedule(ctx, &schedulerpkg.CreateScheduleInput{
+		Name:                       &name,
+		ScheduleExpression:         aws.String("cron(" + convertToCronBridge(cron.Schedule) + ")"),
+		ScheduleExpressionTimezone: &tz,
+		FlexibleTimeWindow: &schedulertypes.FlexibleTimeWindow{
+			Mode: schedulertypes.FlexibleTimeWindowModeOff,
+		},
+		Target: &schedulertypes.Target{
+			Arn:     &targetArn,
+			RoleArn: &roleArn,
+			Input:   &input,
+		},
+		State: schedulertypes.ScheduleStateEnabled,
+	})
+	if err != nil {
+		h.logger.Warn("failed to create EventBridge schedule", "cron_id", cron.ID, "error", err)
+	}
+}
+
+// convertToCronBridge converts a standard 5-field cron expression to the 6-field
+// EventBridge Scheduler format (adds year wildcard).
+func convertToCronBridge(expr string) string {
+	parts := strings.Fields(expr)
+	if len(parts) == 5 {
+		return strings.Join(parts, " ") + " *"
+	}
+	return expr
 }

@@ -99,6 +99,7 @@ type Database struct {
 	SizeMB         int        `json:"size_mb"`
 	ContainerID    string     `json:"container_id,omitempty"`
 	VolumeName     string     `json:"volume_name,omitempty"`
+	Tier           string     `json:"tier"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 	DeletedAt      *time.Time `json:"-"`
@@ -174,6 +175,8 @@ type Worker struct {
 	Status        string     `json:"status"`
 	ContainerID   string     `json:"container_id,omitempty"`
 	RestartPolicy string     `json:"restart_policy"`
+	WorkerType    string     `json:"worker_type"`
+	QueueURL      string     `json:"queue_url,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	DeletedAt     *time.Time `json:"-"`
@@ -247,6 +250,15 @@ type EmailLog struct {
 	Status    string    `json:"status"`
 	MessageID string    `json:"message_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// OrgMember represents a user's membership in an organization.
+type OrgMember struct {
+	UserID   uuid.UUID `json:"user_id"`
+	Email    string    `json:"email"`
+	Name     string    `json:"name"`
+	Role     string    `json:"role"`
+	JoinedAt time.Time `json:"joined_at"`
 }
 
 // TokenPair is returned after successful authentication.

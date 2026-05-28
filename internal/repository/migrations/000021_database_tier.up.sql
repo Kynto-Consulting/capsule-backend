@@ -1,0 +1,3 @@
+BEGIN;
+ALTER TABLE databases ADD COLUMN IF NOT EXISTS tier varchar(20) NOT NULL DEFAULT 'dev';
+COMMIT;

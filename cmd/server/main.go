@@ -92,6 +92,7 @@ func main() {
 	srv := server.New(cfg, logger, version, server.Deps{
 		AuthSvc:            authSvc,
 		OrgRepo:            orgRepo,
+		UserRepo:           userRepo,
 		ProjRepo:           projRepo,
 		EnvVarRepo:         envVarRepo,
 		DeploymentRepo:     deploymentRepo,
