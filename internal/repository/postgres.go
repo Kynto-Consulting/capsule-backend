@@ -43,8 +43,19 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquiring connection for migration lock: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(7452637281)`); err != nil {
+		return fmt.Errorf("acquiring migration lock: %w", err)
+	}
+	defer conn.Exec(ctx, `SELECT pg_advisory_unlock(7452637281)`) //nolint:errcheck
+
 	// 1. Create schema_migrations table if not exists
-	_, err := pool.Exec(ctx, `
+	_, err = conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version bigint PRIMARY KEY,
 			applied_at timestamptz NOT NULL DEFAULT now()
@@ -57,8 +68,8 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	// Ensure compatibility with golang-migrate schema (dirty column).
 	// ADD COLUMN IF NOT EXISTS is a no-op when already present; SET DEFAULT
 	// ensures existing NOT NULL columns without a default accept our inserts.
-	_, _ = pool.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS dirty boolean NOT NULL DEFAULT false`)
-	_, _ = pool.Exec(ctx, `ALTER TABLE schema_migrations ALTER COLUMN dirty SET DEFAULT false`)
+	_, _ = conn.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS dirty boolean NOT NULL DEFAULT false`)
+	_, _ = conn.Exec(ctx, `ALTER TABLE schema_migrations ALTER COLUMN dirty SET DEFAULT false`)
 
 	// 2. Read migration files from embedded FS
 	entries, err := MigrationsFS.ReadDir("migrations")
@@ -120,7 +131,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	// 4. Run migrations sequentially
 	for _, m := range migrations {
 		var exists bool
-		err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", m.version).Scan(&exists)
+		err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", m.version).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("checking migration %d: %w", m.version, err)
 		}
@@ -131,17 +142,17 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		// Pre-check if the table for this migration version already exists in the database
 		if tblName, ok := tableMap[m.version]; ok {
 			var tblExists bool
-			err = pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_class WHERE relname = $1 AND relkind = 'r')", tblName).Scan(&tblExists)
+			err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_class WHERE relname = $1 AND relkind = 'r')", tblName).Scan(&tblExists)
 			if err == nil && tblExists {
 				fmt.Printf("Migration %s: table '%s' already exists. Recording version in schema_migrations.\n", m.name, tblName)
-				_, _ = pool.Exec(ctx, "INSERT INTO schema_migrations (version, dirty) VALUES ($1, false) ON CONFLICT (version) DO NOTHING", m.version)
+				_, _ = conn.Exec(ctx, "INSERT INTO schema_migrations (version, dirty) VALUES ($1, false) ON CONFLICT (version) DO NOTHING", m.version)
 				continue
 			}
 		}
 
 		fmt.Printf("Applying migration %s...\n", m.name)
 
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("beginning tx for migration %d: %w", m.version, err)
 		}

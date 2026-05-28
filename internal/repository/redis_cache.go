@@ -64,3 +64,8 @@ func (c *RedisCache) Del(ctx context.Context, key string) error {
 	}
 	return nil
 }
+
+// Client returns the underlying Redis client (for middleware that needs direct access).
+func (c *RedisCache) Client() *redis.Client {
+	return c.client
+}

@@ -22,7 +22,7 @@ func NewProjectHandler(projects domain.ProjectRepository, orgs domain.Organizati
 }
 
 type createProjectRequest struct {
-	Name          string `json:"name"`
+	Name          string `json:"name"           validate:"required,min=1,max=100"`
 	Slug          string `json:"slug"`
 	RepoURL       string `json:"repo_url"`
 	Branch        string `json:"branch"`
@@ -47,14 +47,13 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createProjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+	if !middleware.DecodeAndValidate(w, r, &req) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
-	if req.Name == "" || req.Slug == "" {
-		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name and slug required")
+	if req.Slug == "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "slug required")
 		return
 	}
 	if req.Branch == "" {
@@ -104,7 +103,8 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, total, err := h.projects.ListByOrg(r.Context(), orgID, 1, 100)
+	page, limit := parsePagination(r)
+	projects, total, err := h.projects.ListByOrg(r.Context(), orgID, page, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list projects")
 		return
@@ -112,7 +112,7 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": projects,
-		"meta": domain.ListMeta{Page: 1, PerPage: 100, Total: total},
+		"meta": domain.ListMeta{Page: page, PerPage: limit, Total: total},
 	})
 }
 

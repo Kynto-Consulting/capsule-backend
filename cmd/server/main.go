@@ -4,8 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/repository"
@@ -29,6 +33,20 @@ func main() {
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
+	}
+
+	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              dsn,
+			Release:          version,
+			Environment:      cfg.Env,
+			TracesSampleRate: 0.1,
+		}); err != nil {
+			logger.Warn("sentry init failed", "error", err)
+		} else {
+			logger.Info("sentry initialized")
+			defer sentry.Flush(2 * time.Second)
+		}
 	}
 
 	if cfg.LogLevel == "debug" {
@@ -70,11 +88,13 @@ func main() {
 	authSvc        := service.NewAuthService(userRepo, settingsRepo, cfg.SecretKey, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, logger)
 
 	var cacheStore domain.CacheStore
+	var redisRawClient *goredis.Client
 	redisCache, err := repository.NewRedisCache(cfg.RedisURL)
 	if err != nil {
-		logger.Warn("redis unavailable; cache features disabled", "error", err)
+		logger.Warn("redis unavailable; cache + distributed rate limiting disabled", "error", err)
 	} else {
 		cacheStore = redisCache
+		redisRawClient = redisCache.Client()
 	}
 
 	awsCtx, awsCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -86,8 +106,29 @@ func main() {
 		awsClients = nil
 	}
 
-	worker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, logger)
-	go worker.Run(context.Background())
+	// Worker runs with a cancellable context so graceful shutdown waits for
+	// in-flight deployments to finish before the process exits.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, logger)
+	workerDone := make(chan struct{})
+	go func() {
+		deployWorker.Run(workerCtx)
+		close(workerDone)
+	}()
+
+	// Catch OS signals so we cancel the worker before the process exits.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		logger.Info("shutdown signal received, stopping worker")
+		workerCancel()
+		select {
+		case <-workerDone:
+		case <-time.After(30 * time.Second):
+			logger.Warn("worker did not finish in time, forcing shutdown")
+		}
+	}()
 
 	srv := server.New(cfg, logger, version, server.Deps{
 		AuthSvc:            authSvc,
@@ -97,6 +138,7 @@ func main() {
 		EnvVarRepo:         envVarRepo,
 		DeploymentRepo:     deploymentRepo,
 		CacheStore:         cacheStore,
+		RedisClient:        redisRawClient,
 		DatabaseRepo:       dbRepo,
 		DomainRepo:         domainRepo,
 		APITokenRepo:       apiTokenRepo,

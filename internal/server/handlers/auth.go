@@ -21,35 +21,20 @@ func NewAuthHandler(svc domain.AuthService, cache domain.CacheStore) *AuthHandle
 }
 
 type registerRequest struct {
-	Name           string `json:"name"`
-	Email          string `json:"email"`
-	Password       string `json:"password"`
+	Name           string `json:"name"           validate:"required,min=1,max=100"`
+	Email          string `json:"email"          validate:"required,email"`
+	Password       string `json:"password"       validate:"required,min=8"`
 	InviteCode     string `json:"invite_code"`
 	OnboardingCode string `json:"onboarding_code"`
 }
 
-func (req *registerRequest) validate() error {
-	req.Name = strings.TrimSpace(req.Name)
-	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		return domain.ErrInvalidInput
-	}
-	if len(req.Password) < 8 {
-		return domain.ErrInvalidInput
-	}
-	return nil
-}
-
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+	if !middleware.DecodeAndValidate(w, r, &req) {
 		return
 	}
-	if err := req.validate(); err != nil {
-		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name, email, and password (min 8 chars) required")
-		return
-	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 
 	user, pair, err := h.svc.Register(r.Context(), req.Name, req.Email, req.Password, req.InviteCode, req.OnboardingCode)
 	if err != nil {
@@ -76,18 +61,13 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string `json:"email"    validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
-		return
-	}
-	if req.Email == "" || req.Password == "" {
-		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "email and password required")
+	if !middleware.DecodeAndValidate(w, r, &req) {
 		return
 	}
 

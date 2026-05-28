@@ -21,8 +21,8 @@ func NewOrgHandler(repo domain.OrganizationRepository) *OrgHandler {
 }
 
 type createOrgRequest struct {
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	Name string `json:"name" validate:"required,min=1,max=100"`
+	Slug string `json:"slug" validate:"required,min=1,max=50,alphanum"`
 }
 
 func (h *OrgHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -33,16 +33,11 @@ func (h *OrgHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createOrgRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+	if !middleware.DecodeAndValidate(w, r, &req) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Slug = strings.TrimSpace(strings.ToLower(req.Slug))
-	if req.Name == "" || req.Slug == "" {
-		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name and slug are required")
-		return
-	}
 
 	org, err := h.repo.Create(r.Context(), &domain.Organization{
 		Name:    req.Name,
@@ -68,7 +63,8 @@ func (h *OrgHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgs, total, err := h.repo.ListByUser(r.Context(), user.ID, 1, 100)
+	page, limit := parsePagination(r)
+	orgs, total, err := h.repo.ListByUser(r.Context(), user.ID, page, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list organizations")
 		return
@@ -76,7 +72,7 @@ func (h *OrgHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": orgs,
-		"meta": domain.ListMeta{Page: 1, PerPage: 100, Total: total},
+		"meta": domain.ListMeta{Page: page, PerPage: limit, Total: total},
 	})
 }
 

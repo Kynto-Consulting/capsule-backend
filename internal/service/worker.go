@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,6 +28,9 @@ import (
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
+// maxRetries is the number of times a deployment will be retried before marking it permanently failed.
+const maxRetries = 3
+
 // DeployWorker polls for queued deployments and executes them.
 type DeployWorker struct {
 	deployments domain.DeploymentRepository
@@ -34,6 +38,7 @@ type DeployWorker struct {
 	aws         *awsclient.Clients
 	bucket      string
 	logger      *slog.Logger
+	wg          sync.WaitGroup
 }
 
 // NewDeployWorker creates a new deployment worker.
@@ -53,27 +58,52 @@ func NewDeployWorker(
 	}
 }
 
-// Run starts the polling loop. It blocks until ctx is cancelled.
+// Run starts the polling loop. It blocks until ctx is cancelled, then waits for
+// any in-flight deployment to finish before returning.
 func (w *DeployWorker) Run(ctx context.Context) {
 	w.logger.Info("deploy worker started")
+
+	const (
+		minPoll = 1 * time.Second
+		maxPoll = 30 * time.Second
+	)
+	backoff := minPoll
+
 	for {
 		select {
 		case <-ctx.Done():
-			w.logger.Info("deploy worker stopping")
+			w.logger.Info("deploy worker: context cancelled, waiting for in-flight deployments")
+			w.wg.Wait()
+			w.logger.Info("deploy worker stopped")
 			return
 		default:
-			w.processNext(ctx)
-			time.Sleep(5 * time.Second)
+		}
+
+		found := w.processNext(ctx)
+		if found {
+			backoff = minPoll // reset on work found
+		} else {
+			// Exponential backoff when idle: 1s → 2s → 4s → 8s → 16s → 30s
+			backoff *= 2
+			if backoff > maxPoll {
+				backoff = maxPoll
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(backoff):
 		}
 	}
 }
 
 // processNext picks the oldest queued deployment using SKIP LOCKED and processes it.
-func (w *DeployWorker) processNext(ctx context.Context) {
+// Returns true if a deployment was found and dispatched.
+func (w *DeployWorker) processNext(ctx context.Context) bool {
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {
 		w.logger.Error("deploy worker: begin tx", "error", err)
-		return
+		return false
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -82,27 +112,49 @@ func (w *DeployWorker) processNext(ctx context.Context) {
 		projectID     uuid.UUID
 		sourceKey     *string
 		buildStrategy string
+		retryCount    int
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT id, project_id, source_key, build_strategy
+		SELECT id, project_id, source_key, build_strategy, COALESCE(retry_count, 0)
 		FROM deployments
 		WHERE status = 'queued'
 		ORDER BY created_at
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED
-	`).Scan(&id, &projectID, &sourceKey, &buildStrategy)
+	`).Scan(&id, &projectID, &sourceKey, &buildStrategy, &retryCount)
 	if err != nil {
 		// No rows available — nothing to do.
-		return
+		return false
+	}
+
+	// Too many retries → mark permanently failed without processing.
+	if retryCount >= maxRetries {
+		_, _ = tx.Exec(ctx, `UPDATE deployments SET status = 'failed' WHERE id = $1`, id)
+		_ = tx.Commit(ctx)
+		w.logger.Warn("deploy worker: deployment exceeded max retries, marking failed",
+			"id", id, "retries", retryCount)
+		_ = w.deployments.AppendLog(ctx, &domain.BuildLog{
+			DeploymentID: id,
+			Level:        "error",
+			Message:      fmt.Sprintf("Deployment failed after %d retries", retryCount),
+		})
+		return true
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		w.logger.Error("deploy worker: commit tx", "error", err)
-		return
+		return false
 	}
 
-	w.logger.Info("deploy worker: picked deployment", "id", id, "project_id", projectID)
-	w.runDeployment(ctx, id, projectID, sourceKey, buildStrategy)
+	w.logger.Info("deploy worker: picked deployment", "id", id, "project_id", projectID, "retry", retryCount)
+
+	// Track in-flight so graceful shutdown waits.
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		w.runDeployment(ctx, id, projectID, sourceKey, buildStrategy)
+	}()
+	return true
 }
 
 func (w *DeployWorker) appendLog(ctx context.Context, id uuid.UUID, msg string) {

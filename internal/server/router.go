@@ -9,6 +9,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
@@ -25,6 +28,7 @@ type Deps struct {
 	EnvVarRepo     domain.EnvVarRepository
 	DeploymentRepo domain.DeploymentRepository
 	CacheStore     domain.CacheStore // optional; may be nil
+	RedisClient    *redis.Client    // optional; used for distributed rate limiting
 
 	DatabaseRepo       domain.DatabaseRepository
 	DomainRepo         domain.DomainRepository
@@ -83,7 +87,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Timeout(30 * time.Second))
-	r.Use(middleware.RateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst))
+	r.Use(middleware.RateLimiterRedis(cfg.RateLimitRPS, cfg.RateLimitBurst, deps.RedisClient))
+	r.Use(middleware.Metrics)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSAllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -124,6 +129,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	})
 
 	r.Get("/health", handlers.Health(version))
+	r.Get("/metrics", promhttp.Handler().ServeHTTP) // Prometheus scrape endpoint
 
 	// ── Subdomain proxy (*.apps.tumi-ai.com → Next.js rewrite → here) ──────
 	r.Handle("/_proxy/{subdomain}/*", http.HandlerFunc(proxyHandler.ProxyBySlug))

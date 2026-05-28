@@ -265,7 +265,8 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deployments, total, err := h.deployments.ListByProject(r.Context(), projectID, 1, 20)
+	page, limit := parsePagination(r)
+	deployments, total, err := h.deployments.ListByProject(r.Context(), projectID, page, limit)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list deployments")
 		return
@@ -273,7 +274,7 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": deployments,
-		"meta": domain.ListMeta{Page: 1, PerPage: 20, Total: total},
+		"meta": domain.ListMeta{Page: page, PerPage: limit, Total: total},
 	})
 }
 

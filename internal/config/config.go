@@ -40,6 +40,9 @@ type Config struct {
 	// Platform domain (e.g. apps.example.com) — used to build default URLs shown to users
 	AppsDomain   string
 	StaticBucket string
+
+	// Observability
+	SentryDSN string
 }
 
 func Load() (*Config, error) {
@@ -97,6 +100,8 @@ func Load() (*Config, error) {
 
 		AppsDomain:   os.Getenv("CAPSULE_APPS_DOMAIN"),
 		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", staticBucketDefault(accountID)),
+
+		SentryDSN: os.Getenv("SENTRY_DSN"),
 	}, nil
 }
 
