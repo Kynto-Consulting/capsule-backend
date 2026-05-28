@@ -206,6 +206,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.List)
 			r.Post("/orgs/{orgID}/projects/{projectID}/domains/{domainID}/verify", domainHandler.Verify)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/domains/{domainID}", domainHandler.Delete)
+			// Domains (org-level)
+			r.Get("/orgs/{orgID}/domains", domainHandler.ListByOrg)
+			r.Post("/orgs/{orgID}/domains", domainHandler.CreateOrgLevel)
+			r.Post("/orgs/{orgID}/domains/{domainID}/verify", domainHandler.Verify)
+			r.Delete("/orgs/{orgID}/domains/{domainID}", domainHandler.Delete)
 
 			// Workers (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/workers", workerHandler.Create)

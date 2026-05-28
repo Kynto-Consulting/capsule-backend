@@ -98,6 +98,7 @@ type DomainRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*Domain, error)
 	GetByHostname(ctx context.Context, hostname string) (*Domain, error)
 	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Domain, error)
+	ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*Domain, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status, recordValue string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }

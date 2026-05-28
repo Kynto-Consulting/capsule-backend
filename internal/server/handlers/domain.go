@@ -136,7 +136,8 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, err := h.domains.Create(r.Context(), &domain.Domain{
-		ProjectID:   projectID,
+		OrgID:       orgID,
+		ProjectID:   &projectID,
 		DomainName:  req.DomainName,
 		RecordType:  "CNAME",
 		RecordValue: h.albDNSName,
@@ -158,6 +159,84 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Instructions string `json:"instructions"`
 	}
 
+	respondJSON(w, http.StatusCreated, domainResponse{
+		Domain:       d,
+		Instructions: fmt.Sprintf("Point CNAME %s → %s", req.DomainName, h.albDNSName),
+	})
+}
+
+// ListByOrg returns all domains for an org regardless of project.
+func (h *DomainHandler) ListByOrg(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+	domains, err := h.domains.ListByOrg(r.Context(), orgID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list domains")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"data": domains})
+}
+
+// CreateOrgLevel registers a domain not tied to a project.
+func (h *DomainHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
+		return
+	}
+	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+	_ = user
+
+	var req struct {
+		DomainName  string `json:"domain_name"`
+		DNSProvider string `json:"dns_provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
+		return
+	}
+	if req.DomainName == "" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "domain_name is required")
+		return
+	}
+	if req.DNSProvider != "route53" && req.DNSProvider != "external" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "dns_provider must be route53 or external")
+		return
+	}
+
+	d, err := h.domains.Create(r.Context(), &domain.Domain{
+		OrgID:       orgID,
+		ProjectID:   nil,
+		DomainName:  req.DomainName,
+		RecordType:  "CNAME",
+		RecordValue: h.albDNSName,
+		Status:      "pending",
+		DNSProvider: req.DNSProvider,
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create domain")
+		return
+	}
+	if req.DNSProvider == "route53" && h.aws != nil {
+		go h.createRoute53Record(d)
+	}
+
+	type domainResponse struct {
+		*domain.Domain
+		Instructions string `json:"instructions"`
+	}
 	respondJSON(w, http.StatusCreated, domainResponse{
 		Domain:       d,
 		Instructions: fmt.Sprintf("Point CNAME %s → %s", req.DomainName, h.albDNSName),

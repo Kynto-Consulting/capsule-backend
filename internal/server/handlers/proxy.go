@@ -164,7 +164,11 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := h.projects.GetByID(r.Context(), d.ProjectID)
+	if d.ProjectID == nil {
+		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", "No project is linked to this domain.")
+		return
+	}
+	project, err := h.projects.GetByID(r.Context(), *d.ProjectID)
 	if err == domain.ErrNotFound {
 		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", "No project is linked to this domain.")
 		return

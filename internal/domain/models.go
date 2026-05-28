@@ -123,7 +123,8 @@ type RedisInstance struct {
 
 type Domain struct {
 	ID                uuid.UUID  `json:"id"`
-	ProjectID         uuid.UUID  `json:"project_id"`
+	OrgID             uuid.UUID  `json:"org_id"`
+	ProjectID         *uuid.UUID `json:"project_id,omitempty"`
 	DomainName        string     `json:"domain_name"`
 	RecordType        string     `json:"record_type"`
 	RecordValue       string     `json:"record_value,omitempty"`
