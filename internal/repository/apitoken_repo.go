@@ -34,13 +34,14 @@ func scanToken(row interface{ Scan(...any) error }, t *domain.APIToken) error {
 
 func (r *APITokenRepository) Create(ctx context.Context, token *domain.APIToken) (*domain.APIToken, error) {
 	const q = `
-		INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, rate_limit_rpm, ip_allowlist, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING ` + tokenCols
 
 	var out domain.APIToken
 	if err := scanToken(r.pool.QueryRow(ctx, q,
-		token.UserID, token.Name, token.TokenHash, token.Prefix, token.Scopes, token.ExpiresAt,
+		token.UserID, token.Name, token.TokenHash, token.Prefix, token.Scopes,
+		token.RateLimitRPM, token.IPAllowlist, token.ExpiresAt,
 	), &out); err != nil {
 		return nil, fmt.Errorf("creating api token: %w", err)
 	}
