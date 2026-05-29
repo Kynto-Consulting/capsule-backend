@@ -52,7 +52,7 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		Name:         req.Name,
 		TokenHash:    hashed,
-		Prefix:       plainToken[:12], // "cap_" + first 8 hex chars
+		Prefix:       plainToken[:10], // "cap_" + first 6 hex chars (varchar(10) limit)
 		Scopes:       "*",
 		RateLimitRPM: req.RateLimitRPM,
 		IPAllowlist:  req.IPAllowlist,
