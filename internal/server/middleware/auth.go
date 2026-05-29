@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -12,7 +14,9 @@ type contextKey2 string
 
 const userKey contextKey2 = "user"
 
-func Auth(authSvc domain.AuthService) func(http.Handler) http.Handler {
+// Auth validates the request bearer token.
+// Accepts both JWT access tokens and platform API tokens (cap_ prefix).
+func Auth(authSvc domain.AuthService, tokenRepo domain.APITokenRepository, userRepo domain.UserRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -22,7 +26,17 @@ func Auth(authSvc domain.AuthService) func(http.Handler) http.Handler {
 			}
 			token := strings.TrimPrefix(header, "Bearer ")
 
-			user, err := authSvc.ValidateAccessToken(r.Context(), token)
+			var user *domain.User
+			var err error
+
+			if strings.HasPrefix(token, "cap_") {
+				// Platform API token — look up by hash
+				user, err = validatePlatformToken(r.Context(), token, tokenRepo, userRepo)
+			} else {
+				// JWT access token
+				user, err = authSvc.ValidateAccessToken(r.Context(), token)
+			}
+
 			if err != nil {
 				code := "UNAUTHORIZED"
 				msg := "invalid token"
@@ -37,6 +51,31 @@ func Auth(authSvc domain.AuthService) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func validatePlatformToken(ctx context.Context, plain string, tokenRepo domain.APITokenRepository, userRepo domain.UserRepository) (*domain.User, error) {
+	h := sha256.New()
+	h.Write([]byte(plain))
+	hashed := hex.EncodeToString(h.Sum(nil))
+
+	record, err := tokenRepo.GetByHash(ctx, hashed)
+	if err != nil {
+		return nil, domain.ErrUnauthorized
+	}
+	if record.RevokedAt != nil {
+		return nil, domain.ErrUnauthorized
+	}
+
+	// Touch last used (fire-and-forget)
+	go func() {
+		_ = tokenRepo.TouchLastUsed(context.Background(), record.ID)
+	}()
+
+	user, err := userRepo.GetByID(ctx, record.UserID)
+	if err != nil {
+		return nil, domain.ErrUnauthorized
+	}
+	return user, nil
 }
 
 func GetUser(ctx context.Context) *domain.User {

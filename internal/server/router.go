@@ -80,7 +80,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger, deps.AWSClients)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
 	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
-	adminHandler   := handlers.NewAdminHandler(deps.UserRepo)
+	adminHandler    := handlers.NewAdminHandler(deps.UserRepo)
+	apiTokenHandler := handlers.NewAPITokenHandler(deps.APITokenRepo)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
@@ -164,10 +165,16 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 
 		// Protected
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(deps.AuthSvc))
+			r.Use(middleware.Auth(deps.AuthSvc, deps.APITokenRepo, deps.UserRepo))
 
 			r.Get("/auth/me", authHandler.Me)
 			r.Post("/auth/logout", authHandler.Logout)
+
+			// Platform API tokens (cap_ prefix — authenticate to Capsule REST API)
+			r.Post("/user/tokens", apiTokenHandler.Create)
+			r.Get("/user/tokens", apiTokenHandler.List)
+			r.Delete("/user/tokens/{tokenID}", apiTokenHandler.Revoke)
+			r.Patch("/user/tokens/{tokenID}", apiTokenHandler.Update)
 
 			// Organizations
 			r.Post("/orgs", orgHandler.Create)
