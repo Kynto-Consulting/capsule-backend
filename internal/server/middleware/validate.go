@@ -28,7 +28,21 @@ func DecodeAndValidate(w http.ResponseWriter, r *http.Request, dst any) bool {
 	}
 	if err := validate.Struct(dst); err != nil {
 		errs := err.(validator.ValidationErrors)
-		msg := errs[0].Field() + " " + errs[0].Tag()
+		tagMessages := map[string]string{
+			"required": "is required",
+			"min":      "is too short",
+			"max":      "is too long",
+			"email":    "must be a valid email",
+			"slug":     "must be lowercase letters, numbers, and hyphens only",
+			"alphanum": "must contain only letters and numbers",
+		}
+		field := errs[0].Field()
+		tag := errs[0].Tag()
+		friendly, ok := tagMessages[tag]
+		if !ok {
+			friendly = "is invalid"
+		}
+		msg := field + " " + friendly
 		http.Error(w, `{"error":{"code":"VALIDATION_ERROR","message":"`+msg+`"}}`, http.StatusUnprocessableEntity)
 		return false
 	}

@@ -182,6 +182,10 @@ func (h *AuthHandler) VerifyOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	verified, err := h.svc.VerifyOnboarding(r.Context(), req.Code)
+	if err == domain.ErrAlreadyConfigured {
+		respondError(w, http.StatusConflict, "ALREADY_CONFIGURED", "onboarding 2FA already configured")
+		return
+	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return

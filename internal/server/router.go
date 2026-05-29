@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -130,7 +131,17 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	})
 
 	r.Get("/health", handlers.Health(version))
-	r.Get("/metrics", promhttp.Handler().ServeHTTP) // Prometheus scrape endpoint
+	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		token := os.Getenv("METRICS_TOKEN")
+		if token != "" {
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer "+token {
+				http.Error(w, `{"error":{"code":"UNAUTHORIZED","message":"metrics token required"}}`, http.StatusUnauthorized)
+				return
+			}
+		}
+		promhttp.Handler().ServeHTTP(w, r)
+	})
 
 	// ── Subdomain proxy (*.apps.tumi-ai.com → Next.js rewrite → here) ──────
 	r.Handle("/_proxy/{subdomain}/*", http.HandlerFunc(proxyHandler.ProxyBySlug))

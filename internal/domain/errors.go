@@ -10,6 +10,7 @@ var (
 	ErrInvalidInput  = errors.New("invalid input")
 	ErrTokenExpired  = errors.New("token expired")
 	ErrTokenInvalid  = errors.New("token invalid")
-	ErrInvalidInviteCode = errors.New("invalid registration invite code")
+	ErrInvalidInviteCode     = errors.New("invalid registration invite code")
 	ErrInvalidOnboardingCode = errors.New("invalid global onboarding code")
+	ErrAlreadyConfigured     = errors.New("already configured")
 )

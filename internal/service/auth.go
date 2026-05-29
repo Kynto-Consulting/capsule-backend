@@ -291,7 +291,7 @@ func (s *AuthService) VerifyOnboarding(ctx context.Context, code string) (bool, 
 	}
 
 	if savedStr == "true" {
-		return true, nil // Already saved!
+		return true, domain.ErrAlreadyConfigured
 	}
 
 	secret, err := s.settings.Get(ctx, "global_2fa_secret")

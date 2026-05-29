@@ -39,6 +39,7 @@ type Project struct {
 	OrgID         uuid.UUID              `json:"org_id"`
 	Name          string                 `json:"name"`
 	Slug          string                 `json:"slug"`
+	Description   string                 `json:"description"`
 	RepoURL       string                 `json:"repo_url,omitempty"`
 	Branch        string                 `json:"branch"`
 	BuildStrategy string                 `json:"build_strategy"`

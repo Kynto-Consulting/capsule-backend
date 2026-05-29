@@ -333,6 +333,9 @@ func (h *DeploymentHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if logs == nil {
+		logs = []*domain.BuildLog{}
+	}
 	respondJSON(w, http.StatusOK, logs)
 }
 

@@ -180,6 +180,7 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name          *string `json:"name"`
 		Slug          *string `json:"slug"`
+		Description   *string `json:"description"`
 		RepoURL       *string `json:"repo_url"`
 		Branch        *string `json:"branch"`
 		BuildStrategy *string `json:"build_strategy"`
@@ -195,6 +196,9 @@ func (h *ProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name != nil {
 		project.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Description != nil {
+		project.Description = *req.Description
 	}
 	if req.Slug != nil {
 		newSlug := strings.TrimSpace(strings.ToLower(*req.Slug))
