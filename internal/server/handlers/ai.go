@@ -356,16 +356,33 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Multimodal request parsing ---
-	// Accepts OpenAI-compatible format:
-	//   content: "string"  OR  content: [{type:"text",text:"..."}, {type:"image_url",image_url:{url:"data:image/jpeg;base64,..."}}]
+	// --- OpenAI-compatible request parsing ---
 	type rawMessage struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCallID string          `json:"tool_call_id"` // role:tool
+		ToolCalls  []struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"` // role:assistant
 	}
 	var rawReq struct {
 		Model    string       `json:"model"`
 		Messages []rawMessage `json:"messages"`
+		Stream   bool         `json:"stream"`
+		Tools    []struct {
+			Type     string `json:"type"`
+			Function struct {
+				Name        string          `json:"name"`
+				Description string          `json:"description"`
+				Parameters  json.RawMessage `json:"parameters"`
+			} `json:"function"`
+		} `json:"tools"`
+		ToolChoice json.RawMessage `json:"tool_choice"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -468,122 +485,335 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	var novaMessages []bedrockMsg    // Nova format
 
 	for _, m := range rawReq.Messages {
-		parts := parseContent(m.Content)
-		// Skip role:tool (native OpenAI tool results) — Killio uses XML inline
-		if m.Role == "tool" {
-			continue
-		}
-		if m.Role == "system" {
-			// System: text only (Bedrock doesn't support images in system prompts)
+		switch m.Role {
+		case "system":
+			parts := parseContent(m.Content)
 			for _, p := range parts {
 				if !p.IsImage {
 					systemPrompt += p.Text
 				}
 			}
 			continue
-		}
-		var novaContent []map[string]any
-		var anthropicContent []map[string]any
-		for _, p := range parts {
-			if p.IsImage {
-				// Nova image format
-				novaContent = append(novaContent, map[string]any{
-					"image": map[string]any{
-						"format": p.Format,
-						"source": map[string]any{"bytes": p.B64Data},
-					},
-				})
-				// Anthropic image format
-				anthropicContent = append(anthropicContent, map[string]any{
-					"type": "image",
-					"source": map[string]any{
-						"type":       "base64",
-						"media_type": p.MediaType,
-						"data":       p.B64Data,
-					},
-				})
-			} else {
-				novaContent = append(novaContent, map[string]any{"text": p.Text})
-				anthropicContent = append(anthropicContent, map[string]any{"type": "text", "text": p.Text})
+
+		case "tool":
+			// OpenAI tool result → Nova toolResult inside a user turn
+			var resultText string
+			if err := json.Unmarshal(m.Content, &resultText); err != nil {
+				resultText = string(m.Content)
 			}
+			novaMessages = append(novaMessages, bedrockMsg{
+				Role: "user",
+				Content: []map[string]any{{
+					"toolResult": map[string]any{
+						"toolUseId": m.ToolCallID,
+						"content":   []map[string]any{{"text": resultText}},
+						"status":    "success",
+					},
+				}},
+			})
+			bedrockMessages = append(bedrockMessages, bedrockMsg{
+				Role: "user",
+				Content: []map[string]any{{
+					"type": "tool_result",
+					"tool_use_id": m.ToolCallID,
+					"content":     resultText,
+				}},
+			})
+			continue
+
+		case "assistant":
+			if len(m.ToolCalls) > 0 {
+				// Assistant requested tool calls
+				var novaContent []map[string]any
+				var anthropicContent []map[string]any
+				for _, tc := range m.ToolCalls {
+					var args map[string]any
+					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+					novaContent = append(novaContent, map[string]any{
+						"toolUse": map[string]any{
+							"toolUseId": tc.ID,
+							"name":      tc.Function.Name,
+							"input":     args,
+						},
+					})
+					anthropicContent = append(anthropicContent, map[string]any{
+						"type":  "tool_use",
+						"id":    tc.ID,
+						"name":  tc.Function.Name,
+						"input": args,
+					})
+				}
+				novaMessages = append(novaMessages, bedrockMsg{Role: "assistant", Content: novaContent})
+				bedrockMessages = append(bedrockMessages, bedrockMsg{Role: "assistant", Content: anthropicContent})
+				continue
+			}
+			fallthrough
+
+		default:
+			parts := parseContent(m.Content)
+			var novaContent []map[string]any
+			var anthropicContent []map[string]any
+			for _, p := range parts {
+				if p.IsImage {
+					novaContent = append(novaContent, map[string]any{
+						"image": map[string]any{
+							"format": p.Format,
+							"source": map[string]any{"bytes": p.B64Data},
+						},
+					})
+					anthropicContent = append(anthropicContent, map[string]any{
+						"type": "image",
+						"source": map[string]any{
+							"type":       "base64",
+							"media_type": p.MediaType,
+							"data":       p.B64Data,
+						},
+					})
+				} else {
+					novaContent = append(novaContent, map[string]any{"text": p.Text})
+					anthropicContent = append(anthropicContent, map[string]any{"type": "text", "text": p.Text})
+				}
+			}
+			novaMessages = append(novaMessages, bedrockMsg{Role: m.Role, Content: novaContent})
+			bedrockMessages = append(bedrockMessages, bedrockMsg{Role: m.Role, Content: anthropicContent})
 		}
-		novaMessages = append(novaMessages, bedrockMsg{Role: m.Role, Content: novaContent})
-		bedrockMessages = append(bedrockMessages, bedrockMsg{Role: m.Role, Content: anthropicContent})
 	}
 
-	// Keep req.Model accessible below
-	type reqModel struct{ Model string }
-	req := reqModel{Model: rawReq.Model}
-
+	// Build Bedrock payload
 	var payloadBytes []byte
 	if selected.isNova {
 		novaPayload := map[string]any{
 			"messages":        novaMessages,
-			"inferenceConfig": map[string]any{"maxTokens": 2000},
+			"inferenceConfig": map[string]any{"maxTokens": 4096},
 		}
 		if systemPrompt != "" {
 			novaPayload["system"] = []map[string]any{{"text": systemPrompt}}
+		}
+		// Convert OpenAI tools → Nova toolConfig
+		if len(rawReq.Tools) > 0 {
+			var novaTools []map[string]any
+			for _, t := range rawReq.Tools {
+				var params any
+				_ = json.Unmarshal(t.Function.Parameters, &params)
+				novaTools = append(novaTools, map[string]any{
+					"toolSpec": map[string]any{
+						"name":        t.Function.Name,
+						"description": t.Function.Description,
+						"inputSchema": map[string]any{"json": params},
+					},
+				})
+			}
+			toolChoice := map[string]any{"auto": map[string]any{}}
+			if len(rawReq.ToolChoice) > 0 {
+				var tc string
+				if json.Unmarshal(rawReq.ToolChoice, &tc) == nil && tc == "none" {
+					toolChoice = map[string]any{"any": map[string]any{}}
+				}
+			}
+			novaPayload["toolConfig"] = map[string]any{"tools": novaTools, "toolChoice": toolChoice}
 		}
 		payloadBytes, _ = json.Marshal(novaPayload)
 	} else {
 		anthropicPayload := map[string]any{
 			"anthropic_version": "bedrock-2023-05-31",
-			"max_tokens":        2000,
+			"max_tokens":        4096,
 			"messages":          bedrockMessages,
 		}
 		if systemPrompt != "" {
 			anthropicPayload["system"] = systemPrompt
 		}
+		if len(rawReq.Tools) > 0 {
+			var claudeTools []map[string]any
+			for _, t := range rawReq.Tools {
+				var params any
+				_ = json.Unmarshal(t.Function.Parameters, &params)
+				claudeTools = append(claudeTools, map[string]any{
+					"name":         t.Function.Name,
+					"description":  t.Function.Description,
+					"input_schema": params,
+				})
+			}
+			anthropicPayload["tools"] = claudeTools
+		}
 		payloadBytes, _ = json.Marshal(anthropicPayload)
 	}
 
-	var aiResponseText string
-
-	if h.aws != nil {
-		output, err := h.aws.Bedrock.InvokeModel(r.Context(), &bedrockruntime.InvokeModelInput{
-			ModelId:     aws.String(awsModelID),
-			ContentType: aws.String("application/json"),
-			Accept:      aws.String("application/json"),
-			Body:        payloadBytes,
-		})
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "AI_ERROR", "failed to invoke bedrock model: "+err.Error())
-			return
-		}
-
-		if selected.isNova {
-			var novaResp struct {
-				Output struct {
-					Message struct {
-						Content []struct{ Text string `json:"text"` } `json:"content"`
-					} `json:"message"`
-				} `json:"output"`
-			}
-			if err := json.Unmarshal(output.Body, &novaResp); err == nil &&
-				len(novaResp.Output.Message.Content) > 0 {
-				aiResponseText = novaResp.Output.Message.Content[0].Text
-			}
-		} else {
-			var anthropicResp struct {
-				Content []struct{ Text string `json:"text"` } `json:"content"`
-			}
-			if err := json.Unmarshal(output.Body, &anthropicResp); err == nil &&
-				len(anthropicResp.Content) > 0 {
-				aiResponseText = anthropicResp.Content[0].Text
-			}
-		}
-		if aiResponseText == "" {
-			aiResponseText = "Received empty response from model."
-		}
-	} else {
+	if h.aws == nil {
 		respondError(w, http.StatusServiceUnavailable, "AI_UNAVAILABLE", "AI features require AWS Bedrock configuration")
 		return
 	}
 
-	// Format as OpenAI Chat Completion response
+	chatID := "chatcmpl-" + randomString(12)
+	created := time.Now().Unix()
+
+	// ── Shared: invoke Bedrock (non-streaming SDK, works for both JSON and SSE output) ──
+	bedrockOut, bedrockErr := h.aws.Bedrock.InvokeModel(r.Context(), &bedrockruntime.InvokeModelInput{
+		ModelId:     aws.String(awsModelID),
+		ContentType: aws.String("application/json"),
+		Accept:      aws.String("application/json"),
+		Body:        payloadBytes,
+	})
+
+	// ── SSE streaming ──────────────────────────────────────────────────────────
+	if rawReq.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		flusher, canFlush := w.(http.Flusher)
+
+		sendSSE := func(data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		makeChunk := func(delta map[string]any, finishReason *string, usage map[string]any) map[string]any {
+			choice := map[string]any{"index": 0, "delta": delta, "finish_reason": finishReason}
+			chunk := map[string]any{
+				"id": chatID, "object": "chat.completion.chunk",
+				"created": created, "model": rawReq.Model,
+				"choices": []any{choice},
+			}
+			if usage != nil {
+				chunk["usage"] = usage
+			}
+			return chunk
+		}
+
+		if bedrockErr != nil {
+			sendSSE(map[string]any{"error": map[string]any{"code": "AI_ERROR", "message": bedrockErr.Error()}})
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			if canFlush {
+				flusher.Flush()
+			}
+			return
+		}
+
+		// Parse full response then emit as SSE chunks
+		type sseResult struct {
+			text        string
+			toolCalls   []map[string]any
+			finishReason string
+		}
+		var res sseResult
+		res.finishReason = "stop"
+
+		if selected.isNova {
+			var novaResp struct {
+				StopReason string `json:"stopReason"`
+				Output     struct {
+					Message struct {
+						Content []struct {
+							Text    string `json:"text"`
+							ToolUse *struct {
+								ToolUseID string         `json:"toolUseId"`
+								Name      string         `json:"name"`
+								Input     map[string]any `json:"input"`
+							} `json:"toolUse"`
+						} `json:"content"`
+					} `json:"message"`
+				} `json:"output"`
+			}
+			if err := json.Unmarshal(bedrockOut.Body, &novaResp); err == nil {
+				if novaResp.StopReason == "tool_use" {
+					res.finishReason = "tool_calls"
+					for _, c := range novaResp.Output.Message.Content {
+						if c.ToolUse != nil {
+							argsJSON, _ := json.Marshal(c.ToolUse.Input)
+							res.toolCalls = append(res.toolCalls, map[string]any{
+								"id": c.ToolUse.ToolUseID, "type": "function",
+								"function": map[string]any{"name": c.ToolUse.Name, "arguments": string(argsJSON)},
+							})
+						}
+					}
+				} else {
+					for _, c := range novaResp.Output.Message.Content {
+						res.text += c.Text
+					}
+				}
+			}
+		} else {
+			var anthropicResp struct {
+				StopReason string `json:"stop_reason"`
+				Content    []struct {
+					Type  string         `json:"type"`
+					Text  string         `json:"text"`
+					ID    string         `json:"id"`
+					Name  string         `json:"name"`
+					Input map[string]any `json:"input"`
+				} `json:"content"`
+			}
+			if err := json.Unmarshal(bedrockOut.Body, &anthropicResp); err == nil {
+				if anthropicResp.StopReason == "tool_use" {
+					res.finishReason = "tool_calls"
+					for _, c := range anthropicResp.Content {
+						if c.Type == "tool_use" {
+							argsJSON, _ := json.Marshal(c.Input)
+							res.toolCalls = append(res.toolCalls, map[string]any{
+								"id": c.ID, "type": "function",
+								"function": map[string]any{"name": c.Name, "arguments": string(argsJSON)},
+							})
+						}
+					}
+				} else {
+					for _, c := range anthropicResp.Content {
+						if c.Type == "text" {
+							res.text += c.Text
+						}
+					}
+				}
+			}
+		}
+
+		// Emit SSE: role delta → content delta(s) → [tool_calls delta] → finish → DONE
+		sendSSE(makeChunk(map[string]any{"role": "assistant", "content": ""}, nil, nil))
+
+		if len(res.toolCalls) > 0 {
+			for i, tc := range res.toolCalls {
+				idx := i
+				sendSSE(makeChunk(map[string]any{
+					"tool_calls": []map[string]any{{"index": idx, "id": tc["id"], "type": "function",
+						"function": map[string]any{"name": tc["function"].(map[string]any)["name"], "arguments": ""}}},
+				}, nil, nil))
+				sendSSE(makeChunk(map[string]any{
+					"tool_calls": []map[string]any{{"index": idx,
+						"function": map[string]any{"arguments": tc["function"].(map[string]any)["arguments"]}}},
+				}, nil, nil))
+			}
+		} else if res.text != "" {
+			// Chunk text into ~100-char pieces for realistic streaming feel
+			const chunkSize = 100
+			for i := 0; i < len(res.text); i += chunkSize {
+				end := i + chunkSize
+				if end > len(res.text) {
+					end = len(res.text)
+				}
+				sendSSE(makeChunk(map[string]any{"content": res.text[i:end]}, nil, nil))
+			}
+		}
+
+		finishStr := res.finishReason
+		sendSSE(makeChunk(map[string]any{}, &finishStr, nil))
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if canFlush {
+			flusher.Flush()
+		}
+		return
+	}
+
+	// ── Non-streaming JSON response ────────────────────────────────────────────
+	if bedrockErr != nil {
+		respondError(w, http.StatusInternalServerError, "AI_ERROR", "failed to invoke bedrock model: "+bedrockErr.Error())
+		return
+	}
+	output := bedrockOut
+
 	type respMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role      string         `json:"role"`
+		Content   any            `json:"content"`
+		ToolCalls []map[string]any `json:"tool_calls,omitempty"`
 	}
 	type openAIChoice struct {
 		Index        int         `json:"index"`
@@ -598,19 +828,98 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Choices []openAIChoice `json:"choices"`
 	}
 
-	respondJSON(w, http.StatusOK, openAIChatResponse{
-		ID:      "chatcmpl-" + randomString(12),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   req.Model,
-		Choices: []openAIChoice{
-			{
-				Index:        0,
-				Message:      respMessage{Role: "assistant", Content: aiResponseText},
-				FinishReason: "stop",
-			},
-		},
-	})
+	if selected.isNova {
+		var novaResp struct {
+			StopReason string `json:"stopReason"`
+			Output     struct {
+				Message struct {
+					Content []struct {
+						Text    string `json:"text"`
+						ToolUse *struct {
+							ToolUseID string         `json:"toolUseId"`
+							Name      string         `json:"name"`
+							Input     map[string]any `json:"input"`
+						} `json:"toolUse"`
+					} `json:"content"`
+				} `json:"message"`
+			} `json:"output"`
+		}
+		if err := json.Unmarshal(output.Body, &novaResp); err != nil {
+			respondError(w, http.StatusInternalServerError, "AI_ERROR", "failed to parse model response")
+			return
+		}
+		finishReason := "stop"
+		msg := respMessage{Role: "assistant"}
+		if novaResp.StopReason == "tool_use" {
+			finishReason = "tool_calls"
+			msg.Content = nil
+			for _, c := range novaResp.Output.Message.Content {
+				if c.ToolUse != nil {
+					argsJSON, _ := json.Marshal(c.ToolUse.Input)
+					msg.ToolCalls = append(msg.ToolCalls, map[string]any{
+						"id":   c.ToolUse.ToolUseID,
+						"type": "function",
+						"function": map[string]any{
+							"name":      c.ToolUse.Name,
+							"arguments": string(argsJSON),
+						},
+					})
+				}
+			}
+		} else {
+			var text string
+			for _, c := range novaResp.Output.Message.Content {
+				text += c.Text
+			}
+			msg.Content = text
+		}
+		respondJSON(w, http.StatusOK, openAIChatResponse{
+			ID: chatID, Object: "chat.completion", Created: created, Model: rawReq.Model,
+			Choices: []openAIChoice{{Index: 0, Message: msg, FinishReason: finishReason}},
+		})
+	} else {
+		var anthropicResp struct {
+			StopReason string `json:"stop_reason"`
+			Content    []struct {
+				Type  string         `json:"type"`
+				Text  string         `json:"text"`
+				ID    string         `json:"id"`
+				Name  string         `json:"name"`
+				Input map[string]any `json:"input"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(output.Body, &anthropicResp); err != nil {
+			respondError(w, http.StatusInternalServerError, "AI_ERROR", "failed to parse model response")
+			return
+		}
+		finishReason := "stop"
+		msg := respMessage{Role: "assistant"}
+		if anthropicResp.StopReason == "tool_use" {
+			finishReason = "tool_calls"
+			msg.Content = nil
+			for _, c := range anthropicResp.Content {
+				if c.Type == "tool_use" {
+					argsJSON, _ := json.Marshal(c.Input)
+					msg.ToolCalls = append(msg.ToolCalls, map[string]any{
+						"id": c.ID, "type": "function",
+						"function": map[string]any{"name": c.Name, "arguments": string(argsJSON)},
+					})
+				}
+			}
+		} else {
+			var text string
+			for _, c := range anthropicResp.Content {
+				if c.Type == "text" {
+					text += c.Text
+				}
+			}
+			msg.Content = text
+		}
+		respondJSON(w, http.StatusOK, openAIChatResponse{
+			ID: chatID, Object: "chat.completion", Created: created, Model: rawReq.Model,
+			Choices: []openAIChoice{{Index: 0, Message: msg, FinishReason: finishReason}},
+		})
+	}
 }
 
 // Generate Dockerfile
