@@ -356,18 +356,49 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// rawMessage handles both string and array content (OpenAI multimodal format)
+	type rawMessage struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
 	type chatMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string
+		Content string
 	}
 
-	var req struct {
-		Model    string        `json:"model"`
-		Messages []chatMessage `json:"messages"`
+	var rawReq struct {
+		Model    string       `json:"model"`
+		Messages []rawMessage `json:"messages"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
 		return
+	}
+
+	// Normalize content: string → keep, array → join text parts
+	var req struct {
+		Model    string
+		Messages []chatMessage
+	}
+	req.Model = rawReq.Model
+	for _, m := range rawReq.Messages {
+		var text string
+		// Try string first
+		if err := json.Unmarshal(m.Content, &text); err != nil {
+			// Try array of {type,text} parts
+			var parts []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if err2 := json.Unmarshal(m.Content, &parts); err2 == nil {
+				for _, p := range parts {
+					if p.Type == "text" || p.Type == "" {
+						text += p.Text
+					}
+				}
+			}
+		}
+		req.Messages = append(req.Messages, chatMessage{Role: m.Role, Content: text})
 	}
 
 	if len(req.Messages) == 0 {
