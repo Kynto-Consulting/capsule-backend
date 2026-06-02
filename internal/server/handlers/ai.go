@@ -356,16 +356,13 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// rawMessage handles both string and array content (OpenAI multimodal format)
+	// --- Multimodal request parsing ---
+	// Accepts OpenAI-compatible format:
+	//   content: "string"  OR  content: [{type:"text",text:"..."}, {type:"image_url",image_url:{url:"data:image/jpeg;base64,..."}}]
 	type rawMessage struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	}
-	type chatMessage struct {
-		Role    string
-		Content string
-	}
-
 	var rawReq struct {
 		Model    string       `json:"model"`
 		Messages []rawMessage `json:"messages"`
@@ -374,36 +371,65 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
 		return
 	}
-
-	// Normalize content: string → keep, array → join text parts
-	var req struct {
-		Model    string
-		Messages []chatMessage
+	if len(rawReq.Messages) == 0 {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "messages cannot be empty")
+		return
 	}
-	req.Model = rawReq.Model
-	for _, m := range rawReq.Messages {
+
+	// contentPart — normalized internal representation of one content item
+	type contentPart struct {
+		IsImage   bool
+		Text      string
+		Format    string // jpeg, png, gif, webp
+		B64Data   string // raw base64 (no data-URL prefix)
+		MediaType string // image/jpeg etc
+	}
+
+	// parseContent converts OpenAI content (string or array) → []contentPart
+	parseContent := func(raw json.RawMessage) []contentPart {
 		var text string
-		// Try string first
-		if err := json.Unmarshal(m.Content, &text); err != nil {
-			// Try array of {type,text} parts
-			var parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			if err2 := json.Unmarshal(m.Content, &parts); err2 == nil {
-				for _, p := range parts {
-					if p.Type == "text" || p.Type == "" {
-						text += p.Text
+		if err := json.Unmarshal(raw, &text); err == nil {
+			return []contentPart{{Text: text}}
+		}
+		var parts []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			ImageURL *struct {
+				URL string `json:"url"`
+			} `json:"image_url"`
+		}
+		if err := json.Unmarshal(raw, &parts); err != nil {
+			return nil
+		}
+		var out []contentPart
+		for _, p := range parts {
+			switch p.Type {
+			case "text":
+				out = append(out, contentPart{Text: p.Text})
+			case "image_url":
+				if p.ImageURL == nil {
+					continue
+				}
+				url := p.ImageURL.URL
+				if strings.HasPrefix(url, "data:") {
+					// data:image/jpeg;base64,<b64>
+					halves := strings.SplitN(url, ",", 2)
+					if len(halves) == 2 {
+						meta := strings.TrimPrefix(halves[0], "data:")
+						mediaType := strings.Split(meta, ";")[0]
+						format := strings.TrimPrefix(mediaType, "image/")
+						out = append(out, contentPart{
+							IsImage: true, Format: format,
+							B64Data: halves[1], MediaType: mediaType,
+						})
 					}
+				} else {
+					// Plain URL — pass as text reference (Bedrock needs bytes)
+					out = append(out, contentPart{Text: "[image: " + url + "]"})
 				}
 			}
 		}
-		req.Messages = append(req.Messages, chatMessage{Role: m.Role, Content: text})
-	}
-
-	if len(req.Messages) == 0 {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "messages cannot be empty")
-		return
+		return out
 	}
 
 	// Map model IDs — Nova models available without use-case form; Claude requires Anthropic approval
@@ -412,9 +438,9 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		isNova    bool
 	}
 	modelMap := map[string]modelDef{
-		"nova-pro":       {"amazon.nova-pro-v1:0", true},
-		"nova-lite":      {"amazon.nova-lite-v1:0", true},
-		"nova-micro":     {"amazon.nova-micro-v1:0", true},
+		"nova-pro":          {"amazon.nova-pro-v1:0", true},
+		"nova-lite":         {"amazon.nova-lite-v1:0", true},
+		"nova-micro":        {"amazon.nova-micro-v1:0", true},
 		"claude-haiku-4.5":  {"us.anthropic.claude-haiku-4-5-20251001-v1:0", false},
 		"claude-sonnet-4.5": {"us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
 		"claude-opus-4.5":   {"us.anthropic.claude-opus-4-5-20251101-v1:0", false},
@@ -422,37 +448,65 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		"llama3-2-90b":      {"us.meta.llama3-2-90b-instruct-v1:0", false},
 		"deepseek-r1":       {"us.deepseek.r1-v1:0", false},
 	}
-	selected, ok := modelMap[req.Model]
+	selected, ok := modelMap[rawReq.Model]
 	if !ok {
 		selected = modelDef{"amazon.nova-lite-v1:0", true}
 	}
 	awsModelID := selected.bedrockID
 
-	// Build payload — Nova uses a different schema from Anthropic
+	// Build Bedrock payload — Nova and Anthropic have different schemas
 	type bedrockMsg struct {
 		Role    string           `json:"role"`
 		Content []map[string]any `json:"content"`
 	}
 
 	var systemPrompt string
-	var bedrockMessages []bedrockMsg
+	var bedrockMessages []bedrockMsg // Anthropic format
+	var novaMessages []bedrockMsg    // Nova format
 
-	var novaMessages []bedrockMsg
-	for _, m := range req.Messages {
+	for _, m := range rawReq.Messages {
+		parts := parseContent(m.Content)
 		if m.Role == "system" {
-			systemPrompt = m.Content
+			// System: text only (Bedrock doesn't support images in system prompts)
+			for _, p := range parts {
+				if !p.IsImage {
+					systemPrompt += p.Text
+				}
+			}
 			continue
 		}
-		// Anthropic format: {"type":"text","text":"..."}  Nova format: {"text":"..."}
-		bedrockMessages = append(bedrockMessages, bedrockMsg{
-			Role:    m.Role,
-			Content: []map[string]any{{"type": "text", "text": m.Content}},
-		})
-		novaMessages = append(novaMessages, bedrockMsg{
-			Role:    m.Role,
-			Content: []map[string]any{{"text": m.Content}},
-		})
+		var novaContent []map[string]any
+		var anthropicContent []map[string]any
+		for _, p := range parts {
+			if p.IsImage {
+				// Nova image format
+				novaContent = append(novaContent, map[string]any{
+					"image": map[string]any{
+						"format": p.Format,
+						"source": map[string]any{"bytes": p.B64Data},
+					},
+				})
+				// Anthropic image format
+				anthropicContent = append(anthropicContent, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": p.MediaType,
+						"data":       p.B64Data,
+					},
+				})
+			} else {
+				novaContent = append(novaContent, map[string]any{"text": p.Text})
+				anthropicContent = append(anthropicContent, map[string]any{"type": "text", "text": p.Text})
+			}
+		}
+		novaMessages = append(novaMessages, bedrockMsg{Role: m.Role, Content: novaContent})
+		bedrockMessages = append(bedrockMessages, bedrockMsg{Role: m.Role, Content: anthropicContent})
 	}
+
+	// Keep req.Model accessible below
+	type reqModel struct{ Model string }
+	req := reqModel{Model: rawReq.Model}
 
 	var payloadBytes []byte
 	if selected.isNova {
@@ -520,9 +574,13 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Format as OpenAI Chat Completion response
+	type respMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
 	type openAIChoice struct {
 		Index        int         `json:"index"`
-		Message      chatMessage `json:"message"`
+		Message      respMessage `json:"message"`
 		FinishReason string      `json:"finish_reason"`
 	}
 	type openAIChatResponse struct {
@@ -541,7 +599,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Choices: []openAIChoice{
 			{
 				Index:        0,
-				Message:      chatMessage{Role: "assistant", Content: aiResponseText},
+				Message:      respMessage{Role: "assistant", Content: aiResponseText},
 				FinishReason: "stop",
 			},
 		},
