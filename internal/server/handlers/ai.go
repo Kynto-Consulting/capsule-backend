@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	bedrockruntimetypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -646,15 +647,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	chatID := "chatcmpl-" + randomString(12)
 	created := time.Now().Unix()
 
-	// ── Shared: invoke Bedrock (non-streaming SDK, works for both JSON and SSE output) ──
-	bedrockOut, bedrockErr := h.aws.Bedrock.InvokeModel(r.Context(), &bedrockruntime.InvokeModelInput{
-		ModelId:     aws.String(awsModelID),
-		ContentType: aws.String("application/json"),
-		Accept:      aws.String("application/json"),
-		Body:        payloadBytes,
-	})
-
-	// ── SSE streaming ──────────────────────────────────────────────────────────
+	// ── SSE real streaming ────────────────────────────────────────────────────
 	if rawReq.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -682,126 +675,167 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			return chunk
 		}
 
-		if bedrockErr != nil {
-			sendSSE(map[string]any{"error": map[string]any{"code": "AI_ERROR", "message": bedrockErr.Error()}})
+		streamOut, err := h.aws.Bedrock.InvokeModelWithResponseStream(r.Context(), &bedrockruntime.InvokeModelWithResponseStreamInput{
+			ModelId:     aws.String(awsModelID),
+			ContentType: aws.String("application/json"),
+			Accept:      aws.String("application/json"),
+			Body:        payloadBytes,
+		})
+		if err != nil {
+			sendSSE(map[string]any{"error": map[string]any{"code": "AI_ERROR", "message": err.Error()}})
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			if canFlush {
 				flusher.Flush()
 			}
 			return
 		}
+		defer streamOut.GetStream().Close()
 
-		// Parse full response then emit as SSE chunks
-		type sseResult struct {
-			text        string
-			toolCalls   []map[string]any
-			finishReason string
-		}
-		var res sseResult
-		res.finishReason = "stop"
-
-		if selected.isNova {
-			var novaResp struct {
-				StopReason string `json:"stopReason"`
-				Output     struct {
-					Message struct {
-						Content []struct {
-							Text    string `json:"text"`
-							ToolUse *struct {
-								ToolUseID string         `json:"toolUseId"`
-								Name      string         `json:"name"`
-								Input     map[string]any `json:"input"`
-							} `json:"toolUse"`
-						} `json:"content"`
-					} `json:"message"`
-				} `json:"output"`
-			}
-			if err := json.Unmarshal(bedrockOut.Body, &novaResp); err == nil {
-				if novaResp.StopReason == "tool_use" {
-					res.finishReason = "tool_calls"
-					for _, c := range novaResp.Output.Message.Content {
-						if c.ToolUse != nil {
-							argsJSON, _ := json.Marshal(c.ToolUse.Input)
-							res.toolCalls = append(res.toolCalls, map[string]any{
-								"id": c.ToolUse.ToolUseID, "type": "function",
-								"function": map[string]any{"name": c.ToolUse.Name, "arguments": string(argsJSON)},
-							})
-						}
-					}
-				} else {
-					for _, c := range novaResp.Output.Message.Content {
-						res.text += c.Text
-					}
-				}
-			}
-		} else {
-			var anthropicResp struct {
-				StopReason string `json:"stop_reason"`
-				Content    []struct {
-					Type  string         `json:"type"`
-					Text  string         `json:"text"`
-					ID    string         `json:"id"`
-					Name  string         `json:"name"`
-					Input map[string]any `json:"input"`
-				} `json:"content"`
-			}
-			if err := json.Unmarshal(bedrockOut.Body, &anthropicResp); err == nil {
-				if anthropicResp.StopReason == "tool_use" {
-					res.finishReason = "tool_calls"
-					for _, c := range anthropicResp.Content {
-						if c.Type == "tool_use" {
-							argsJSON, _ := json.Marshal(c.Input)
-							res.toolCalls = append(res.toolCalls, map[string]any{
-								"id": c.ID, "type": "function",
-								"function": map[string]any{"name": c.Name, "arguments": string(argsJSON)},
-							})
-						}
-					}
-				} else {
-					for _, c := range anthropicResp.Content {
-						if c.Type == "text" {
-							res.text += c.Text
-						}
-					}
-				}
-			}
-		}
-
-		// Emit SSE: role delta → content delta(s) → [tool_calls delta] → finish → DONE
+		// Send initial role delta
 		sendSSE(makeChunk(map[string]any{"role": "assistant", "content": ""}, nil, nil))
 
-		if len(res.toolCalls) > 0 {
-			for i, tc := range res.toolCalls {
-				idx := i
+		finishReason := "stop"
+		var inputTokens, outputTokens int
+
+		// Tool call accumulation per content block index
+		type tcBlock struct {
+			idx  int
+			id   string
+			name string
+		}
+		tcBlocks := map[int]*tcBlock{}
+		var tcCounter int
+
+		for event := range streamOut.GetStream().Events() {
+			chunk, ok := event.(*bedrockruntimetypes.ResponseStreamMemberChunk)
+			if !ok {
+				continue
+			}
+			b := chunk.Value.Bytes
+
+			// Nova stream event shape
+			var evt struct {
+				ContentBlockDelta *struct {
+					ContentBlockIndex int `json:"contentBlockIndex"`
+					Delta             struct {
+						Text    string `json:"text"`
+						ToolUse *struct{ Input string `json:"input"` } `json:"toolUse"`
+					} `json:"delta"`
+				} `json:"contentBlockDelta"`
+				ContentBlockStart *struct {
+					ContentBlockIndex int `json:"contentBlockIndex"`
+					Start             struct {
+						ToolUse *struct {
+							ToolUseID string `json:"toolUseId"`
+							Name      string `json:"name"`
+						} `json:"toolUse"`
+					} `json:"start"`
+				} `json:"contentBlockStart"`
+				MessageStop *struct {
+					StopReason string `json:"stopReason"`
+				} `json:"messageStop"`
+				Metadata *struct {
+					Usage struct {
+						InputTokens  int `json:"inputTokens"`
+						OutputTokens int `json:"outputTokens"`
+					} `json:"usage"`
+				} `json:"metadata"`
+				// Anthropic streaming
+				Type  string `json:"type"`
+				Index int    `json:"index"`
+				Delta *struct {
+					Type      string `json:"type"`
+					Text      string `json:"text"`
+					StopReason string `json:"stop_reason"`
+				} `json:"delta"`
+				Usage *struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(b, &evt); err != nil {
+				continue
+			}
+
+			// ── Nova events ──────────────────────────────────────────────────
+			if evt.ContentBlockStart != nil && evt.ContentBlockStart.Start.ToolUse != nil {
+				tu := evt.ContentBlockStart.Start.ToolUse
+				idx := evt.ContentBlockStart.ContentBlockIndex
+				tc := &tcBlock{idx: tcCounter, id: tu.ToolUseID, name: tu.Name}
+				tcBlocks[idx] = tc
+				tcCounter++
 				sendSSE(makeChunk(map[string]any{
-					"tool_calls": []map[string]any{{"index": idx, "id": tc["id"], "type": "function",
-						"function": map[string]any{"name": tc["function"].(map[string]any)["name"], "arguments": ""}}},
-				}, nil, nil))
-				sendSSE(makeChunk(map[string]any{
-					"tool_calls": []map[string]any{{"index": idx,
-						"function": map[string]any{"arguments": tc["function"].(map[string]any)["arguments"]}}},
+					"tool_calls": []map[string]any{{
+						"index": tc.idx, "id": tu.ToolUseID, "type": "function",
+						"function": map[string]any{"name": tu.Name, "arguments": ""},
+					}},
 				}, nil, nil))
 			}
-		} else if res.text != "" {
-			// Chunk text into ~100-char pieces for realistic streaming feel
-			const chunkSize = 100
-			for i := 0; i < len(res.text); i += chunkSize {
-				end := i + chunkSize
-				if end > len(res.text) {
-					end = len(res.text)
+			if evt.ContentBlockDelta != nil {
+				d := evt.ContentBlockDelta.Delta
+				if d.Text != "" {
+					sendSSE(makeChunk(map[string]any{"content": d.Text}, nil, nil))
 				}
-				sendSSE(makeChunk(map[string]any{"content": res.text[i:end]}, nil, nil))
+				if d.ToolUse != nil && d.ToolUse.Input != "" {
+					if tc, ok := tcBlocks[evt.ContentBlockDelta.ContentBlockIndex]; ok {
+						sendSSE(makeChunk(map[string]any{
+							"tool_calls": []map[string]any{{
+								"index":    tc.idx,
+								"function": map[string]any{"arguments": d.ToolUse.Input},
+							}},
+						}, nil, nil))
+					}
+				}
+			}
+			if evt.MessageStop != nil {
+				if evt.MessageStop.StopReason == "tool_use" {
+					finishReason = "tool_calls"
+				}
+			}
+			if evt.Metadata != nil {
+				inputTokens = evt.Metadata.Usage.InputTokens
+				outputTokens = evt.Metadata.Usage.OutputTokens
+			}
+
+			// ── Anthropic events ─────────────────────────────────────────────
+			if evt.Type == "content_block_delta" && evt.Delta != nil && evt.Delta.Text != "" {
+				sendSSE(makeChunk(map[string]any{"content": evt.Delta.Text}, nil, nil))
+			}
+			if evt.Type == "message_delta" && evt.Delta != nil && evt.Delta.StopReason == "tool_use" {
+				finishReason = "tool_calls"
+			}
+			if evt.Type == "message_start" && evt.Usage != nil {
+				inputTokens = evt.Usage.InputTokens
+			}
+			if evt.Type == "message_delta" && evt.Usage != nil {
+				outputTokens = evt.Usage.OutputTokens
 			}
 		}
+		if err := streamOut.GetStream().Err(); err != nil {
+			// Stream error — best effort log, response already started
+			h.logger.Error("bedrock stream error", "err", err)
+		}
 
-		finishStr := res.finishReason
-		sendSSE(makeChunk(map[string]any{}, &finishStr, nil))
+		finishStr := finishReason
+		sendSSE(makeChunk(map[string]any{}, &finishStr, map[string]any{
+			"prompt_tokens":     inputTokens,
+			"completion_tokens": outputTokens,
+			"total_tokens":      inputTokens + outputTokens,
+		}))
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
 			flusher.Flush()
 		}
 		return
 	}
+
+	// ── Non-streaming: shared InvokeModel ─────────────────────────────────────
+	bedrockOut, bedrockErr := h.aws.Bedrock.InvokeModel(r.Context(), &bedrockruntime.InvokeModelInput{
+		ModelId:     aws.String(awsModelID),
+		ContentType: aws.String("application/json"),
+		Accept:      aws.String("application/json"),
+		Body:        payloadBytes,
+	})
 
 	// ── Non-streaming JSON response ────────────────────────────────────────────
 	if bedrockErr != nil {
