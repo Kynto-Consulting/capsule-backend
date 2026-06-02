@@ -385,8 +385,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		MediaType string // image/jpeg etc
 	}
 
-	// parseContent converts OpenAI content (string or array) → []contentPart
+	// parseContent converts OpenAI content (string | array | null) → []contentPart
 	parseContent := func(raw json.RawMessage) []contentPart {
+		if len(raw) == 0 || string(raw) == "null" {
+			return nil // assistant tool_call messages have content:null
+		}
 		var text string
 		if err := json.Unmarshal(raw, &text); err == nil {
 			return []contentPart{{Text: text}}
@@ -466,6 +469,10 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	for _, m := range rawReq.Messages {
 		parts := parseContent(m.Content)
+		// Skip role:tool (native OpenAI tool results) — Killio uses XML inline
+		if m.Role == "tool" {
+			continue
+		}
 		if m.Role == "system" {
 			// System: text only (Bedrock doesn't support images in system prompts)
 			for _, p := range parts {
