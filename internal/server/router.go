@@ -85,6 +85,16 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":{"code":"NOT_FOUND","message":"route not found"}}`))
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Write([]byte(`{"error":{"code":"METHOD_NOT_ALLOWED","message":"method not allowed"}}`))
+	})
 	r.Use(middleware.RequestID)
 	r.Use(chiMiddleware.RealIP)
 	r.Use(middleware.Logger(logger))
@@ -162,6 +172,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 
 		// Public/Token authorized AI chat proxy
 		r.Post("/ai/chat", aiHandler.Chat)
+		r.Post("/ai/chat/completions", aiHandler.Chat) // OpenAI SDK compat
 
 		// Protected
 		r.Group(func(r chi.Router) {
