@@ -280,13 +280,21 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	go func(c *domain.CronJob) {
 		ctx := context.Background()
 		start := time.Now()
-		cmd := exec.CommandContext(ctx, "sh", "-c", c.Command)
+
+		// Run the command INSIDE the project's app container via docker exec.
+		// This gives the cron the app's working dir (/app), the app's env vars
+		// (DATABASE_URL etc.), and isolates user commands from the platform host.
+		// Container name matches the deploy worker: capsule-app-<first12ofUUID>.
+		shortID := strings.ReplaceAll(c.ProjectID.String(), "-", "")[:12]
+		containerName := "capsule-app-" + shortID
+
+		cmd := exec.CommandContext(ctx, "docker", "exec", containerName, "sh", "-c", c.Command)
 		out, runErr := cmd.CombinedOutput()
 		dur := time.Since(start)
 		runStatus := "success"
 		level := "info"
 		if runErr != nil {
-			h.logger.Error("cron trigger failed", "cron_id", c.ID, "error", runErr)
+			h.logger.Error("cron trigger failed", "cron_id", c.ID, "container", containerName, "error", runErr)
 			runStatus = "failed"
 			level = "error"
 		}
