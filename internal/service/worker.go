@@ -266,6 +266,19 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 	}
 }
 
+// pruneDocker reclaims disk before a build: removes dangling images and build
+// cache older than 24h. Keeps running containers and tagged images intact.
+// Best-effort — logs but never fails the deploy.
+func (w *DeployWorker) pruneDocker(ctx context.Context, id uuid.UUID) {
+	// Dangling images (untagged layers from prior builds)
+	imgCmd := exec.CommandContext(ctx, "docker", "image", "prune", "-f")
+	_ = imgCmd.Run()
+	// Build cache older than 24h (keeps recent cache for fast rebuilds)
+	cacheCmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f", "--filter", "until=24h")
+	_ = cacheCmd.Run()
+	w.appendLog(ctx, id, "Reclaimed disk (pruned dangling images + old build cache)")
+}
+
 // detectExposePort reads a Dockerfile and returns the first EXPOSE port.
 // Falls back to 3000 if none found.
 func detectExposePort(dockerfilePath string) int {
@@ -303,6 +316,10 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 			return
 		}
 	}
+
+	// --- free disk before build (prevents "no space left on device" from
+	//     accumulated layers/cache across many deploys) ---
+	w.pruneDocker(ctx, id)
 
 	// --- docker build ---
 	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageName))
