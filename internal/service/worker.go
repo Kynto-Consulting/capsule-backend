@@ -345,15 +345,30 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 		w.appendLog(ctx, id, fmt.Sprintf("Persistent volume: %s → /data", volumeName))
 	}
 
+	// --- fetch project env vars from DB ---
+	envPairsDocker, envErr := w.fetchEnvVarsForDocker(ctx, projectID)
+	if envErr != nil {
+		w.appendLog(ctx, id, fmt.Sprintf("Warning: could not load env vars: %v", envErr))
+	} else {
+		w.appendLog(ctx, id, fmt.Sprintf("Injecting %d env vars", len(envPairsDocker)))
+	}
+
 	// --- start new container ---
-	runCmd := exec.CommandContext(ctx, "docker", "run", "-d",
+	// Build args: docker run -d --name X --restart ... -e K=V ... -p ... -v ... image
+	runArgs := []string{"run", "-d",
 		"--name", imageName,
 		"--restart", "unless-stopped",
 		"-e", fmt.Sprintf("PORT=%d", containerPort),
+	}
+	for _, kv := range envPairsDocker {
+		runArgs = append(runArgs, "-e", kv)
+	}
+	runArgs = append(runArgs,
 		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
 		"-v", fmt.Sprintf("%s:/data", volumeName),
 		imageName,
 	)
+	runCmd := exec.CommandContext(ctx, "docker", runArgs...)
 	runOut, err := runCmd.CombinedOutput()
 	if err != nil {
 		w.failDeployment(ctx, id, fmt.Sprintf("docker run failed: %s", string(runOut)), err)
@@ -555,6 +570,28 @@ func (w *DeployWorker) ensureECRRepo(ctx context.Context, name string) (string, 
 		return "", fmt.Errorf("create ECR repo: %w", err)
 	}
 	return *created.Repository.RepositoryUri, nil
+}
+
+// fetchEnvVarsForDocker loads env vars from the DB as "KEY=VALUE" strings for docker run -e.
+func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+	rows, err := w.pool.Query(ctx,
+		`SELECT key, value FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both') ORDER BY key`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pairs []string
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, k+"="+v)
+	}
+	return pairs, nil
 }
 
 // fetchEnvVarsForTask loads env vars from the DB for use in the ECS task definition.
