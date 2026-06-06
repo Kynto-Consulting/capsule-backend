@@ -330,9 +330,20 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	containerPort := detectExposePort(dockerfilePath)
 	w.appendLog(ctx, id, fmt.Sprintf("Detected container port: %d", containerPort))
 
-	// --- stop and remove old container ---
+	// --- stop and remove old container (keep volume) ---
 	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
 	_ = rmCmd.Run()
+
+	// --- ensure named volume exists for persistent data ---
+	// Volume survives redeploys; mounted at /data inside the container.
+	// Users store databases, uploads, or any state there.
+	volumeName := "capsule-data-" + projectID.String()
+	volCmd := exec.CommandContext(ctx, "docker", "volume", "create", volumeName)
+	if volOut, volErr := volCmd.CombinedOutput(); volErr != nil {
+		w.appendLog(ctx, id, fmt.Sprintf("Warning: could not create volume %s: %s", volumeName, string(volOut)))
+	} else {
+		w.appendLog(ctx, id, fmt.Sprintf("Persistent volume: %s → /data", volumeName))
+	}
 
 	// --- start new container ---
 	runCmd := exec.CommandContext(ctx, "docker", "run", "-d",
@@ -340,6 +351,7 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 		"--restart", "unless-stopped",
 		"-e", fmt.Sprintf("PORT=%d", containerPort),
 		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
+		"-v", fmt.Sprintf("%s:/data", volumeName),
 		imageName,
 	)
 	runOut, err := runCmd.CombinedOutput()
