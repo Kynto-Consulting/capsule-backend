@@ -844,6 +844,29 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	const cacheMinChars = 4000
 	cacheSystem := systemPrompt != "" && len(systemPrompt) >= cacheMinChars
 
+	// History prefix caching: cache everything up to (but not including) the
+	// latest turn. The prefix [all messages except the last] is stable turn to
+	// turn, so each new turn only pays to process the new message — the prior
+	// conversation is read from Bedrock's cache. Big win when re-sending history
+	// (incl. multi-device: cache is server-side in Bedrock, keyed by content,
+	// not by caller/device). Gated to real conversations so the min-size rule
+	// isn't wasted; Bedrock silently ignores cache points below the threshold.
+	cacheHistory := len(novaMessages) >= 3
+	if cacheHistory {
+		k := len(novaMessages) - 2 // second-to-last built message
+		if k >= 0 {
+			// Nova: append a cachePoint content block to that message
+			novaMessages[k].Content = append(novaMessages[k].Content,
+				map[string]any{"cachePoint": map[string]any{"type": "default"}})
+		}
+		ka := len(bedrockMessages) - 2
+		if ka >= 0 && len(bedrockMessages[ka].Content) > 0 {
+			// Anthropic: cache_control on that message's last content block
+			last := len(bedrockMessages[ka].Content) - 1
+			bedrockMessages[ka].Content[last]["cache_control"] = map[string]any{"type": "ephemeral"}
+		}
+	}
+
 	// Build Bedrock payload
 	var payloadBytes []byte
 	if selected.isNova {
