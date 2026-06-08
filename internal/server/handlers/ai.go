@@ -22,6 +22,56 @@ import (
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
+// isTransientBedrockError reports whether a Bedrock error is worth retrying.
+// ModelErrorException ("invalid sequence as part of ToolUse"), throttling, and
+// transient service errors often succeed on a second attempt — especially on
+// long tool-use chains where the model occasionally emits a malformed block.
+func isTransientBedrockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"ModelErrorException",
+		"invalid sequence",
+		"ThrottlingException",
+		"ServiceUnavailable",
+		"InternalServerException",
+		"503",
+		"424",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// invokeModelWithRetry calls Bedrock InvokeModel, retrying transient errors
+// (up to 2 retries with short backoff).
+func (h *AIHandler) invokeModelWithRetry(ctx context.Context, in *bedrockruntime.InvokeModelInput) (*bedrockruntime.InvokeModelOutput, error) {
+	var out *bedrockruntime.InvokeModelOutput
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		out, err = h.aws.Bedrock.InvokeModel(ctx, in)
+		if err == nil {
+			return out, nil
+		}
+		if !isTransientBedrockError(err) {
+			return nil, err
+		}
+		if h.logger != nil {
+			h.logger.Warn("bedrock transient error, retrying", "attempt", attempt+1, "err", err.Error())
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 400 * time.Millisecond):
+		}
+	}
+	return nil, err
+}
+
 type AIHandler struct {
 	tokens   domain.APITokenRepository
 	orgs     domain.OrganizationRepository
@@ -675,12 +725,26 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			return chunk
 		}
 
-		streamOut, err := h.aws.Bedrock.InvokeModelWithResponseStream(r.Context(), &bedrockruntime.InvokeModelWithResponseStreamInput{
-			ModelId:     aws.String(awsModelID),
-			ContentType: aws.String("application/json"),
-			Accept:      aws.String("application/json"),
-			Body:        payloadBytes,
-		})
+		// Open stream, retrying transient errors before any bytes are written.
+		var streamOut *bedrockruntime.InvokeModelWithResponseStreamOutput
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			streamOut, err = h.aws.Bedrock.InvokeModelWithResponseStream(r.Context(), &bedrockruntime.InvokeModelWithResponseStreamInput{
+				ModelId:     aws.String(awsModelID),
+				ContentType: aws.String("application/json"),
+				Accept:      aws.String("application/json"),
+				Body:        payloadBytes,
+			})
+			if err == nil || !isTransientBedrockError(err) {
+				break
+			}
+			h.logger.Warn("bedrock stream transient error, retrying", "attempt", attempt+1, "err", err.Error())
+			select {
+			case <-r.Context().Done():
+				err = r.Context().Err()
+			case <-time.After(time.Duration(attempt+1) * 400 * time.Millisecond):
+			}
+		}
 		if err != nil {
 			sendSSE(map[string]any{"error": map[string]any{"code": "AI_ERROR", "message": err.Error()}})
 			fmt.Fprintf(w, "data: [DONE]\n\n")
@@ -811,9 +875,17 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 				outputTokens = evt.Usage.OutputTokens
 			}
 		}
-		if err := streamOut.GetStream().Err(); err != nil {
-			// Stream error — best effort log, response already started
-			h.logger.Error("bedrock stream error", "err", err)
+		streamErr := streamOut.GetStream().Err()
+		if streamErr != nil {
+			// Mid-stream Bedrock error (e.g. 424 ModelErrorException "invalid
+			// sequence as part of ToolUse"). Surface it explicitly so the client
+			// can finalize/retry instead of treating an empty turn as success.
+			h.logger.Error("bedrock stream error", "err", streamErr)
+			finishReason = "error"
+			sendSSE(map[string]any{"error": map[string]any{
+				"code":    "AI_MODEL_ERROR",
+				"message": streamErr.Error(),
+			}})
 		}
 
 		finishStr := finishReason
@@ -829,8 +901,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Non-streaming: shared InvokeModel ─────────────────────────────────────
-	bedrockOut, bedrockErr := h.aws.Bedrock.InvokeModel(r.Context(), &bedrockruntime.InvokeModelInput{
+	// ── Non-streaming: shared InvokeModel (with transient-error retry) ─────────
+	bedrockOut, bedrockErr := h.invokeModelWithRetry(r.Context(), &bedrockruntime.InvokeModelInput{
 		ModelId:     aws.String(awsModelID),
 		ContentType: aws.String("application/json"),
 		Accept:      aws.String("application/json"),
