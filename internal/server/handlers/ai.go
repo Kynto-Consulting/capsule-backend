@@ -937,9 +937,10 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	// ── Converse API path (Nova prompt caching) ───────────────────────────────
 	// The raw invoke_model Nova schema can't carry cachePoint; the Converse API
-	// can. Gated by the `converse` flag (default OFF until validated). Reuses the
+	// can. Default ON for Nova (validated: text/stream/tools/image/session/cache
+	// all pass). Callers can force the raw path with `converse:false`. Reuses the
 	// map-based novaMessages so all role/tool/image parsing is shared.
-	useConverse := selected.isNova && rawReq.Converse != nil && *rawReq.Converse
+	useConverse := selected.isNova && (rawReq.Converse == nil || *rawReq.Converse)
 	if useConverse {
 		// Build Nova-format tools (toolSpec) + toolChoice for the Converse path
 		var novaTools []map[string]any
