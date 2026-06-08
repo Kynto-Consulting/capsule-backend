@@ -72,7 +72,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	)
 	aiHandler := handlers.NewAIHandler(
 		deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo, deps.DeploymentRepo,
-		deps.AWSClients, logger, deps.AuthSvc,
+		deps.AWSClients, logger, deps.AuthSvc, deps.CacheStore,
 	)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo, deps.AWSClients)

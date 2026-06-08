@@ -80,6 +80,7 @@ type AIHandler struct {
 	aws      *awsclient.Clients
 	logger   *slog.Logger
 	authSvc  domain.AuthService
+	cache    domain.CacheStore // optional; used for session_id persistence
 }
 
 func NewAIHandler(
@@ -90,6 +91,7 @@ func NewAIHandler(
 	awsClients *awsclient.Clients,
 	logger *slog.Logger,
 	authSvc domain.AuthService,
+	cache domain.CacheStore,
 ) *AIHandler {
 	return &AIHandler{
 		tokens:   tokens,
@@ -99,6 +101,7 @@ func NewAIHandler(
 		aws:      awsClients,
 		logger:   logger,
 		authSvc:  authSvc,
+		cache:    cache,
 	}
 }
 
@@ -546,14 +549,75 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			} `json:"function"`
 		} `json:"tools"`
 		ToolChoice json.RawMessage `json:"tool_choice"`
+
+		// Extensions (non-OpenAI):
+		SessionID       string `json:"session_id"`       // server-side history persistence (multi-device)
+		AgentID         string `json:"agent_id"`         // alias for session_id
+		System          string `json:"system"`           // system prompt override (wins over system-role msgs)
+		DisableTools    bool   `json:"disable_tools"`    // ignore tools[] + force no tool use
+		DisableThinking bool   `json:"disable_thinking"` // suppress chain-of-thought / <think> blocks
+		NoThinking      bool   `json:"no_thinking"`      // alias for disable_thinking
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
 		return
 	}
+
+	// Resolve aliases
+	sessionID := rawReq.SessionID
+	if sessionID == "" {
+		sessionID = rawReq.AgentID
+	}
+	disableThinking := rawReq.DisableThinking || rawReq.NoThinking
+
+	// --- Session history (agent_id / session_id) ---
+	// When a session id is provided and a cache is available, the gateway owns
+	// the history: it loads prior turns, the client need only send the new
+	// turn(s). This gives Bedrock-Agents-style multi-device continuity while
+	// keeping our own store as the source of truth.
+	const sessionTTL = 24 * 3600 // 24h
+	sessionKey := ""
+	var priorMessages []rawMessage
+	if sessionID != "" && h.cache != nil {
+		sessionKey = "ai:session:" + sessionID
+		if stored, err := h.cache.Get(r.Context(), sessionKey); err == nil && stored != "" {
+			_ = json.Unmarshal([]byte(stored), &priorMessages)
+		}
+	}
+	// Effective conversation = prior history + this request's messages
+	rawReq.Messages = append(priorMessages, rawReq.Messages...)
+
 	if len(rawReq.Messages) == 0 {
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "messages cannot be empty")
 		return
+	}
+
+	// disable_tools: drop tools and force no tool use
+	if rawReq.DisableTools {
+		rawReq.Tools = nil
+		rawReq.ToolChoice = json.RawMessage(`"none"`)
+	}
+
+	// saveSession persists the full conversation (effective history + the new
+	// assistant reply) under the session key, refreshing the TTL. No-op when no
+	// session id was provided or no cache is configured.
+	saveSession := func(assistantText string) {
+		if sessionKey == "" || h.cache == nil || assistantText == "" {
+			return
+		}
+		type storeMsg struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		hist := make([]storeMsg, 0, len(rawReq.Messages)+1)
+		for _, m := range rawReq.Messages {
+			hist = append(hist, storeMsg{Role: m.Role, Content: m.Content})
+		}
+		assistantJSON, _ := json.Marshal(assistantText)
+		hist = append(hist, storeMsg{Role: "assistant", Content: assistantJSON})
+		if b, err := json.Marshal(hist); err == nil {
+			_ = h.cache.Set(r.Context(), sessionKey, string(b), sessionTTL)
+		}
 	}
 
 	// contentPart — normalized internal representation of one content item
@@ -742,6 +806,18 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// System prompt override — explicit `system` field wins over system-role
+	// messages (so callers can pin behaviour regardless of conversation history).
+	if rawReq.System != "" {
+		systemPrompt = rawReq.System
+	}
+	// Disable thinking — append a hard directive suppressing chain-of-thought.
+	// Works across models (Nova/Claude/Llama/DeepSeek); DeepSeek <think> blocks
+	// are also stripped from the output below.
+	if disableThinking {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\nIMPORTANT: Answer directly and concisely. Do NOT produce chain-of-thought, reasoning steps, planning, or <think>/<thinking> blocks. Output only the final answer.")
+	}
+
 	// Prompt caching activates only above Bedrock's minimum cacheable block
 	// size (~1024 tokens ≈ 4000 chars). Below that, adding a cache point is
 	// ignored, so we only attach one when the system prompt is large enough.
@@ -896,6 +972,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		finishReason := "stop"
 		var inputTokens, outputTokens int
 		var cacheReadTokens, cacheWriteTokens int
+		var fullText strings.Builder // accumulated assistant text for session persistence
 
 		// Tool call accumulation per content block index
 		type tcBlock struct {
@@ -980,6 +1057,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			if evt.ContentBlockDelta != nil {
 				d := evt.ContentBlockDelta.Delta
 				if d.Text != "" {
+					fullText.WriteString(d.Text)
 					sendSSE(makeChunk(map[string]any{"content": d.Text}, nil, nil))
 				}
 				if d.ToolUse != nil && d.ToolUse.Input != "" {
@@ -1007,6 +1085,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 			// ── Anthropic events ─────────────────────────────────────────────
 			if evt.Type == "content_block_delta" && evt.Delta != nil && evt.Delta.Text != "" {
+				fullText.WriteString(evt.Delta.Text)
 				sendSSE(makeChunk(map[string]any{"content": evt.Delta.Text}, nil, nil))
 			}
 			if evt.Type == "message_delta" && evt.Delta != nil && evt.Delta.StopReason == "tool_use" {
@@ -1051,6 +1130,9 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			usage["cache_write_input_tokens"] = cacheWriteTokens
 		}
 		sendSSE(makeChunk(map[string]any{}, &finishStr, usage))
+		if finishReason != "error" {
+			saveSession(fullText.String())
+		}
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
 			flusher.Flush()
@@ -1134,7 +1216,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			for _, c := range novaResp.Output.Message.Content {
 				text += c.Text
 			}
+			if disableThinking {
+				text = stripThinking(text)
+			}
 			msg.Content = text
+			saveSession(text)
 		}
 		respondJSON(w, http.StatusOK, openAIChatResponse{
 			ID: chatID, Object: "chat.completion", Created: created, Model: rawReq.Model,
@@ -1176,13 +1262,39 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 					text += c.Text
 				}
 			}
+			if disableThinking {
+				text = stripThinking(text)
+			}
 			msg.Content = text
+			saveSession(text)
 		}
 		respondJSON(w, http.StatusOK, openAIChatResponse{
 			ID: chatID, Object: "chat.completion", Created: created, Model: rawReq.Model,
 			Choices: []openAIChoice{{Index: 0, Message: msg, FinishReason: finishReason}},
 		})
 	}
+}
+
+// stripThinking removes <think>...</think> / <thinking>...</thinking> blocks
+// (emitted by reasoning models like DeepSeek-R1) and returns the trimmed text.
+func stripThinking(s string) string {
+	for _, tag := range []string{"think", "thinking"} {
+		open, close := "<"+tag+">", "</"+tag+">"
+		for {
+			i := strings.Index(s, open)
+			if i < 0 {
+				break
+			}
+			j := strings.Index(s[i:], close)
+			if j < 0 {
+				// unterminated — drop from the open tag onward
+				s = s[:i]
+				break
+			}
+			s = s[:i] + s[i+j+len(close):]
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 // Generate Dockerfile
