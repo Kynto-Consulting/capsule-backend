@@ -196,15 +196,6 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 			Tags:         []string{"open-source", "multilingual"},
 		},
 		{
-			ID: "llama3-2-90b", Name: "Meta Llama 3.2 90B Instruct", Provider: "Meta",
-			BedrockID:     "us.meta.llama3-2-90b-instruct-v1:0",
-			ContextWindow: 128000, MaxOutput: 8192,
-			Description:  "Large vision-capable Llama model for complex reasoning and image understanding tasks.",
-			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, Streaming: true},
-			Pricing:      ModelPricing{InputPer1KTokens: 0.00072, OutputPer1KTokens: 0.00072},
-			Tags:         []string{"open-source", "vision"},
-		},
-		{
 			ID: "deepseek-r1", Name: "DeepSeek-R1", Provider: "DeepSeek",
 			BedrockID:     "us.deepseek.r1-v1:0",
 			ContextWindow: 64000, MaxOutput: 8192,
@@ -312,7 +303,6 @@ Full catalog: ` + "`GET /api/v1/ai/models`" + `
 | claude-sonnet-4.5 | Anthropic | balanced, vision |
 | claude-opus-4.5 | Anthropic | most powerful |
 | llama3-3-70b | Meta | open, multilingual |
-| llama3-2-90b | Meta | open, vision |
 | deepseek-r1 | DeepSeek | reasoning / CoT |
 
 Unknown model ids fall back to ` + "`nova-lite`" + `.
@@ -714,7 +704,6 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		"claude-sonnet-4.5": {"us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
 		"claude-opus-4.5":   {"us.anthropic.claude-opus-4-5-20251101-v1:0", false},
 		"llama3-3-70b":      {"us.meta.llama3-3-70b-instruct-v1:0", false},
-		"llama3-2-90b":      {"us.meta.llama3-2-90b-instruct-v1:0", false},
 		"deepseek-r1":       {"us.deepseek.r1-v1:0", false},
 	}
 	selected, ok := modelMap[rawReq.Model]
