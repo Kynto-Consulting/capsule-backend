@@ -317,9 +317,33 @@ Full catalog: ` + "`GET /api/v1/ai/models`" + `
 
 Unknown model ids fall back to ` + "`nova-lite`" + `.
 
+## Extensions (non-OpenAI fields)
+
+These optional fields on the request body add gateway-managed behaviour:
+
+- ` + "`session_id`" + ` (alias ` + "`agent_id`" + `): Capsule-managed history. With a session
+  id the gateway stores the conversation in its own Redis (TTL **24h**) and you
+  send only the **new** turn each request — it loads prior turns, calls the
+  model, and persists the reply. Multi-device continuity. This is **Capsule's
+  own store, not AWS Bedrock Sessions/Agents** — your data stays in Capsule.
+  Omit it to stay fully stateless (you send full history).
+- ` + "`system`" + `: system-prompt override. Wins over any ` + "`role:system`" + ` message.
+  Your model's own ` + "`<think>`" + `/reasoning output is never stripped — it's yours.
+- ` + "`disable_tools`" + `: ignore ` + "`tools[]`" + ` and force no tool use this turn.
+
+` + "```json" + `
+{
+  "model": "nova-pro",
+  "session_id": "chat-user123-456",
+  "system": "You are a pure text router.",
+  "disable_tools": true,
+  "messages": [{"role": "user", "content": "hi"}]
+}
+` + "```" + `
+
 ## Notes
 
-- Stateless: no conversation id. You own the history.
+- Stateless by default: no conversation id unless you pass ` + "`session_id`" + `.
 - Transient Bedrock errors (424 ModelErrorException, throttling) are retried
   automatically up to 2x before surfacing.
 `
@@ -551,12 +575,10 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		ToolChoice json.RawMessage `json:"tool_choice"`
 
 		// Extensions (non-OpenAI):
-		SessionID       string `json:"session_id"`       // server-side history persistence (multi-device)
-		AgentID         string `json:"agent_id"`         // alias for session_id
-		System          string `json:"system"`           // system prompt override (wins over system-role msgs)
-		DisableTools    bool   `json:"disable_tools"`    // ignore tools[] + force no tool use
-		DisableThinking bool   `json:"disable_thinking"` // suppress chain-of-thought / <think> blocks
-		NoThinking      bool   `json:"no_thinking"`      // alias for disable_thinking
+		SessionID    string `json:"session_id"`    // server-side history persistence (multi-device)
+		AgentID      string `json:"agent_id"`      // alias for session_id
+		System       string `json:"system"`        // system prompt override (wins over system-role msgs)
+		DisableTools bool   `json:"disable_tools"` // ignore tools[] + force no tool use
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -568,7 +590,6 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		sessionID = rawReq.AgentID
 	}
-	disableThinking := rawReq.DisableThinking || rawReq.NoThinking
 
 	// --- Session history (agent_id / session_id) ---
 	// When a session id is provided and a cache is available, the gateway owns
@@ -808,14 +829,10 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	// System prompt override — explicit `system` field wins over system-role
 	// messages (so callers can pin behaviour regardless of conversation history).
+	// The model's own <think>/<thinking> output is left untouched — that's the
+	// caller's CoT, not ours to strip.
 	if rawReq.System != "" {
 		systemPrompt = rawReq.System
-	}
-	// Disable thinking — append a hard directive suppressing chain-of-thought.
-	// Works across models (Nova/Claude/Llama/DeepSeek); DeepSeek <think> blocks
-	// are also stripped from the output below.
-	if disableThinking {
-		systemPrompt = strings.TrimSpace(systemPrompt + "\n\nIMPORTANT: Answer directly and concisely. Do NOT produce chain-of-thought, reasoning steps, planning, or <think>/<thinking> blocks. Output only the final answer.")
 	}
 
 	// Prompt caching activates only above Bedrock's minimum cacheable block
@@ -1216,9 +1233,6 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			for _, c := range novaResp.Output.Message.Content {
 				text += c.Text
 			}
-			if disableThinking {
-				text = stripThinking(text)
-			}
 			msg.Content = text
 			saveSession(text)
 		}
@@ -1262,9 +1276,6 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 					text += c.Text
 				}
 			}
-			if disableThinking {
-				text = stripThinking(text)
-			}
 			msg.Content = text
 			saveSession(text)
 		}
@@ -1273,28 +1284,6 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			Choices: []openAIChoice{{Index: 0, Message: msg, FinishReason: finishReason}},
 		})
 	}
-}
-
-// stripThinking removes <think>...</think> / <thinking>...</thinking> blocks
-// (emitted by reasoning models like DeepSeek-R1) and returns the trimmed text.
-func stripThinking(s string) string {
-	for _, tag := range []string{"think", "thinking"} {
-		open, close := "<"+tag+">", "</"+tag+">"
-		for {
-			i := strings.Index(s, open)
-			if i < 0 {
-				break
-			}
-			j := strings.Index(s[i:], close)
-			if j < 0 {
-				// unterminated — drop from the open tag onward
-				s = s[:i]
-				break
-			}
-			s = s[:i] + s[i+j+len(close):]
-		}
-	}
-	return strings.TrimSpace(s)
 }
 
 // Generate Dockerfile
