@@ -131,81 +131,81 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	models := []Model{
 		{
 			ID: "nova-pro", Name: "Amazon Nova Pro", Provider: "Amazon",
-			BedrockID: "amazon.nova-pro-v1:0",
+			BedrockID:     "amazon.nova-pro-v1:0",
 			ContextWindow: 300000, MaxOutput: 5120,
-			Description: "Amazon's most capable multimodal model. Handles complex text, images, and video with high accuracy. No approval required.",
+			Description:  "Amazon's most capable multimodal model. Handles complex text, images, and video with high accuracy. No approval required.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.0008, OutputPer1KTokens: 0.0032},
 			Tags:         []string{"amazon", "multimodal", "available"},
 		},
 		{
 			ID: "nova-lite", Name: "Amazon Nova Lite", Provider: "Amazon",
-			BedrockID: "amazon.nova-lite-v1:0",
+			BedrockID:     "amazon.nova-lite-v1:0",
 			ContextWindow: 300000, MaxOutput: 5120,
-			Description: "Fast and cost-effective multimodal model. Great for summarisation, Q&A, and light reasoning tasks.",
+			Description:  "Fast and cost-effective multimodal model. Great for summarisation, Q&A, and light reasoning tasks.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.00006, OutputPer1KTokens: 0.00024},
 			Tags:         []string{"amazon", "fast", "cheap", "available"},
 		},
 		{
 			ID: "nova-micro", Name: "Amazon Nova Micro", Provider: "Amazon",
-			BedrockID: "amazon.nova-micro-v1:0",
+			BedrockID:     "amazon.nova-micro-v1:0",
 			ContextWindow: 128000, MaxOutput: 5120,
-			Description: "Smallest and fastest Nova model. Optimised for text tasks at ultra-low cost.",
+			Description:  "Smallest and fastest Nova model. Optimised for text tasks at ultra-low cost.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.000035, OutputPer1KTokens: 0.00014},
 			Tags:         []string{"amazon", "ultra-fast", "cheapest", "available"},
 		},
 		{
 			ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+			BedrockID:     "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 			ContextWindow: 200000, MaxOutput: 8192,
-			Description: "Fastest and most compact Claude model. Ideal for classification, extraction, and simple Q&A at high throughput.",
+			Description:  "Fastest and most compact Claude model. Ideal for classification, extraction, and simple Q&A at high throughput.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, FunctionCalling: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.00025, OutputPer1KTokens: 0.00125},
 			Tags:         []string{"fast", "cheap", "classification"},
 		},
 		{
 			ID: "claude-sonnet-4.5", Name: "Claude Sonnet 4.5", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+			BedrockID:     "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 			ContextWindow: 200000, MaxOutput: 16000,
-			Description: "Best balance of intelligence and speed. Recommended for most production workloads including reasoning, coding, and analysis.",
+			Description:  "Best balance of intelligence and speed. Recommended for most production workloads including reasoning, coding, and analysis.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
 			Tags:         []string{"balanced", "vision", "recommended"},
 		},
 		{
 			ID: "claude-opus-4.5", Name: "Claude Opus 4.5", Provider: "Anthropic",
-			BedrockID: "us.anthropic.claude-opus-4-5-20251101-v1:0",
+			BedrockID:     "us.anthropic.claude-opus-4-5-20251101-v1:0",
 			ContextWindow: 200000, MaxOutput: 32000,
-			Description: "Most powerful Claude model. Best for complex reasoning, research synthesis, and tasks requiring deep analysis.",
+			Description:  "Most powerful Claude model. Best for complex reasoning, research synthesis, and tasks requiring deep analysis.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, FunctionCalling: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.015, OutputPer1KTokens: 0.075},
 			Tags:         []string{"powerful", "complex-reasoning", "research"},
 		},
 		{
 			ID: "llama3-3-70b", Name: "Meta Llama 3.3 70B Instruct", Provider: "Meta",
-			BedrockID: "us.meta.llama3-3-70b-instruct-v1:0",
+			BedrockID:     "us.meta.llama3-3-70b-instruct-v1:0",
 			ContextWindow: 128000, MaxOutput: 8192,
-			Description: "Meta's latest open model. Strong instruction-following, coding assistance, and multilingual support.",
+			Description:  "Meta's latest open model. Strong instruction-following, coding assistance, and multilingual support.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.00099, OutputPer1KTokens: 0.00099},
 			Tags:         []string{"open-source", "multilingual"},
 		},
 		{
 			ID: "llama3-2-90b", Name: "Meta Llama 3.2 90B Instruct", Provider: "Meta",
-			BedrockID: "us.meta.llama3-2-90b-instruct-v1:0",
+			BedrockID:     "us.meta.llama3-2-90b-instruct-v1:0",
 			ContextWindow: 128000, MaxOutput: 8192,
-			Description: "Large vision-capable Llama model for complex reasoning and image understanding tasks.",
+			Description:  "Large vision-capable Llama model for complex reasoning and image understanding tasks.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, VisionAnalysis: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.00072, OutputPer1KTokens: 0.00072},
 			Tags:         []string{"open-source", "vision"},
 		},
 		{
 			ID: "deepseek-r1", Name: "DeepSeek-R1", Provider: "DeepSeek",
-			BedrockID: "us.deepseek.r1-v1:0",
+			BedrockID:     "us.deepseek.r1-v1:0",
 			ContextWindow: 64000, MaxOutput: 8192,
-			Description: "Advanced reasoning model with extended chain-of-thought. Excellent for math, logic, and complex problem solving.",
+			Description:  "Advanced reasoning model with extended chain-of-thought. Excellent for math, logic, and complex problem solving.",
 			Capabilities: ModelCapabilities{TextGeneration: true, CodeGeneration: true, Streaming: true},
 			Pricing:      ModelPricing{InputPer1KTokens: 0.00135, OutputPer1KTokens: 0.0054},
 			Tags:         []string{"reasoning", "math", "chain-of-thought"},
@@ -213,6 +213,118 @@ func (h *AIHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"data": models})
+}
+
+// SkillDoc serves a markdown integration guide for the AI API.
+// Public — GET /ai/skill.md (and /ai/skill). text/markdown.
+func (h *AIHandler) SkillDoc(w http.ResponseWriter, r *http.Request) {
+	const doc = `# Tumi AI — OpenAI-compatible Gateway
+
+Base URL: ` + "`https://api.tumi-ai.com/api/v1/ai`" + `
+
+A single, OpenAI-compatible endpoint over Amazon Bedrock (Nova, Claude, Llama,
+DeepSeek). Drop-in with any OpenAI SDK — just change ` + "`base_url`" + ` and ` + "`api_key`" + `.
+
+## Authentication
+
+Send a platform key as a bearer token:
+
+` + "```" + `
+Authorization: Bearer csk_live_xxx     # AI proxy key (for /ai/* only)
+Authorization: Bearer cap_xxx          # full platform API key
+Authorization: Bearer <jwt>            # session token
+` + "```" + `
+
+Create an AI key: ` + "`POST /api/v1/ai/keys`" + ` (body: ` + "`{\"name\":\"my-key\"}`" + `).
+
+## Chat completions
+
+` + "```python" + `
+from openai import OpenAI
+client = OpenAI(
+    api_key="csk_live_xxx",
+    base_url="https://api.tumi-ai.com/api/v1/ai",
+)
+resp = client.chat.completions.create(
+    model="nova-lite",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
+` + "```" + `
+
+Endpoints:
+- ` + "`POST /ai/chat/completions`" + ` — OpenAI SDK path
+- ` + "`POST /ai/chat`" + ` — same handler, short path
+
+## Streaming
+
+Set ` + "`stream: true`" + ` for real Server-Sent Events (token-by-token).
+The final chunk carries ` + "`usage`" + ` ` + "`{prompt_tokens, completion_tokens, total_tokens}`" + `.
+On a mid-stream model error the final chunk has ` + "`finish_reason: \"error\"`" + ` plus a
+` + "`{\"error\": {\"code\": \"AI_MODEL_ERROR\"}}`" + ` event — finalize or retry on that.
+
+## Multimodal (images)
+
+Send ` + "`content`" + ` as an array of parts. Data-URL base64 images are converted to
+the Bedrock image format automatically:
+
+` + "```json" + `
+{"role": "user", "content": [
+  {"type": "text", "text": "What is in this image?"},
+  {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}}
+]}
+` + "```" + `
+
+## Tools / function calling
+
+Pass OpenAI-format ` + "`tools`" + ` and ` + "`tool_choice`" + `. Responses use ` + "`tool_calls`" + ` with
+` + "`finish_reason: \"tool_calls\"`" + `. Send results back as ` + "`role: \"tool\"`" + ` messages
+(` + "`tool_call_id`" + ` + ` + "`content`" + `).
+
+## Prompt caching (automatic)
+
+The gateway is stateless — you re-send history each request. When your **system
+prompt** is large (≥ ~1024 tokens) the gateway automatically attaches a Bedrock
+cache point to it. Within the 5-minute TTL, repeated identical system prompts
+are billed at a fraction of the cost and respond faster.
+
+Rules to keep the cache warm:
+1. Keep the system prompt **byte-identical** across turns. Put anything dynamic
+   (date, user id, time) in ` + "`messages`" + `, never in the system prompt.
+2. Caching only activates above the minimum size — short system prompts are
+   sent uncached (no penalty).
+3. Multi-device continuity: store history in your own DB keyed by chat id and
+   re-send it; the cache point keeps cost/latency low despite re-sending.
+
+## Models
+
+Full catalog: ` + "`GET /api/v1/ai/models`" + `
+
+| id | provider | notes |
+|----|----------|-------|
+| nova-micro | Amazon | cheapest, text-only |
+| nova-lite | Amazon | fast, multimodal |
+| nova-pro | Amazon | capable, multimodal |
+| claude-haiku-4.5 | Anthropic | fast, tools |
+| claude-sonnet-4.5 | Anthropic | balanced, vision |
+| claude-opus-4.5 | Anthropic | most powerful |
+| llama3-3-70b | Meta | open, multilingual |
+| llama3-2-90b | Meta | open, vision |
+| deepseek-r1 | DeepSeek | reasoning / CoT |
+
+Unknown model ids fall back to ` + "`nova-lite`" + `.
+
+## Notes
+
+- Stateless: no conversation id. You own the history.
+- Transient Bedrock errors (424 ModelErrorException, throttling) are retried
+  automatically up to 2x before surfacing.
+`
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(doc))
 }
 
 // UpdateKey updates rate limit and IP allowlist for an API key
@@ -344,7 +456,7 @@ func (h *AIHandler) RevokeKey(w http.ResponseWriter, r *http.Request) {
 // OpenAI compatible Chat endpoint
 func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	var user *domain.User
-	
+
 	// Support direct token authentication or standard JWT session auth
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer csk_live_") {
@@ -565,7 +677,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			bedrockMessages = append(bedrockMessages, bedrockMsg{
 				Role: "user",
 				Content: []map[string]any{{
-					"type": "tool_result",
+					"type":        "tool_result",
 					"tool_use_id": m.ToolCallID,
 					"content":     resultText,
 				}},
@@ -630,6 +742,15 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Prompt caching activates only above Bedrock's minimum cacheable block
+	// size (~1024 tokens ≈ 4000 chars). Below that, adding a cache point is
+	// ignored, so we only attach one when the system prompt is large enough.
+	// This caches the (typically static) system prompt across requests within
+	// the 5-minute TTL → up to ~90% cheaper input tokens + lower latency when
+	// the client re-sends history each turn.
+	const cacheMinChars = 4000
+	cacheSystem := systemPrompt != "" && len(systemPrompt) >= cacheMinChars
+
 	// Build Bedrock payload
 	var payloadBytes []byte
 	if selected.isNova {
@@ -638,7 +759,12 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			"inferenceConfig": map[string]any{"maxTokens": 4096},
 		}
 		if systemPrompt != "" {
-			novaPayload["system"] = []map[string]any{{"text": systemPrompt}}
+			sys := []map[string]any{{"text": systemPrompt}}
+			if cacheSystem {
+				// Nova: cachePoint after the system text caches everything before it
+				sys = append(sys, map[string]any{"cachePoint": map[string]any{"type": "default"}})
+			}
+			novaPayload["system"] = sys
 		}
 		// Convert OpenAI tools → Nova toolConfig
 		if len(rawReq.Tools) > 0 {
@@ -671,7 +797,16 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			"messages":          bedrockMessages,
 		}
 		if systemPrompt != "" {
-			anthropicPayload["system"] = systemPrompt
+			if cacheSystem {
+				// Anthropic: system as a content block with cache_control:ephemeral
+				anthropicPayload["system"] = []map[string]any{{
+					"type":          "text",
+					"text":          systemPrompt,
+					"cache_control": map[string]any{"type": "ephemeral"},
+				}}
+			} else {
+				anthropicPayload["system"] = systemPrompt
+			}
 		}
 		if len(rawReq.Tools) > 0 {
 			var claudeTools []map[string]any
@@ -760,6 +895,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 		finishReason := "stop"
 		var inputTokens, outputTokens int
+		var cacheReadTokens, cacheWriteTokens int
 
 		// Tool call accumulation per content block index
 		type tcBlock struct {
@@ -783,7 +919,9 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 					ContentBlockIndex int `json:"contentBlockIndex"`
 					Delta             struct {
 						Text    string `json:"text"`
-						ToolUse *struct{ Input string `json:"input"` } `json:"toolUse"`
+						ToolUse *struct {
+							Input string `json:"input"`
+						} `json:"toolUse"`
 					} `json:"delta"`
 				} `json:"contentBlockDelta"`
 				ContentBlockStart *struct {
@@ -800,21 +938,25 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 				} `json:"messageStop"`
 				Metadata *struct {
 					Usage struct {
-						InputTokens  int `json:"inputTokens"`
-						OutputTokens int `json:"outputTokens"`
+						InputTokens           int `json:"inputTokens"`
+						OutputTokens          int `json:"outputTokens"`
+						CacheReadInputTokens  int `json:"cacheReadInputTokenCount"`
+						CacheWriteInputTokens int `json:"cacheWriteInputTokenCount"`
 					} `json:"usage"`
 				} `json:"metadata"`
 				// Anthropic streaming
 				Type  string `json:"type"`
 				Index int    `json:"index"`
 				Delta *struct {
-					Type      string `json:"type"`
-					Text      string `json:"text"`
+					Type       string `json:"type"`
+					Text       string `json:"text"`
 					StopReason string `json:"stop_reason"`
 				} `json:"delta"`
 				Usage *struct {
-					InputTokens  int `json:"input_tokens"`
-					OutputTokens int `json:"output_tokens"`
+					InputTokens              int `json:"input_tokens"`
+					OutputTokens             int `json:"output_tokens"`
+					CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 				} `json:"usage"`
 			}
 			if err := json.Unmarshal(b, &evt); err != nil {
@@ -859,6 +1001,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			if evt.Metadata != nil {
 				inputTokens = evt.Metadata.Usage.InputTokens
 				outputTokens = evt.Metadata.Usage.OutputTokens
+				cacheReadTokens = evt.Metadata.Usage.CacheReadInputTokens
+				cacheWriteTokens = evt.Metadata.Usage.CacheWriteInputTokens
 			}
 
 			// ── Anthropic events ─────────────────────────────────────────────
@@ -870,6 +1014,12 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			}
 			if evt.Type == "message_start" && evt.Usage != nil {
 				inputTokens = evt.Usage.InputTokens
+				if evt.Usage.CacheReadInputTokens > 0 {
+					cacheReadTokens = evt.Usage.CacheReadInputTokens
+				}
+				if evt.Usage.CacheCreationInputTokens > 0 {
+					cacheWriteTokens = evt.Usage.CacheCreationInputTokens
+				}
 			}
 			if evt.Type == "message_delta" && evt.Usage != nil {
 				outputTokens = evt.Usage.OutputTokens
@@ -889,11 +1039,18 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		finishStr := finishReason
-		sendSSE(makeChunk(map[string]any{}, &finishStr, map[string]any{
+		usage := map[string]any{
 			"prompt_tokens":     inputTokens,
 			"completion_tokens": outputTokens,
 			"total_tokens":      inputTokens + outputTokens,
-		}))
+		}
+		if cacheReadTokens > 0 || cacheWriteTokens > 0 {
+			// OpenAI-style cache detail + explicit Bedrock counts
+			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": cacheReadTokens}
+			usage["cache_read_input_tokens"] = cacheReadTokens
+			usage["cache_write_input_tokens"] = cacheWriteTokens
+		}
+		sendSSE(makeChunk(map[string]any{}, &finishStr, usage))
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
 			flusher.Flush()
@@ -917,8 +1074,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	output := bedrockOut
 
 	type respMessage struct {
-		Role      string         `json:"role"`
-		Content   any            `json:"content"`
+		Role      string           `json:"role"`
+		Content   any              `json:"content"`
 		ToolCalls []map[string]any `json:"tool_calls,omitempty"`
 	}
 	type openAIChoice struct {
@@ -1177,7 +1334,9 @@ func callBedrock(ctx context.Context, awsClients *awsclient.Clients, prompt stri
 	var novaResp struct {
 		Output struct {
 			Message struct {
-				Content []struct{ Text string `json:"text"` } `json:"content"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
 			} `json:"message"`
 		} `json:"output"`
 	}

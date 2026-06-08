@@ -174,6 +174,12 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		r.Post("/ai/chat", aiHandler.Chat)
 		r.Post("/ai/chat/completions", aiHandler.Chat) // OpenAI SDK compat
 
+		// Public AI metadata — model catalog + integration skill doc (no auth)
+		r.Get("/ai/models", aiHandler.ListModels)
+		r.Get("/models", aiHandler.ListModels) // top-level alias
+		r.Get("/ai/skill.md", aiHandler.SkillDoc)
+		r.Get("/ai/skill", aiHandler.SkillDoc)
+
 		// Protected
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(deps.AuthSvc, deps.APITokenRepo, deps.UserRepo))
@@ -286,7 +292,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons/{cronID}/trigger", cronHandler.Trigger)
 
 			// Bedrock AI Utility Keys and Helpers
-			r.Get("/ai/models", aiHandler.ListModels)
+			// (/ai/models is now registered publicly above)
 			r.Post("/ai/keys", aiHandler.CreateKey)
 			r.Get("/ai/keys", aiHandler.ListKeys)
 			r.Patch("/ai/keys/{keyID}", aiHandler.UpdateKey)
