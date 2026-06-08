@@ -829,7 +829,12 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// the 5-minute TTL → up to ~90% cheaper input tokens + lower latency when
 	// the client re-sends history each turn.
 	const cacheMinChars = 4000
-	cacheSystem := systemPrompt != "" && len(systemPrompt) >= cacheMinChars
+	// Only Nova and Anthropic (Claude) support Bedrock prompt caching. Llama and
+	// DeepSeek return 403 AccessDeniedException ("unsupported model or your
+	// request did not allow prompt caching") if a cachePoint is attached — so
+	// gate caching to supported models.
+	cacheSupported := selected.isNova || strings.Contains(awsModelID, "anthropic")
+	cacheSystem := cacheSupported && systemPrompt != "" && len(systemPrompt) >= cacheMinChars
 
 	// History prefix caching: cache everything up to (but not including) the
 	// latest turn. The prefix [all messages except the last] is stable turn to
@@ -954,9 +959,10 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 				toolChoice = map[string]any{"any": map[string]any{}}
 			}
 		}
-		// History cachePoint index: second-to-last built message (stable prefix)
+		// History cachePoint index: second-to-last built message (stable prefix).
+		// Only for cache-supporting models (Nova/Claude); Llama/DeepSeek 403 on it.
 		cacheHistIdx := -1
-		if len(novaMessages) >= 3 {
+		if cacheSupported && len(novaMessages) >= 3 {
 			cacheHistIdx = len(novaMessages) - 2
 		}
 		h.converseNova(r.Context(), w, r, converseNovaArgs{
