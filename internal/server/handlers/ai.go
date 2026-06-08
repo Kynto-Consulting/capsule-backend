@@ -579,6 +579,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		AgentID      string `json:"agent_id"`      // alias for session_id
 		System       string `json:"system"`        // system prompt override (wins over system-role msgs)
 		DisableTools bool   `json:"disable_tools"` // ignore tools[] + force no tool use
+		Converse     *bool  `json:"converse"`      // Nova only: use Converse API (prompt caching). nil = default
 	}
 	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -723,10 +724,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	awsModelID := selected.bedrockID
 
 	// Build Bedrock payload — Nova and Anthropic have different schemas
-	type bedrockMsg struct {
-		Role    string           `json:"role"`
-		Content []map[string]any `json:"content"`
-	}
+	// (bedrockMsg is package-level so the Converse path can reuse it)
 
 	var systemPrompt string
 	var bedrockMessages []bedrockMsg // Anthropic format
@@ -936,6 +934,54 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	chatID := "chatcmpl-" + randomString(12)
 	created := time.Now().Unix()
+
+	// ── Converse API path (Nova prompt caching) ───────────────────────────────
+	// The raw invoke_model Nova schema can't carry cachePoint; the Converse API
+	// can. Gated by the `converse` flag (default OFF until validated). Reuses the
+	// map-based novaMessages so all role/tool/image parsing is shared.
+	useConverse := selected.isNova && rawReq.Converse != nil && *rawReq.Converse
+	if useConverse {
+		// Build Nova-format tools (toolSpec) + toolChoice for the Converse path
+		var novaTools []map[string]any
+		for _, t := range rawReq.Tools {
+			var params any
+			_ = json.Unmarshal(t.Function.Parameters, &params)
+			novaTools = append(novaTools, map[string]any{
+				"toolSpec": map[string]any{
+					"name":        t.Function.Name,
+					"description": t.Function.Description,
+					"inputSchema": map[string]any{"json": params},
+				},
+			})
+		}
+		toolChoice := map[string]any{"auto": map[string]any{}}
+		if len(rawReq.ToolChoice) > 0 {
+			var tc string
+			if json.Unmarshal(rawReq.ToolChoice, &tc) == nil && tc == "none" {
+				toolChoice = map[string]any{"any": map[string]any{}}
+			}
+		}
+		// History cachePoint index: second-to-last built message (stable prefix)
+		cacheHistIdx := -1
+		if len(novaMessages) >= 3 {
+			cacheHistIdx = len(novaMessages) - 2
+		}
+		h.converseNova(r.Context(), w, r, converseNovaArgs{
+			modelID:      awsModelID,
+			systemPrompt: systemPrompt,
+			novaMessages: novaMessages,
+			tools:        novaTools,
+			toolChoice:   toolChoice,
+			stream:       rawReq.Stream,
+			cacheSystem:  cacheSystem,
+			cacheHistIdx: cacheHistIdx,
+			chatID:       chatID,
+			created:      created,
+			model:        rawReq.Model,
+			saveSession:  saveSession,
+		})
+		return
+	}
 
 	// ── SSE real streaming ────────────────────────────────────────────────────
 	if rawReq.Stream {
