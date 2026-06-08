@@ -935,12 +935,15 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	chatID := "chatcmpl-" + randomString(12)
 	created := time.Now().Unix()
 
-	// ── Converse API path (Nova prompt caching) ───────────────────────────────
-	// The raw invoke_model Nova schema can't carry cachePoint; the Converse API
-	// can. Default ON for Nova (validated: text/stream/tools/image/session/cache
-	// all pass). Callers can force the raw path with `converse:false`. Reuses the
-	// map-based novaMessages so all role/tool/image parsing is shared.
-	useConverse := selected.isNova && (rawReq.Converse == nil || *rawReq.Converse)
+	// ── Converse API path (unified, all models) ───────────────────────────────
+	// Converse is model-agnostic — one schema for Nova, Claude, Llama, DeepSeek,
+	// etc. — and supports prompt caching (cachePoint). The raw invoke_model path
+	// only spoke Nova + Anthropic formats, so Llama/DeepSeek got 400
+	// ValidationException (they aren't Anthropic). Routing everything through
+	// Converse fixes those AND gives every model caching. Default ON; callers can
+	// force the raw path with `converse:false`. Validated on Nova:
+	// text/stream/tools/image/session/cache.
+	useConverse := rawReq.Converse == nil || *rawReq.Converse
 	if useConverse {
 		// Build Nova-format tools (toolSpec) + toolChoice for the Converse path
 		var novaTools []map[string]any
