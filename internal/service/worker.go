@@ -347,9 +347,8 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	}
 	w.appendLog(ctx, id, "Deploying container...")
 
-	// --- detect container port from Dockerfile ---
+	// --- detect container port: Dockerfile EXPOSE as the baseline ---
 	containerPort := detectExposePort(dockerfilePath)
-	w.appendLog(ctx, id, fmt.Sprintf("Detected container port: %d", containerPort))
 
 	// --- stop and remove old container (keep volume) ---
 	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
@@ -374,24 +373,38 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 		w.appendLog(ctx, id, fmt.Sprintf("Injecting %d env vars", len(envPairsDocker)))
 	}
 
+	// Port resolution: the user's PORT env var is authoritative — the app listens
+	// on it, so the proxy must map to the SAME port. Priority:
+	//   user PORT env  >  Dockerfile EXPOSE  >  default.
+	// The user keeps full control (they may run extra ports inside the container;
+	// only the primary HTTP port — PORT — is what the proxy targets).
+	userPort := false
+	for _, kv := range envPairsDocker {
+		if strings.HasPrefix(kv, "PORT=") {
+			if p, perr := strconv.Atoi(strings.TrimPrefix(kv, "PORT=")); perr == nil && p > 0 && p < 65536 {
+				containerPort = p
+				userPort = true
+			}
+		}
+	}
+	w.appendLog(ctx, id, fmt.Sprintf("Container port: %d (proxy target)", containerPort))
+
 	// --- start new container ---
-	// Build args: docker run -d --name X --restart ... -e K=V ... -p ... -v ... image
-	// User env vars are injected FIRST, then the platform PORT LAST so it always
-	// wins — the app must listen on the port Capsule maps to (containerPort), so
-	// a user-supplied PORT can't desync the app from the proxy's port mapping.
+	// docker run -d --name X --restart ... -e K=V ... -p ... -v ... image
+	// All user env vars pass through untouched (incl. their PORT). Only when the
+	// user did NOT set PORT do we inject PORT=containerPort so the app knows which
+	// port to bind. Either way the proxy maps to containerPort, kept in sync.
 	runArgs := []string{"run", "-d",
 		"--name", imageName,
 		"--restart", "unless-stopped",
 	}
 	for _, kv := range envPairsDocker {
-		// drop any user PORT — the platform sets it authoritatively below
-		if strings.HasPrefix(kv, "PORT=") {
-			continue
-		}
 		runArgs = append(runArgs, "-e", kv)
 	}
+	if !userPort {
+		runArgs = append(runArgs, "-e", fmt.Sprintf("PORT=%d", containerPort))
+	}
 	runArgs = append(runArgs,
-		"-e", fmt.Sprintf("PORT=%d", containerPort),
 		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
 		"-v", fmt.Sprintf("%s:/data", volumeName),
 		imageName,
