@@ -120,7 +120,7 @@ func main() {
 		AppsDomain:       cfg.AppsDomain,
 		ECRRegistry:      cfg.ECRRegistry,
 	}
-	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, fargateConfig, logger)
+	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, fargateConfig, logger, cfg.SecretKey)
 	workerDone := make(chan struct{})
 	go func() {
 		deployWorker.Run(workerCtx)

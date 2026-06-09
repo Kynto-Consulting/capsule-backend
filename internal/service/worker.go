@@ -32,6 +32,7 @@ import (
 
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
+	"github.com/kynto/capsule/backend/pkg/crypto"
 )
 
 // maxRetries is the number of times a deployment will be retried before marking it permanently failed.
@@ -64,6 +65,7 @@ type DeployWorker struct {
 	bucket      string
 	fargate     FargateConfig
 	logger      *slog.Logger
+	secretKey   string // for decrypting env_vars.value_enc
 	wg          sync.WaitGroup
 }
 
@@ -75,6 +77,7 @@ func NewDeployWorker(
 	bucket string,
 	fargate FargateConfig,
 	logger *slog.Logger,
+	secretKey string,
 ) *DeployWorker {
 	return &DeployWorker{
 		deployments: deployments,
@@ -83,6 +86,7 @@ func NewDeployWorker(
 		bucket:      bucket,
 		fargate:     fargate,
 		logger:      logger,
+		secretKey:   secretKey,
 	}
 }
 
@@ -372,15 +376,22 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 
 	// --- start new container ---
 	// Build args: docker run -d --name X --restart ... -e K=V ... -p ... -v ... image
+	// User env vars are injected FIRST, then the platform PORT LAST so it always
+	// wins — the app must listen on the port Capsule maps to (containerPort), so
+	// a user-supplied PORT can't desync the app from the proxy's port mapping.
 	runArgs := []string{"run", "-d",
 		"--name", imageName,
 		"--restart", "unless-stopped",
-		"-e", fmt.Sprintf("PORT=%d", containerPort),
 	}
 	for _, kv := range envPairsDocker {
+		// drop any user PORT — the platform sets it authoritatively below
+		if strings.HasPrefix(kv, "PORT=") {
+			continue
+		}
 		runArgs = append(runArgs, "-e", kv)
 	}
 	runArgs = append(runArgs,
+		"-e", fmt.Sprintf("PORT=%d", containerPort),
 		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
 		"-v", fmt.Sprintf("%s:/data", volumeName),
 		imageName,
@@ -589,10 +600,24 @@ func (w *DeployWorker) ensureECRRepo(ctx context.Context, name string) (string, 
 	return *created.Repository.RepositoryUri, nil
 }
 
+// decryptEnvValue decrypts an env_vars.value_enc blob (AES-256-GCM), stripping
+// the "key:" prefix added at encrypt time. Falls back to the raw bytes on error.
+func (w *DeployWorker) decryptEnvValue(key string, enc []byte) string {
+	plain, err := crypto.Decrypt(enc, w.secretKey)
+	if err != nil {
+		return string(enc)
+	}
+	prefix := []byte(key + ":")
+	if len(plain) > len(prefix) {
+		return string(plain[len(prefix):])
+	}
+	return string(plain)
+}
+
 // fetchEnvVarsForDocker loads env vars from the DB as "KEY=VALUE" strings for docker run -e.
 func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, projectID uuid.UUID) ([]string, error) {
 	rows, err := w.pool.Query(ctx,
-		`SELECT key, value FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both') ORDER BY key`,
+		`SELECT key, value_enc FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both') ORDER BY key`,
 		projectID,
 	)
 	if err != nil {
@@ -602,11 +627,12 @@ func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, projectID uuid
 
 	var pairs []string
 	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
+		var k string
+		var enc []byte
+		if err := rows.Scan(&k, &enc); err != nil {
 			return nil, err
 		}
-		pairs = append(pairs, k+"="+v)
+		pairs = append(pairs, k+"="+w.decryptEnvValue(k, enc))
 	}
 	return pairs, nil
 }
@@ -614,7 +640,7 @@ func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, projectID uuid
 // fetchEnvVarsForTask loads env vars from the DB for use in the ECS task definition.
 func (w *DeployWorker) fetchEnvVarsForTask(ctx context.Context, projectID uuid.UUID) ([]ecstypes.KeyValuePair, error) {
 	rows, err := w.pool.Query(ctx,
-		`SELECT key, value FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both')`,
+		`SELECT key, value_enc FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both')`,
 		projectID,
 	)
 	if err != nil {
@@ -624,10 +650,12 @@ func (w *DeployWorker) fetchEnvVarsForTask(ctx context.Context, projectID uuid.U
 
 	var pairs []ecstypes.KeyValuePair
 	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
+		var k string
+		var enc []byte
+		if err := rows.Scan(&k, &enc); err != nil {
 			return nil, err
 		}
+		v := w.decryptEnvValue(k, enc)
 		pairs = append(pairs, ecstypes.KeyValuePair{
 			Name:  aws.String(k),
 			Value: aws.String(v),
