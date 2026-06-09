@@ -388,6 +388,9 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 		}
 	}
 	w.appendLog(ctx, id, fmt.Sprintf("Container port: %d (proxy target)", containerPort))
+	if err := w.deployments.UpdateContainerPort(ctx, id, containerPort); err != nil {
+		w.appendLog(ctx, id, fmt.Sprintf("Warning: could not persist container port: %v", err))
+	}
 
 	// --- start new container ---
 	// docker run -d --name X --restart ... -e K=V ... -p ... -v ... image

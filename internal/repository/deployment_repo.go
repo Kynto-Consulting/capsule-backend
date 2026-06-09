@@ -178,6 +178,14 @@ func (r *DeploymentRepository) UpdateHostPort(ctx context.Context, id uuid.UUID,
 	return err
 }
 
+func (r *DeploymentRepository) UpdateContainerPort(ctx context.Context, id uuid.UUID, containerPort int) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE deployments SET container_port = $1 WHERE id = $2`,
+		containerPort, id,
+	)
+	return err
+}
+
 func (r *DeploymentRepository) UpdateFunctionURL(ctx context.Context, id uuid.UUID, functionURL string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE deployments SET function_url = $1 WHERE id = $2`,

@@ -246,9 +246,15 @@ func (h *ProxyHandler) proxyToContainer(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Docker container proxy
+	// Docker container proxy. Use the deployment's actual container port (the
+	// user's PORT is authoritative) so the proxy targets the same port the app
+	// listens on. Fall back to 3000 if not recorded.
 	name := containerName(project)
-	target, _ := url.Parse(fmt.Sprintf("http://%s:3000", name))
+	containerPort := 3000
+	if dep, derr := h.deployments.GetLatestSuccessfulByProject(r.Context(), project.ID); derr == nil && dep != nil && dep.ContainerPort > 0 {
+		containerPort = dep.ContainerPort
+	}
+	target, _ := url.Parse(fmt.Sprintf("http://%s:%d", name, containerPort))
 
 	// Strip /_proxy/{subdomain} prefix when coming via Next.js rewrite
 	prefix := "/_proxy/" + subdomain
