@@ -277,10 +277,12 @@ func (w *DeployWorker) pruneDocker(ctx context.Context, id uuid.UUID) {
 	// Dangling images (untagged layers from prior builds)
 	imgCmd := exec.CommandContext(ctx, "docker", "image", "prune", "-f")
 	_ = imgCmd.Run()
-	// Build cache older than 24h (keeps recent cache for fast rebuilds)
-	cacheCmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f", "--filter", "until=24h")
+	// Build cache: keep up to 8GB of recent cache so deps stay warm for fast
+	// rebuilds; only evict beyond that. (Do NOT prune all cache — that would
+	// defeat BuildKit layer reuse and make every build recompile from scratch.)
+	cacheCmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f", "--keep-storage", "8GB")
 	_ = cacheCmd.Run()
-	w.appendLog(ctx, id, "Reclaimed disk (pruned dangling images + old build cache)")
+	w.appendLog(ctx, id, "Reclaimed disk (dangling images; kept warm build cache)")
 }
 
 // detectExposePort reads a Dockerfile and returns the first EXPOSE port.
@@ -325,10 +327,27 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	//     accumulated layers/cache across many deploys) ---
 	w.pruneDocker(ctx, id)
 
-	// --- docker build ---
-	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageName))
-	buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", imageName, ".")
+	// --- docker build (BuildKit + layer cache) ---
+	// BuildKit gives parallel stages and a persistent layer cache, so
+	// unchanged deps (go mod download / npm install) are reused across
+	// deploys instead of recompiling every time — cutting rebuilds from
+	// minutes to seconds. --cache-from reuses the previous image of this
+	// project; BUILDKIT_INLINE_CACHE bakes cache metadata into the image so
+	// future builds can hit it even after a prune.
+	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s (BuildKit + cache)", imageName))
+	buildArgs := []string{
+		"build",
+		"--build-arg", "BUILDKIT_INLINE_CACHE=1",
+		"--cache-from", imageName,
+		"-t", imageName,
+		".",
+	}
+	buildCmd := exec.CommandContext(ctx, "docker", buildArgs...)
 	buildCmd.Dir = buildDir
+	buildCmd.Env = append(os.Environ(),
+		"DOCKER_BUILDKIT=1",
+		"BUILDKIT_PROGRESS=plain",
+	)
 	buildOut, err := buildCmd.CombinedOutput()
 	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
 		if line != "" {
