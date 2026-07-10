@@ -327,28 +327,38 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	//     accumulated layers/cache across many deploys) ---
 	w.pruneDocker(ctx, id)
 
-	// --- docker build (BuildKit + layer cache) ---
+	// --- docker build (BuildKit + layer cache, legacy fallback) ---
 	// BuildKit gives parallel stages and a persistent layer cache, so
 	// unchanged deps (go mod download / npm install) are reused across
 	// deploys instead of recompiling every time — cutting rebuilds from
 	// minutes to seconds. --cache-from reuses the previous image of this
-	// project; BUILDKIT_INLINE_CACHE bakes cache metadata into the image so
-	// future builds can hit it even after a prune.
-	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s (BuildKit + cache)", imageName))
-	buildArgs := []string{
-		"build",
-		"--build-arg", "BUILDKIT_INLINE_CACHE=1",
-		"--cache-from", imageName,
-		"-t", imageName,
-		".",
+	// project; BUILDKIT_INLINE_CACHE bakes cache metadata into the image.
+	// If BuildKit/buildx isn't available, fall back to the legacy builder so
+	// deploys never hard-fail on tooling.
+	runBuild := func(useBuildKit bool) ([]byte, error) {
+		var args []string
+		var env []string
+		if useBuildKit {
+			args = []string{"build", "--build-arg", "BUILDKIT_INLINE_CACHE=1", "--cache-from", imageName, "-t", imageName, "."}
+			env = append(os.Environ(), "DOCKER_BUILDKIT=1", "BUILDKIT_PROGRESS=plain")
+		} else {
+			// Legacy builder still reuses cached layers from the previous image.
+			args = []string{"build", "--cache-from", imageName, "-t", imageName, "."}
+			env = append(os.Environ(), "DOCKER_BUILDKIT=0")
+		}
+		c := exec.CommandContext(ctx, "docker", args...)
+		c.Dir = buildDir
+		c.Env = env
+		return c.CombinedOutput()
 	}
-	buildCmd := exec.CommandContext(ctx, "docker", buildArgs...)
-	buildCmd.Dir = buildDir
-	buildCmd.Env = append(os.Environ(),
-		"DOCKER_BUILDKIT=1",
-		"BUILDKIT_PROGRESS=plain",
-	)
-	buildOut, err := buildCmd.CombinedOutput()
+
+	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s (BuildKit + cache)", imageName))
+	buildOut, err := runBuild(true)
+	// buildx missing/broken → retry on the legacy builder.
+	if err != nil && strings.Contains(string(buildOut), "buildx") {
+		w.appendLog(ctx, id, "BuildKit unavailable, falling back to legacy builder")
+		buildOut, err = runBuild(false)
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
 		if line != "" {
 			w.appendLog(ctx, id, line)
