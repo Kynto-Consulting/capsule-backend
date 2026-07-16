@@ -280,7 +280,7 @@ func (w *DeployWorker) pruneDocker(ctx context.Context, id uuid.UUID) {
 	// Build cache: keep up to 8GB of recent cache so deps stay warm for fast
 	// rebuilds; only evict beyond that. (Do NOT prune all cache — that would
 	// defeat BuildKit layer reuse and make every build recompile from scratch.)
-	cacheCmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f", "--keep-storage", "8GB")
+	cacheCmd := exec.CommandContext(ctx, "docker", "builder", "prune", "-f", "--keep-storage", "4GB")
 	_ = cacheCmd.Run()
 	w.appendLog(ctx, id, "Reclaimed disk (dangling images; kept warm build cache)")
 }
