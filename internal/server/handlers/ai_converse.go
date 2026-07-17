@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -161,6 +163,68 @@ func buildConverseTools(a converseNovaArgs) *bt.ToolConfiguration {
 
 // converseNova runs a Nova request through the Converse API (which, unlike raw
 // invoke_model, supports prompt caching via cachePoint).
+// fallbackModelIDs returns sibling Bedrock model IDs to try when the primary
+// model fails with a transient error (throttling / 5xx). Ordered best-first.
+// Keeps the same provider family where possible, ending on the always-cheap
+// Nova Lite as a last resort so a request rarely dies on throttling.
+func fallbackModelIDs(primary string) []string {
+	const (
+		sonnet    = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+		haiku     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+		novaLite  = "amazon.nova-lite-v1:0"
+		novaMicro = "amazon.nova-micro-v1:0"
+	)
+	switch {
+	case strings.Contains(primary, "opus"):
+		return []string{sonnet, haiku, novaLite}
+	case strings.Contains(primary, "sonnet"):
+		return []string{haiku, novaLite}
+	case strings.Contains(primary, "haiku"):
+		return []string{novaLite}
+	case strings.Contains(primary, "nova-pro"), strings.Contains(primary, "nova-lite"):
+		return []string{novaMicro}
+	case strings.Contains(primary, "deepseek"), strings.Contains(primary, "llama"):
+		return []string{novaLite}
+	default:
+		return nil
+	}
+}
+
+// converseWithFallback calls Converse, retrying the primary model on transient
+// errors, then falling back to sibling models. Returns the output and the model
+// actually used.
+func (h *AIHandler) converseWithFallback(ctx context.Context, in *bedrockruntime.ConverseInput) (*bedrockruntime.ConverseOutput, string, error) {
+	primary := aws.ToString(in.ModelId)
+	models := append([]string{primary}, fallbackModelIDs(primary)...)
+	var lastErr error
+	for mi, model := range models {
+		in.ModelId = aws.String(model)
+		// Retry each model up to 3x on transient errors before moving on.
+		for attempt := 0; attempt < 3; attempt++ {
+			out, err := h.aws.Bedrock.Converse(ctx, in)
+			if err == nil {
+				return out, model, nil
+			}
+			lastErr = err
+			if !isTransientBedrockError(err) {
+				break // hard error (bad request, unsupported) — don't retry/fallback-loop
+			}
+			if h.logger != nil {
+				h.logger.Warn("converse transient error", "model", model, "attempt", attempt+1, "err", err.Error())
+			}
+			select {
+			case <-ctx.Done():
+				return nil, model, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 400 * time.Millisecond):
+			}
+		}
+		if mi < len(models)-1 && h.logger != nil {
+			h.logger.Warn("converse falling back to next model", "from", model, "to", models[mi+1])
+		}
+	}
+	return nil, primary, lastErr
+}
+
 func (h *AIHandler) converseNova(ctx context.Context, w http.ResponseWriter, r *http.Request, a converseNovaArgs) {
 	maxTokens := int32(4096)
 	messages := buildConverseMessages(a)
@@ -173,7 +237,7 @@ func (h *AIHandler) converseNova(ctx context.Context, w http.ResponseWriter, r *
 		return
 	}
 
-	out, err := h.aws.Bedrock.Converse(ctx, &bedrockruntime.ConverseInput{
+	out, _, err := h.converseWithFallback(ctx, &bedrockruntime.ConverseInput{
 		ModelId:         aws.String(a.modelID),
 		Messages:        messages,
 		System:          system,
@@ -283,13 +347,38 @@ func (h *AIHandler) converseNovaStream(ctx context.Context, w http.ResponseWrite
 		return out
 	}
 
-	out, err := h.aws.Bedrock.ConverseStream(ctx, &bedrockruntime.ConverseStreamInput{
+	// Open the stream, retrying the primary model on transient errors then
+	// falling back to sibling models — all before any bytes are written, so it
+	// is safe. (Real fix for throttling is the raised Bedrock quota; this only
+	// keeps users from seeing a 500 during a bad window.)
+	streamInput := &bedrockruntime.ConverseStreamInput{
 		ModelId:         aws.String(a.modelID),
 		Messages:        messages,
 		System:          system,
 		ToolConfig:      toolCfg,
 		InferenceConfig: infCfg,
-	})
+	}
+	primary := a.modelID
+	models := append([]string{primary}, fallbackModelIDs(primary)...)
+	var out *bedrockruntime.ConverseStreamOutput
+	var err error
+	for _, model := range models {
+		streamInput.ModelId = aws.String(model)
+		for attempt := 0; attempt < 3; attempt++ {
+			out, err = h.aws.Bedrock.ConverseStream(ctx, streamInput)
+			if err == nil || !isTransientBedrockError(err) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				err = ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 400 * time.Millisecond):
+			}
+		}
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		sendSSE(map[string]any{"error": map[string]any{"code": "AI_ERROR", "message": err.Error()}})
 		fmt.Fprintf(w, "data: [DONE]\n\n")
