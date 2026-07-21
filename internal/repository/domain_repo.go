@@ -70,7 +70,7 @@ func (r *DomainRepository) GetByHostname(ctx context.Context, hostname string) (
 		SELECT id, org_id, project_id, domain_name, record_type, record_value, verification_token,
 		       status, ssl_enabled, dns_provider, verified_at, created_at, updated_at
 		FROM domains
-		WHERE domain_name = $1 AND status = 'verified'
+		WHERE domain_name = $1 AND status IN ('verified', 'active')
 		LIMIT 1`
 	var out domain.Domain
 	err := r.pool.QueryRow(ctx, q, hostname).Scan(
