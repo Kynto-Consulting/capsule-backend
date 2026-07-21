@@ -95,6 +95,11 @@ func NewDeployWorker(
 func (w *DeployWorker) Run(ctx context.Context) {
 	w.logger.Info("deploy worker started")
 
+	// Reaper: requeue deployments left in a running state by a previous crash
+	// or restart (e.g. the box OOM'd mid-build). Without this they stay 'building'
+	// forever since the worker only picks 'queued'.
+	w.reapStaleDeployments(ctx)
+
 	const (
 		minPoll = 1 * time.Second
 		maxPoll = 30 * time.Second
@@ -180,13 +185,31 @@ func (w *DeployWorker) processNext(ctx context.Context) bool {
 
 	w.logger.Info("deploy worker: picked deployment", "id", id, "project_id", projectID, "retry", retryCount)
 
-	// Track in-flight so graceful shutdown waits.
+	// Process SYNCHRONOUSLY — one build at a time. Two concurrent docker builds
+	// on a small instance exhaust CPU/RAM (OOM), taking the whole backend down.
+	// Serializing keeps the platform stable; queued deploys just wait their turn.
 	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		w.runDeployment(ctx, id, projectID, sourceKey, buildStrategy)
-	}()
+	defer w.wg.Done()
+	w.runDeployment(ctx, id, projectID, sourceKey, buildStrategy)
 	return true
+}
+
+// reapStaleDeployments requeues deployments stuck in a running state (building/
+// deploying) with no update for over 20 minutes — orphans from a crash/restart.
+// retry_count is bumped so a genuinely broken build eventually fails for good.
+func (w *DeployWorker) reapStaleDeployments(ctx context.Context) {
+	tag, err := w.pool.Exec(ctx, `
+		UPDATE deployments
+		SET status = 'queued', retry_count = COALESCE(retry_count, 0) + 1
+		WHERE status IN ('building', 'deploying')
+		  AND COALESCE(started_at, created_at) < now() - interval '20 minutes'`)
+	if err != nil {
+		w.logger.Warn("deploy worker: reaper failed", "error", err)
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		w.logger.Info("deploy worker: reaped stale deployments", "count", n)
+	}
 }
 
 func (w *DeployWorker) appendLog(ctx context.Context, id uuid.UUID, msg string) {
