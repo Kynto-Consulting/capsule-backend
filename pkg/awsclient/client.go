@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -26,6 +27,7 @@ type Clients struct {
 	ECR       *ecr.Client
 	ECS       *ecs.Client
 	ELBV2     *elasticloadbalancingv2.Client
+	ACM       *acm.Client
 	RDS       *rds.Client
 	Route53   *route53.Client
 	Bedrock   *bedrockruntime.Client
@@ -81,6 +83,7 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 		ECR:       ecr.NewFromConfig(cfg),
 		ECS:       ecs.NewFromConfig(cfg),
 		ELBV2:     elasticloadbalancingv2.NewFromConfig(cfg),
+		ACM:       acm.NewFromConfig(cfg),
 		RDS:       rds.NewFromConfig(cfg),
 		Route53:   route53.NewFromConfig(cfg),
 		Bedrock:   bedrockruntime.NewFromConfig(cfg),

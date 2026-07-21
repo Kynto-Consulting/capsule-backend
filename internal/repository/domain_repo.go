@@ -143,6 +143,22 @@ func (r *DomainRepository) UpdateStatus(ctx context.Context, id uuid.UUID, statu
 	return nil
 }
 
+// UpdateSSL persists SSL state and the ACM DNS-validation record (stored in
+// verification_token as "name -> value" so it's surfaced to the client).
+func (r *DomainRepository) UpdateSSL(ctx context.Context, id uuid.UUID, sslEnabled bool, verificationToken string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE domains SET ssl_enabled = $2, verification_token = $3, updated_at = now() WHERE id = $1`,
+		id, sslEnabled, verificationToken,
+	)
+	if err != nil {
+		return fmt.Errorf("updating domain ssl: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *DomainRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM domains WHERE id = $1`,

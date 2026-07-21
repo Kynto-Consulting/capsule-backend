@@ -278,6 +278,25 @@ func (h *DomainHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Status = status
+
+	// Once DNS points at the ALB, drive the ACM cert + ALB wiring. This is what
+	// gives the custom domain HTTPS and stops it falling through to the landing
+	// page: request a DNS-validated cert, surface its validation CNAME, and —
+	// once issued — attach the cert and add host rules to the backend TG.
+	if status == "active" {
+		sslEnabled, validation, sslErr := h.provisionDomainSSL(r.Context(), d)
+		if sslErr != nil {
+			h.logger.Warn("domain SSL provisioning", "domain", d.DomainName, "error", sslErr)
+		} else {
+			d.SSLEnabled = sslEnabled
+			if validation != "" {
+				d.VerificationToken = validation
+			}
+			if err := h.domains.UpdateSSL(r.Context(), domainID, sslEnabled, validation); err != nil {
+				h.logger.Warn("persist domain SSL", "error", err)
+			}
+		}
+	}
 	respondJSON(w, http.StatusOK, d)
 }
 

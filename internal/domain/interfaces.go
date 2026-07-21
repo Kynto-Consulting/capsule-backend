@@ -109,6 +109,7 @@ type DomainRepository interface {
 	ListByProject(ctx context.Context, projectID uuid.UUID) ([]*Domain, error)
 	ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*Domain, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status, recordValue string) error
+	UpdateSSL(ctx context.Context, id uuid.UUID, sslEnabled bool, verificationToken string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
