@@ -114,27 +114,27 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	// Custom domain middleware — intercept requests from non-platform hosts
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Never intercept health checks, API routes, or proxy paths
+			host := r.Host
+			// Strip port
+			if i := strings.LastIndex(host, ":"); i >= 0 {
+				host = host[:i]
+			}
+			// Custom domain: proxy ALL paths (including /api/*) to the container
+			if host != "" &&
+				!strings.HasSuffix(host, ".apps.tumi-ai.com") &&
+				!strings.HasSuffix(host, ".tumi-ai.com") &&
+				host != "localhost" &&
+				host != "api.tumi-ai.com" {
+				proxyHandler.ProxyByHost(w, r)
+				return
+			}
+			// Platform domain: skip health/proxy/api paths
 			path := r.URL.Path
 			if path == "/health" ||
 				strings.HasPrefix(path, "/api/") ||
 				strings.HasPrefix(path, "/_proxy/") ||
 				strings.HasPrefix(path, "/apps/") {
 				next.ServeHTTP(w, r)
-				return
-			}
-
-			host := r.Host
-			// Strip port
-			if i := strings.LastIndex(host, ":"); i >= 0 {
-				host = host[:i]
-			}
-			// Only intercept non-platform hosts
-			if host != "" &&
-				!strings.HasSuffix(host, ".apps.tumi-ai.com") &&
-				!strings.HasSuffix(host, ".tumi-ai.com") &&
-				host != "localhost" {
-				proxyHandler.ProxyByHost(w, r)
 				return
 			}
 			next.ServeHTTP(w, r)
