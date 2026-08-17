@@ -114,6 +114,16 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	// Custom domain middleware — intercept requests from non-platform hosts
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Internal paths are never custom-domain traffic (Next.js rewrites
+			// arrive here with the Docker hostname, not the public domain).
+			path := r.URL.Path
+			if path == "/health" ||
+				strings.HasPrefix(path, "/_proxy/") ||
+				strings.HasPrefix(path, "/apps/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			host := r.Host
 			// Strip port
 			if i := strings.LastIndex(host, ":"); i >= 0 {
@@ -128,15 +138,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 				proxyHandler.ProxyByHost(w, r)
 				return
 			}
-			// Platform domain: skip health/proxy/api paths
-			path := r.URL.Path
-			if path == "/health" ||
-				strings.HasPrefix(path, "/api/") ||
-				strings.HasPrefix(path, "/_proxy/") ||
-				strings.HasPrefix(path, "/apps/") {
-				next.ServeHTTP(w, r)
-				return
-			}
+			// Platform domain: normal routing
 			next.ServeHTTP(w, r)
 		})
 	})
