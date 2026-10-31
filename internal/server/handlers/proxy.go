@@ -39,7 +39,10 @@ func staticBucketName() string {
 	if b := os.Getenv("CAPSULE_STATIC_BUCKET"); b != "" {
 		return b
 	}
-	return "capsule-static-348973061281"
+	if id := os.Getenv("AWS_ACCOUNT_ID"); id != "" {
+		return "capsule-static-" + id
+	}
+	return "capsule-static"
 }
 
 // proxyErrorPage writes a styled HTML error page instead of a raw text error.
@@ -253,6 +256,11 @@ func (h *ProxyHandler) proxyToContainer(w http.ResponseWriter, r *http.Request, 
 	containerPort := 3000
 	if dep, derr := h.deployments.GetLatestSuccessfulByProject(r.Context(), project.ID); derr == nil && dep != nil && dep.ContainerPort > 0 {
 		containerPort = dep.ContainerPort
+	}
+	// Wake the container if the idle reaper put it to sleep (first request pays the cold start).
+	if err := wakeApp(r.Context(), name, containerPort); err != nil {
+		proxyErrorPage(w, http.StatusServiceUnavailable, "Waking Up", "This application was asleep after a period of inactivity and could not be started yet. Reload in a few seconds.")
+		return
 	}
 	target, _ := url.Parse(fmt.Sprintf("http://%s:%d", name, containerPort))
 
