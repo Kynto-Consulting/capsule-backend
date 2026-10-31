@@ -22,26 +22,26 @@ func NewAPITokenRepository(pool *pgxpool.Pool) *APITokenRepository {
 
 const tokenCols = `id, user_id, name, token_hash, prefix, scopes,
 	rate_limit_rpm, ip_allowlist, request_count, last_count_reset,
-	last_used_at, expires_at, created_at, revoked_at`
+	last_used_at, expires_at, created_at, revoked_at, project_id`
 
 func scanToken(row interface{ Scan(...any) error }, t *domain.APIToken) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Prefix, &t.Scopes,
 		&t.RateLimitRPM, &t.IPAllowlist, &t.RequestCount, &t.LastCountReset,
-		&t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt, &t.RevokedAt,
+		&t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt, &t.RevokedAt, &t.ProjectID,
 	)
 }
 
 func (r *APITokenRepository) Create(ctx context.Context, token *domain.APIToken) (*domain.APIToken, error) {
 	const q = `
-		INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, rate_limit_rpm, ip_allowlist, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO api_tokens (user_id, name, token_hash, prefix, scopes, rate_limit_rpm, ip_allowlist, expires_at, project_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING ` + tokenCols
 
 	var out domain.APIToken
 	if err := scanToken(r.pool.QueryRow(ctx, q,
 		token.UserID, token.Name, token.TokenHash, token.Prefix, token.Scopes,
-		token.RateLimitRPM, token.IPAllowlist, token.ExpiresAt,
+		token.RateLimitRPM, token.IPAllowlist, token.ExpiresAt, token.ProjectID,
 	), &out); err != nil {
 		return nil, fmt.Errorf("creating api token: %w", err)
 	}

@@ -153,6 +153,8 @@ All authenticated routes require a `Bearer` token in the `Authorization` header.
 | `POST/GET` | `/api/v1/orgs/{orgID}/projects`                               | Create / list projects             | Yes  |
 | `GET/PATCH/DELETE` | `/api/v1/orgs/{orgID}/projects/{projectID}`           | Get / update / delete project      | Yes  |
 | `GET/PUT` | `/api/v1/orgs/{orgID}/projects/{projectID}/env`               | List / set environment variables   | Yes  |
+| `GET/PUT/DELETE` | `/api/v1/orgs/{orgID}/env[/{key}]`                     | Account (org) variables inherited by all projects; secrets masked unless `?reveal=true` (admin/owner) | Yes |
+| `POST`   | `/api/v1/user/tokens`                                           | Create API token; `scopes:["deploy"]` + `project_id` for CI (project-limited) | Yes |
 | `POST/GET` | `/api/v1/orgs/{orgID}/projects/{projectID}/deployments`      | Create / list deployments          | Yes  |
 | `GET`    | `/api/v1/orgs/{orgID}/projects/{projectID}/deployments/{id}/logs` | Stream deployment logs          | Yes  |
 | `POST/GET` | `/api/v1/orgs/{orgID}/projects/{projectID}/databases`        | Provision / list databases         | Yes  |

@@ -288,6 +288,7 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		shortID := strings.ReplaceAll(c.ProjectID.String(), "-", "")[:12]
 		containerName := "capsule-app-" + shortID
 
+		_ = wakeApp(ctx, containerName, 0) // the app may be asleep (idle sleep)
 		cmd := exec.CommandContext(ctx, "docker", "exec", containerName, "sh", "-c", c.Command)
 		out, runErr := cmd.CombinedOutput()
 		dur := time.Since(start)

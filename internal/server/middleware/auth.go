@@ -27,11 +27,12 @@ func Auth(authSvc domain.AuthService, tokenRepo domain.APITokenRepository, userR
 			token := strings.TrimPrefix(header, "Bearer ")
 
 			var user *domain.User
+			var apiToken *domain.APIToken
 			var err error
 
 			if strings.HasPrefix(token, "cap_") {
 				// Platform API token — look up by hash
-				user, err = validatePlatformToken(r.Context(), token, tokenRepo, userRepo)
+				user, apiToken, err = validatePlatformToken(r.Context(), token, tokenRepo, userRepo)
 			} else {
 				// JWT access token
 				user, err = authSvc.ValidateAccessToken(r.Context(), token)
@@ -47,23 +48,28 @@ func Auth(authSvc domain.AuthService, tokenRepo domain.APITokenRepository, userR
 				return
 			}
 
+			if apiToken != nil && !TokenAllows(apiToken, r.Method, r.URL.Path) {
+				http.Error(w, `{"error":{"code":"FORBIDDEN","message":"token scope does not permit this request"}}`, http.StatusForbidden)
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), userKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-func validatePlatformToken(ctx context.Context, plain string, tokenRepo domain.APITokenRepository, userRepo domain.UserRepository) (*domain.User, error) {
+func validatePlatformToken(ctx context.Context, plain string, tokenRepo domain.APITokenRepository, userRepo domain.UserRepository) (*domain.User, *domain.APIToken, error) {
 	h := sha256.New()
 	h.Write([]byte(plain))
 	hashed := hex.EncodeToString(h.Sum(nil))
 
 	record, err := tokenRepo.GetByHash(ctx, hashed)
 	if err != nil {
-		return nil, domain.ErrUnauthorized
+		return nil, nil, domain.ErrUnauthorized
 	}
 	if record.RevokedAt != nil {
-		return nil, domain.ErrUnauthorized
+		return nil, nil, domain.ErrUnauthorized
 	}
 
 	// Touch last used (fire-and-forget)
@@ -73,9 +79,9 @@ func validatePlatformToken(ctx context.Context, plain string, tokenRepo domain.A
 
 	user, err := userRepo.GetByID(ctx, record.UserID)
 	if err != nil {
-		return nil, domain.ErrUnauthorized
+		return nil, nil, domain.ErrUnauthorized
 	}
-	return user, nil
+	return user, record, nil
 }
 
 func GetUser(ctx context.Context) *domain.User {
@@ -83,4 +89,9 @@ func GetUser(ctx context.Context) *domain.User {
 		return u
 	}
 	return nil
+}
+
+// WithUser returns a context carrying the authenticated user (used by tests).
+func WithUser(ctx context.Context, u *domain.User) context.Context {
+	return context.WithValue(ctx, userKey, u)
 }

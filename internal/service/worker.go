@@ -418,7 +418,7 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	}
 
 	// --- fetch project env vars from DB ---
-	envPairsDocker, envErr := w.fetchEnvVarsForDocker(ctx, projectID)
+	envPairsDocker, envErr := w.fetchEnvVarsForDocker(ctx, id, projectID)
 	if envErr != nil {
 		w.appendLog(ctx, id, fmt.Sprintf("Warning: could not load env vars: %v", envErr))
 	} else {
@@ -594,7 +594,7 @@ func (w *DeployWorker) runFargateDeploy(ctx context.Context, id, projectID uuid.
 	w.appendLog(ctx, id, "Deploying to ECS Fargate...")
 
 	// ── 6. Fetch project env vars for task definition ─────────────────────────
-	envPairs, err := w.fetchEnvVarsForTask(ctx, projectID)
+	envPairs, err := w.fetchEnvVarsForTask(ctx, id, projectID)
 	if err != nil {
 		w.logger.Warn("deploy worker fargate: could not fetch env vars", "id", id, "error", err)
 		envPairs = nil // non-fatal
@@ -682,52 +682,28 @@ func (w *DeployWorker) decryptEnvValue(key string, enc []byte) string {
 	return string(plain)
 }
 
-// fetchEnvVarsForDocker loads env vars from the DB as "KEY=VALUE" strings for docker run -e.
-func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, projectID uuid.UUID) ([]string, error) {
-	rows, err := w.pool.Query(ctx,
-		`SELECT key, value_enc FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both') ORDER BY key`,
-		projectID,
-	)
+// fetchEnvVarsForDocker returns effective runtime vars (deploy > project > org) as KEY=VALUE for docker run -e.
+func (w *DeployWorker) fetchEnvVarsForDocker(ctx context.Context, deploymentID, projectID uuid.UUID) ([]string, error) {
+	m, err := w.resolveEnv(ctx, deploymentID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	var pairs []string
-	for rows.Next() {
-		var k string
-		var enc []byte
-		if err := rows.Scan(&k, &enc); err != nil {
-			return nil, err
-		}
-		pairs = append(pairs, k+"="+w.decryptEnvValue(k, enc))
+	for _, kv := range FilterEnvByScope(m, "runtime") {
+		pairs = append(pairs, kv.Key+"="+kv.Value)
 	}
 	return pairs, nil
 }
 
-// fetchEnvVarsForTask loads env vars from the DB for use in the ECS task definition.
-func (w *DeployWorker) fetchEnvVarsForTask(ctx context.Context, projectID uuid.UUID) ([]ecstypes.KeyValuePair, error) {
-	rows, err := w.pool.Query(ctx,
-		`SELECT key, value_enc FROM env_vars WHERE project_id = $1 AND (scope = 'runtime' OR scope = 'both')`,
-		projectID,
-	)
+// fetchEnvVarsForTask returns effective runtime vars for the ECS task definition.
+func (w *DeployWorker) fetchEnvVarsForTask(ctx context.Context, deploymentID, projectID uuid.UUID) ([]ecstypes.KeyValuePair, error) {
+	m, err := w.resolveEnv(ctx, deploymentID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	var pairs []ecstypes.KeyValuePair
-	for rows.Next() {
-		var k string
-		var enc []byte
-		if err := rows.Scan(&k, &enc); err != nil {
-			return nil, err
-		}
-		v := w.decryptEnvValue(k, enc)
-		pairs = append(pairs, ecstypes.KeyValuePair{
-			Name:  aws.String(k),
-			Value: aws.String(v),
-		})
+	for _, kv := range FilterEnvByScope(m, "runtime") {
+		pairs = append(pairs, ecstypes.KeyValuePair{Name: aws.String(kv.Key), Value: aws.String(kv.Value)})
 	}
 	return pairs, nil
 }

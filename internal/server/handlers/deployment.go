@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -66,6 +67,10 @@ func (h *DeploymentHandler) UploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := h.scopedProject(w, r, orgID, projectID); !ok {
+		return
+	}
+
 	if h.awsClients == nil {
 		respondError(w, http.StatusServiceUnavailable, "AWS_UNAVAILABLE", "AWS clients not configured")
 		return
@@ -111,6 +116,10 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
 		return
 	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load project")
+		return
+	}
 
 	var req struct {
 		GitSHA        string  `json:"git_sha"`
@@ -118,6 +127,9 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		BuildStrategy string  `json:"build_strategy"`
 		ContainerPort int     `json:"container_port"`
 		SourceKey     *string `json:"source_key"`
+		// CI support: per-deployment variable overrides and CI metadata.
+		Env  map[string]string `json:"env"`
+		Meta map[string]string `json:"meta"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -125,6 +137,11 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Version == "" {
 		req.Version = "manual"
+	}
+	envOverrides, meta, verr := validateDeployEnvMeta(req.Env, req.Meta)
+	if verr != "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", verr)
+		return
 	}
 	if req.ContainerPort == 0 {
 		req.ContainerPort = 8080
@@ -147,6 +164,8 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Trigger:       "manual",
 		TriggeredBy:   &uid,
 		SourceKey:     req.SourceKey,
+		EnvOverrides:  envOverrides,
+		Meta:          meta,
 	})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create deployment")
@@ -265,6 +284,10 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := h.scopedProject(w, r, orgID, projectID); !ok {
+		return
+	}
+
 	page, limit := parsePagination(r)
 	deployments, total, err := h.deployments.ListByProject(r.Context(), projectID, page, limit)
 	if err != nil {
@@ -296,13 +319,8 @@ func (h *DeploymentHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.deployments.GetByID(r.Context(), deploymentID)
-	if err == domain.ErrNotFound {
-		respondError(w, http.StatusNotFound, "NOT_FOUND", "deployment not found")
-		return
-	}
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+	d, ok := h.scopedDeployment(w, r, orgID, deploymentID)
+	if !ok {
 		return
 	}
 
@@ -324,6 +342,10 @@ func (h *DeploymentHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
 		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+		return
+	}
+
+	if _, ok := h.scopedDeployment(w, r, orgID, deploymentID); !ok {
 		return
 	}
 
@@ -357,9 +379,8 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.deployments.GetByID(r.Context(), deploymentID)
-	if err == domain.ErrNotFound {
-		respondError(w, http.StatusNotFound, "NOT_FOUND", "deployment not found")
+	d, ok := h.scopedDeployment(w, r, orgID, deploymentID)
+	if !ok {
 		return
 	}
 
@@ -373,4 +394,76 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondNoContent(w)
+}
+
+// scopedProject loads the project and ensures it belongs to orgID.
+func (h *DeploymentHandler) scopedProject(w http.ResponseWriter, r *http.Request, orgID, projectID uuid.UUID) (*domain.Project, bool) {
+	p, err := h.projects.GetByID(r.Context(), projectID)
+	if err == domain.ErrNotFound || (err == nil && p.OrgID != orgID) {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "project not found")
+		return nil, false
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load project")
+		return nil, false
+	}
+	return p, true
+}
+
+// scopedDeployment loads a deployment and ensures it belongs to the project in
+// the URL and that project belongs to orgID (prevents cross-project access).
+func (h *DeploymentHandler) scopedDeployment(w http.ResponseWriter, r *http.Request, orgID, deploymentID uuid.UUID) (*domain.Deployment, bool) {
+	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
+		return nil, false
+	}
+	if _, ok := h.scopedProject(w, r, orgID, projectID); !ok {
+		return nil, false
+	}
+	d, err := h.deployments.GetByID(r.Context(), deploymentID)
+	if err == domain.ErrNotFound || (err == nil && d.ProjectID != projectID) {
+		respondError(w, http.StatusNotFound, "NOT_FOUND", "deployment not found")
+		return nil, false
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return nil, false
+	}
+	return d, true
+}
+
+var ciMetaKeys = map[string]bool{"ref": true, "sha": true, "actor": true, "run_url": true, "pr": true}
+
+// validateDeployEnvMeta normalizes per-deployment env keys (upper-case) and
+// restricts meta to the known CI keys.
+func validateDeployEnvMeta(env, meta map[string]string) (map[string]string, map[string]string, string) {
+	if len(env) > 200 {
+		return nil, nil, "too many env overrides (max 200)"
+	}
+	outEnv := map[string]string{}
+	for k, v := range env {
+		k = strings.ToUpper(strings.TrimSpace(k))
+		if k == "" || strings.ContainsAny(k, "= \t\n") {
+			return nil, nil, "invalid env key"
+		}
+		outEnv[k] = v
+	}
+	outMeta := map[string]string{}
+	for k, v := range meta {
+		if !ciMetaKeys[k] {
+			return nil, nil, "unknown meta key: " + k
+		}
+		if len(v) > 1024 {
+			return nil, nil, "meta value too long: " + k
+		}
+		outMeta[k] = v
+	}
+	if len(outEnv) == 0 {
+		outEnv = nil
+	}
+	if len(outMeta) == 0 {
+		outMeta = nil
+	}
+	return outEnv, outMeta, ""
 }

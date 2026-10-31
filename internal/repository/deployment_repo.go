@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"errors"
 	"fmt"
 
@@ -10,41 +12,76 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/pkg/crypto"
 )
 
 type DeploymentRepository struct {
-	pool *pgxpool.Pool
+	pool      *pgxpool.Pool
+	secretKey string // encrypts per-deployment env overrides
 }
 
-func NewDeploymentRepository(pool *pgxpool.Pool) *DeploymentRepository {
-	return &DeploymentRepository{pool: pool}
+// NewDeploymentRepository creates the repo. secretKey (optional) is required
+// only to persist per-deployment env overrides.
+func NewDeploymentRepository(pool *pgxpool.Pool, secretKey ...string) *DeploymentRepository {
+	r := &DeploymentRepository{pool: pool}
+	if len(secretKey) > 0 {
+		r.secretKey = secretKey[0]
+	}
+	return r
 }
 
 func (r *DeploymentRepository) Create(ctx context.Context, d *domain.Deployment) (*domain.Deployment, error) {
+	var envEnc []byte
+	var envKeys []string
+	if len(d.EnvOverrides) > 0 {
+		if r.secretKey == "" {
+			return nil, fmt.Errorf("creating deployment: secret key not configured for env overrides")
+		}
+		raw, err := json.Marshal(d.EnvOverrides)
+		if err != nil {
+			return nil, fmt.Errorf("encoding env overrides: %w", err)
+		}
+		if envEnc, err = crypto.Encrypt(raw, r.secretKey); err != nil {
+			return nil, fmt.Errorf("encrypting env overrides: %w", err)
+		}
+		for k := range d.EnvOverrides {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+	}
+	var metaJSON []byte
+	if len(d.Meta) > 0 {
+		metaJSON, _ = json.Marshal(d.Meta)
+	}
+
 	const q = `
 		INSERT INTO deployments
-		  (project_id, version, git_sha, status, build_strategy, container_port, trigger, triggered_by, source_key)
-		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
+		  (project_id, version, git_sha, status, build_strategy, container_port, trigger, triggered_by, source_key,
+		   env_enc, env_keys, meta)
+		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		          container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
 		          started_at, completed_at, created_at, source_key, host_port, function_url,
-		          ecs_service_arn, ecs_task_def_arn, app_url`
+		          ecs_service_arn, ecs_task_def_arn, app_url, env_keys, meta`
 
 	var out domain.Deployment
 	var gitSHA, imageTag *string
+	var metaRaw []byte
 	err := r.pool.QueryRow(ctx, q,
 		d.ProjectID, d.Version, d.GitSHA, d.BuildStrategy, d.ContainerPort, d.Trigger, d.TriggeredBy, d.SourceKey,
+		envEnc, envKeys, metaJSON,
 	).Scan(
 		&out.ID, &out.ProjectID, &out.ServerID, &out.Version, &gitSHA, &out.Status,
 		&imageTag, &out.BuildStrategy, &out.ContainerPort, &out.BuildDurationMs,
 		&out.DeployDurationMs, &out.Trigger, &out.TriggeredBy, &out.StartedAt, &out.CompletedAt,
 		&out.CreatedAt, &out.SourceKey, &out.HostPort, &out.FunctionURL,
-		&out.ECSServiceARN, &out.ECSTaskDefARN, &out.AppURL,
+		&out.ECSServiceARN, &out.ECSTaskDefARN, &out.AppURL, &out.EnvKeys, &metaRaw,
 	)
 	if err != nil {
 		fmt.Printf("DATABASE ERROR IN CREATE DEPLOYMENT: %v\n", err)
 		return nil, fmt.Errorf("creating deployment: %w", err)
 	}
+	_ = decodeMeta(metaRaw, &out)
 	if gitSHA != nil {
 		out.GitSHA = *gitSHA
 	}
@@ -59,7 +96,7 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
 		       started_at, completed_at, created_at, source_key, host_port, function_url,
-		       ecs_service_arn, ecs_task_def_arn, app_url
+		       ecs_service_arn, ecs_task_def_arn, app_url, env_keys, meta
 		FROM deployments WHERE id = $1`
 	return r.scanOne(ctx, q, id)
 }
@@ -69,7 +106,7 @@ func (r *DeploymentRepository) ListByProject(ctx context.Context, projectID uuid
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
 		       started_at, completed_at, created_at, source_key, host_port, function_url,
-		       ecs_service_arn, ecs_task_def_arn, app_url
+		       ecs_service_arn, ecs_task_def_arn, app_url, env_keys, meta
 		FROM deployments WHERE project_id = $1
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
@@ -139,6 +176,13 @@ func (r *DeploymentRepository) GetLogs(ctx context.Context, deploymentID uuid.UU
 	return out, nil
 }
 
+func decodeMeta(raw []byte, d *domain.Deployment) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, &d.Meta)
+}
+
 func (r *DeploymentRepository) scanOne(ctx context.Context, q string, args ...any) (*domain.Deployment, error) {
 	row := r.pool.QueryRow(ctx, q, args...)
 	d, err := r.scanRow(row)
@@ -151,16 +195,18 @@ func (r *DeploymentRepository) scanOne(ctx context.Context, q string, args ...an
 func (r *DeploymentRepository) scanRow(row interface{ Scan(...any) error }) (*domain.Deployment, error) {
 	var d domain.Deployment
 	var gitSHA, imageTag *string
+	var metaRaw []byte
 	err := row.Scan(
 		&d.ID, &d.ProjectID, &d.ServerID, &d.Version, &gitSHA, &d.Status,
 		&imageTag, &d.BuildStrategy, &d.ContainerPort, &d.BuildDurationMs,
 		&d.DeployDurationMs, &d.Trigger, &d.TriggeredBy, &d.StartedAt, &d.CompletedAt,
 		&d.CreatedAt, &d.SourceKey, &d.HostPort, &d.FunctionURL,
-		&d.ECSServiceARN, &d.ECSTaskDefARN, &d.AppURL,
+		&d.ECSServiceARN, &d.ECSTaskDefARN, &d.AppURL, &d.EnvKeys, &metaRaw,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scanning deployment: %w", err)
 	}
+	_ = decodeMeta(metaRaw, &d)
 	if gitSHA != nil {
 		d.GitSHA = *gitSHA
 	}
@@ -205,7 +251,7 @@ func (r *DeploymentRepository) GetLatestSuccessfulByProject(ctx context.Context,
 	const q = `SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 	                  container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
 	                  started_at, completed_at, created_at, source_key, host_port, function_url,
-	                  ecs_service_arn, ecs_task_def_arn, app_url
+	                  ecs_service_arn, ecs_task_def_arn, app_url, env_keys, meta
 	           FROM deployments
 	           WHERE project_id = $1 AND status = 'success'
 	           ORDER BY created_at DESC LIMIT 1`
@@ -217,7 +263,7 @@ func (r *DeploymentRepository) ListQueued(ctx context.Context, page, perPage int
 		SELECT id, project_id, server_id, version, git_sha, status, image_tag, build_strategy,
 		       container_port, build_duration_ms, deploy_duration_ms, trigger, triggered_by,
 		       started_at, completed_at, created_at, source_key, host_port, function_url,
-		       ecs_service_arn, ecs_task_def_arn, app_url
+		       ecs_service_arn, ecs_task_def_arn, app_url, env_keys, meta
 		FROM deployments
 		WHERE status = 'queued' AND (build_strategy IN ('docker', 'fargate') OR build_strategy = '' OR build_strategy IS NULL)
 		ORDER BY created_at ASC LIMIT $1 OFFSET $2`

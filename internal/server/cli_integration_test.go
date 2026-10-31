@@ -58,7 +58,8 @@ func TestE2ECLIIntegration(t *testing.T) {
 	orgRepo := repository.NewOrgRepository(pool)
 	projRepo := repository.NewProjectRepository(pool)
 	envVarRepo := repository.NewEnvVarRepository(pool, cfg.SecretKey)
-	deploymentRepo := repository.NewDeploymentRepository(pool)
+	orgEnvVarRepo := repository.NewOrgEnvVarRepository(pool, cfg.SecretKey)
+	deploymentRepo := repository.NewDeploymentRepository(pool, cfg.SecretKey)
 	dbRepo := repository.NewDatabaseRepository(pool)
 	domainRepo := repository.NewDomainRepository(pool)
 	apiTokenRepo := repository.NewAPITokenRepository(pool)
@@ -88,6 +89,7 @@ func TestE2ECLIIntegration(t *testing.T) {
 		OrgRepo:            orgRepo,
 		ProjRepo:           projRepo,
 		EnvVarRepo:         envVarRepo,
+		OrgEnvVarRepo:      orgEnvVarRepo,
 		DeploymentRepo:     deploymentRepo,
 		CacheStore:         cacheStore,
 		DatabaseRepo:       dbRepo,

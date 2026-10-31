@@ -15,6 +15,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/repository"
 	"github.com/kynto/capsule/backend/internal/server"
+	"github.com/kynto/capsule/backend/internal/server/handlers"
 	"github.com/kynto/capsule/backend/internal/service"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
@@ -77,7 +78,8 @@ func main() {
 	orgRepo        := repository.NewOrgRepository(pool)
 	projRepo       := repository.NewProjectRepository(pool)
 	envVarRepo     := repository.NewEnvVarRepository(pool, cfg.SecretKey)
-	deploymentRepo := repository.NewDeploymentRepository(pool)
+	orgEnvVarRepo  := repository.NewOrgEnvVarRepository(pool, cfg.SecretKey)
+	deploymentRepo := repository.NewDeploymentRepository(pool, cfg.SecretKey)
 	dbRepo         := repository.NewDatabaseRepository(pool)
 	domainRepo     := repository.NewDomainRepository(pool)
 	apiTokenRepo   := repository.NewAPITokenRepository(pool)
@@ -127,6 +129,9 @@ func main() {
 		close(workerDone)
 	}()
 
+	// Put app containers without traffic to sleep (CAPSULE_IDLE_SLEEP_HOURS, default 12).
+	go handlers.RunIdleReaper(workerCtx, logger)
+
 	// Catch OS signals so we cancel the worker before the process exits.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -147,6 +152,7 @@ func main() {
 		UserRepo:           userRepo,
 		ProjRepo:           projRepo,
 		EnvVarRepo:         envVarRepo,
+		OrgEnvVarRepo:      orgEnvVarRepo,
 		DeploymentRepo:     deploymentRepo,
 		CacheStore:         cacheStore,
 		RedisClient:        redisRawClient,

@@ -1,0 +1,5 @@
+ALTER TABLE api_tokens  DROP COLUMN IF EXISTS project_id;
+ALTER TABLE deployments DROP COLUMN IF EXISTS meta;
+ALTER TABLE deployments DROP COLUMN IF EXISTS env_keys;
+ALTER TABLE deployments DROP COLUMN IF EXISTS env_enc;
+DROP TABLE IF EXISTS org_env_vars;

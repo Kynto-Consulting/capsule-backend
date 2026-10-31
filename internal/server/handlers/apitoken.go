@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"strings"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
@@ -16,11 +18,15 @@ import (
 // APITokenHandler manages platform API tokens (cap_ prefix).
 // These tokens authenticate to the full Capsule REST API as an alternative to JWT.
 type APITokenHandler struct {
-	tokens domain.APITokenRepository
+	tokens   domain.APITokenRepository
+	orgs     domain.OrganizationRepository
+	projects domain.ProjectRepository
 }
 
-func NewAPITokenHandler(tokens domain.APITokenRepository) *APITokenHandler {
-	return &APITokenHandler{tokens: tokens}
+// NewAPITokenHandler creates the handler. orgs/projects are needed only to
+// validate project-scoped (deploy) tokens.
+func NewAPITokenHandler(tokens domain.APITokenRepository, orgs domain.OrganizationRepository, projects domain.ProjectRepository) *APITokenHandler {
+	return &APITokenHandler{tokens: tokens, orgs: orgs, projects: projects}
 }
 
 // POST /user/tokens
@@ -31,12 +37,20 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name         string  `json:"name"          validate:"required,min=1,max=100"`
 		RateLimitRPM int     `json:"rate_limit_rpm"`
 		IPAllowlist  string  `json:"ip_allowlist"`
+		// Scopes: ["*"] (default) or ["deploy"]; a plain string is also accepted.
+		Scopes    json.RawMessage `json:"scopes"`
+		ProjectID *uuid.UUID      `json:"project_id"`
 	}
 	if !middleware.DecodeAndValidate(w, r, &req) {
 		return
 	}
 	if req.RateLimitRPM <= 0 {
 		req.RateLimitRPM = 600
+	}
+	scopes, projectID, serr := h.resolveScopes(r, user.ID, req.Scopes, req.ProjectID)
+	if serr != "" {
+		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", serr)
+		return
 	}
 
 	// Generate a 32-byte random token with cap_ prefix
@@ -53,7 +67,8 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name:         req.Name,
 		TokenHash:    hashed,
 		Prefix:       plainToken[:10], // "cap_" + first 6 hex chars (varchar(10) limit)
-		Scopes:       "*",
+		Scopes:       scopes,
+		ProjectID:    projectID,
 		RateLimitRPM: req.RateLimitRPM,
 		IPAllowlist:  req.IPAllowlist,
 	})
@@ -68,6 +83,8 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Token        string     `json:"token"` // only returned once
 		Prefix       string     `json:"prefix"`
 		RateLimitRPM int        `json:"rate_limit_rpm"`
+		Scopes       string     `json:"scopes"`
+		ProjectID    *uuid.UUID `json:"project_id,omitempty"`
 		CreatedAt    time.Time  `json:"created_at"`
 	}
 	respondJSON(w, http.StatusCreated, createResponse{
@@ -76,6 +93,8 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Token:        plainToken,
 		Prefix:       token.Prefix,
 		RateLimitRPM: token.RateLimitRPM,
+		Scopes:       token.Scopes,
+		ProjectID:    token.ProjectID,
 		CreatedAt:    token.CreatedAt,
 	})
 }
@@ -174,4 +193,57 @@ func (h *APITokenHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, updated)
+}
+
+// resolveScopes validates the requested scopes/project and returns the value to store.
+func (h *APITokenHandler) resolveScopes(r *http.Request, userID uuid.UUID, raw json.RawMessage, projectID *uuid.UUID) (string, *uuid.UUID, string) {
+	var scopes []string
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &scopes); err != nil {
+			var one string
+			if err2 := json.Unmarshal(raw, &one); err2 != nil {
+				return "", nil, "scopes must be an array of strings"
+			}
+			scopes = middleware.ParseScopes(one)
+		}
+	}
+	if len(scopes) == 0 {
+		scopes = []string{middleware.ScopeAll}
+	}
+	seen := map[string]bool{}
+	var clean []string
+	for _, s := range scopes {
+		s = strings.TrimSpace(s)
+		if s != middleware.ScopeAll && s != middleware.ScopeDeploy {
+			return "", nil, "unknown scope: " + s
+		}
+		if !seen[s] {
+			seen[s] = true
+			clean = append(clean, s)
+		}
+	}
+	if seen[middleware.ScopeAll] && len(clean) > 1 {
+		return "", nil, "scope * cannot be combined with other scopes"
+	}
+	if seen[middleware.ScopeAll] {
+		if projectID != nil {
+			return "", nil, "project_id is only valid with scope deploy"
+		}
+		return middleware.ScopeAll, nil, ""
+	}
+	// deploy scope: must be bound to a project the caller belongs to.
+	if projectID == nil {
+		return "", nil, "project_id is required for scope deploy"
+	}
+	if h.projects == nil || h.orgs == nil {
+		return "", nil, "project-scoped tokens are not available"
+	}
+	p, err := h.projects.GetByID(r.Context(), *projectID)
+	if err != nil {
+		return "", nil, "project not found"
+	}
+	if ok, _ := h.orgs.IsMember(r.Context(), p.OrgID, userID); !ok {
+		return "", nil, "project not found"
+	}
+	return middleware.ScopeDeploy, projectID, ""
 }

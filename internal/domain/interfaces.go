@@ -71,6 +71,13 @@ type EnvVarRepository interface {
 	Delete(ctx context.Context, projectID uuid.UUID, key string) error
 }
 
+// OrgEnvVarRepository handles account-level (org) environment variables.
+type OrgEnvVarRepository interface {
+	Upsert(ctx context.Context, e *OrgEnvVar) (*OrgEnvVar, error)
+	ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*OrgEnvVar, error)
+	Delete(ctx context.Context, orgID uuid.UUID, key string) error
+}
+
 // APITokenRepository handles API token persistence.
 type APITokenRepository interface {
 	Create(ctx context.Context, token *APIToken) (*APIToken, error)

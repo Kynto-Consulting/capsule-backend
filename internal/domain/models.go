@@ -79,6 +79,11 @@ type Deployment struct {
 	ECSServiceARN *string `json:"ecs_service_arn,omitempty"`
 	ECSTaskDefARN *string `json:"ecs_task_def_arn,omitempty"`
 	AppURL        *string `json:"app_url,omitempty"`
+	// CI support: names of per-deployment env overrides (never values) and CI metadata.
+	EnvKeys []string          `json:"env_keys,omitempty"`
+	Meta    map[string]string `json:"meta,omitempty"`
+	// EnvOverrides are persisted encrypted on create; never serialized or read back by the API.
+	EnvOverrides map[string]string `json:"-"`
 }
 
 type BuildLog struct {
@@ -154,6 +159,18 @@ type EnvVar struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// OrgEnvVar is an account-level (organization) variable inherited by every project.
+type OrgEnvVar struct {
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	Key       string    `json:"key"`
+	ValueEnc  []byte    `json:"-"` // plaintext bytes in memory; encrypted at rest
+	IsSecret  bool      `json:"is_secret"`
+	Scope     string    `json:"scope"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Server struct {
 	ID               uuid.UUID              `json:"id"`
 	Name             string                 `json:"name"`
@@ -210,6 +227,7 @@ type APIToken struct {
 	TokenHash       string     `json:"-"`
 	Prefix          string     `json:"prefix"`
 	Scopes          string     `json:"scopes"`
+	ProjectID       *uuid.UUID `json:"project_id,omitempty"`
 	RateLimitRPM    int        `json:"rate_limit_rpm"`
 	IPAllowlist     string     `json:"ip_allowlist"`
 	RequestCount    int64      `json:"request_count"`

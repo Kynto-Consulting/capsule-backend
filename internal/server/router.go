@@ -27,6 +27,7 @@ type Deps struct {
 	UserRepo       domain.UserRepository
 	ProjRepo       domain.ProjectRepository
 	EnvVarRepo     domain.EnvVarRepository
+	OrgEnvVarRepo  domain.OrgEnvVarRepository
 	DeploymentRepo domain.DeploymentRepository
 	CacheStore     domain.CacheStore // optional; may be nil
 	RedisClient    *redis.Client    // optional; used for distributed rate limiting
@@ -52,6 +53,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	orgHandler        := handlers.NewOrgHandler(deps.OrgRepo)
 	projectHandler    := handlers.NewProjectHandler(deps.ProjRepo, deps.OrgRepo)
 	envVarHandler     := handlers.NewEnvVarHandler(deps.EnvVarRepo, deps.OrgRepo, deps.ProjRepo)
+	orgEnvHandler     := handlers.NewOrgEnvHandler(deps.OrgEnvVarRepo, deps.OrgRepo)
 	deploymentHandler := handlers.NewDeploymentHandler(deps.DeploymentRepo, deps.OrgRepo, deps.ProjRepo, deps.AWSClients, deps.ArtifactsBucket, logger)
 	databaseHandler   := handlers.NewDatabaseHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
@@ -81,7 +83,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
 	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
 	adminHandler    := handlers.NewAdminHandler(deps.UserRepo)
-	apiTokenHandler := handlers.NewAPITokenHandler(deps.APITokenRepo)
+	apiTokenHandler := handlers.NewAPITokenHandler(deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
 
 	r := chi.NewRouter()
@@ -214,6 +216,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}", projectHandler.Get)
 			r.Patch("/orgs/{orgID}/projects/{projectID}", projectHandler.Update)
 			r.Delete("/orgs/{orgID}/projects/{projectID}", projectHandler.Delete)
+
+			// Account (org) env vars — inherited by all projects
+			r.Get("/orgs/{orgID}/env", orgEnvHandler.List)
+			r.Put("/orgs/{orgID}/env", orgEnvHandler.Set)
+			r.Delete("/orgs/{orgID}/env/{key}", orgEnvHandler.Delete)
 
 			// Env vars (scoped to project)
 			r.Get("/orgs/{orgID}/projects/{projectID}/env", envVarHandler.List)
