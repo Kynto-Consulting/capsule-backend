@@ -44,8 +44,14 @@ type Deps struct {
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
 	PublicHost         string
+	DBHost             string
 	SecretKey          string
 	ArtifactsBucket    string
+
+	// Network access (all optional; nil disables the matching feature)
+	AccessRepo    domain.DatabaseAccessRepository
+	NetworkRepo   domain.ProjectNetworkRepository
+	AccessApplier handlers.AccessApplier // nil => database access API answers 501
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
@@ -58,8 +64,15 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	databaseHandler   := handlers.NewDatabaseHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey,
-		deps.DBSubnetGroup, deps.RDSSecurityGroupID, deps.PublicHost, logger,
+		deps.DBSubnetGroup, deps.RDSSecurityGroupID, firstNonEmpty(deps.DBHost, deps.PublicHost), logger,
 	)
+	accessHandler := handlers.NewDatabaseAccessHandler(
+		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo, deps.AccessRepo, deps.AccessApplier,
+		firstNonEmpty(deps.DBHost, deps.PublicHost), os.Getenv("CAPSULE_DB_TLS_DIR"), deps.SecretKey, logger,
+	)
+	databaseHandler.SetOnDelete(accessHandler.Cleanup)
+	allowlistCache := handlers.NewAllowlistCache(deps.NetworkRepo, 0)
+	networkHandler := handlers.NewNetworkHandler(deps.OrgRepo, deps.ProjRepo, deps.NetworkRepo, allowlistCache)
 	domainHandler := handlers.NewDomainHandler(
 		deps.DomainRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.ALBDNSName, logger,
@@ -79,6 +92,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo, deps.AWSClients)
 	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.ExecLogRepo, deps.AWSClients)
+	if deps.NetworkRepo != nil {
+		proxyHandler.SetAllowlist(allowlistCache)
+	}
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger, deps.AWSClients)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
 	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
@@ -98,6 +114,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		w.Write([]byte(`{"error":{"code":"METHOD_NOT_ALLOWED","message":"method not allowed"}}`))
 	})
 	r.Use(middleware.RequestID)
+	r.Use(middleware.CaptureRemoteAddr) // must run before RealIP (which trusts client headers)
 	r.Use(chiMiddleware.RealIP)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recovery(logger))
@@ -247,6 +264,17 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/databases/{dbID}/query", databaseHandler.Query)
 			r.Post("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/query", databaseHandler.Query)
 
+			// Database network access (managed host firewall rules)
+			r.Get("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/access", accessHandler.List)
+			r.Put("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/access", accessHandler.Replace)
+			r.Post("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/access", accessHandler.Add)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/databases/{dbID}/access/{ruleID}", accessHandler.Remove)
+
+			// Network: caller IP + per-project application IP allowlist
+			r.Get("/network/my-ip", networkHandler.MyIP)
+			r.Get("/orgs/{orgID}/projects/{projectID}/network", networkHandler.Get)
+			r.Put("/orgs/{orgID}/projects/{projectID}/network", networkHandler.Put)
+
 			// Storage Buckets (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.Create)
 			r.Get("/orgs/{orgID}/projects/{projectID}/storage", storageHandler.List)
@@ -328,4 +356,13 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	})
 
 	return r
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

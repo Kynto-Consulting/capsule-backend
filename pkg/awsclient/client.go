@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/acm"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	elasticloadbalancingv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
@@ -24,6 +25,7 @@ import (
 
 // Clients holds initialised AWS service clients.
 type Clients struct {
+	EC2       *ec2.Client
 	ECR       *ecr.Client
 	ECS       *ecs.Client
 	ELBV2     *elasticloadbalancingv2.Client
@@ -80,6 +82,7 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 	}
 
 	return &Clients{
+		EC2:       ec2.NewFromConfig(cfg),
 		ECR:       ecr.NewFromConfig(cfg),
 		ECS:       ecs.NewFromConfig(cfg),
 		ELBV2:     elasticloadbalancingv2.NewFromConfig(cfg),

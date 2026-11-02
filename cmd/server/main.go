@@ -13,6 +13,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/netaccess"
 	"github.com/kynto/capsule/backend/internal/repository"
 	"github.com/kynto/capsule/backend/internal/server"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
@@ -109,6 +110,38 @@ func main() {
 		awsClients = nil
 	}
 
+	// Per-database network access: reconciler over the app host's security group.
+	accessRepo := repository.NewDatabaseAccessRepository(pool)
+	networkRepo := repository.NewProjectNetworkRepository(pool)
+	var accessApplier handlers.AccessApplier // stays a true nil when not configured (API answers 501)
+	if awsClients != nil && awsClients.EC2 != nil {
+		if rec := netaccess.NewReconciler(netaccess.AWSAdapter{Client: awsClients.EC2}, cfg.AppSecurityGroupID); rec != nil {
+			accessApplier = rec
+			go func() {
+				// Recover from drift: re-apply every stored rule, revoke owned rules of deleted databases.
+				sctx, scancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer scancel()
+				desired, err := accessRepo.ListDesired(sctx)
+				if err != nil {
+					logger.Warn("database access startup reconcile: listing rules failed", "error", err)
+					return
+				}
+				items := make([]netaccess.Desired, 0, len(desired))
+				for _, d := range desired {
+					items = append(items, netaccess.Desired{DBID: d.DatabaseID, Port: d.Port, CIDR: d.CIDR})
+				}
+				if err := rec.SyncAll(sctx, items); err != nil {
+					logger.Warn("database access startup reconcile failed", "error", err)
+					return
+				}
+				logger.Info("database access rules reconciled", "rules", len(items))
+			}()
+		}
+	}
+	if accessApplier == nil {
+		logger.Info("database network access API disabled (APP_SECURITY_GROUP_ID not set)")
+	}
+
 	// Worker runs with a cancellable context so graceful shutdown waits for
 	// in-flight deployments to finish before the process exits.
 	workerCtx, workerCancel := context.WithCancel(context.Background())
@@ -164,12 +197,16 @@ func main() {
 		DBSubnetGroup:      cfg.DBSubnetGroup,
 		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
 		PublicHost:         cfg.PublicHost,
+		DBHost:             cfg.DBHost,
 		SecretKey:          cfg.SecretKey,
 		ArtifactsBucket:    cfg.ArtifactsBucket,
 		WorkerRepo:         workerRepo,
 		CronJobRepo:        cronJobRepo,
 		ExecLogRepo:        execLogRepo,
 		EmailLogRepo:       emailLogRepo,
+		AccessRepo:         accessRepo,
+		NetworkRepo:        networkRepo,
+		AccessApplier:      accessApplier,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

@@ -35,7 +35,9 @@ type Config struct {
 	ALBDNSName         string
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
+	AppSecurityGroupID string // security group of the app host; per-database network access rules are applied to it (APP_SECURITY_GROUP_ID)
 	PublicHost         string
+	DBHost             string // host shown in database connection strings (must resolve to the EC2 host, not the ALB)
 
 	// Platform domain (e.g. apps.example.com) — used to build default URLs shown to users
 	AppsDomain   string
@@ -104,7 +106,9 @@ func Load() (*Config, error) {
 		ALBDNSName:         os.Getenv("ALB_DNS_NAME"),
 		DBSubnetGroup:      getEnv("DB_SUBNET_GROUP", "capsule"),
 		RDSSecurityGroupID: os.Getenv("RDS_SECURITY_GROUP_ID"),
+		AppSecurityGroupID: os.Getenv("APP_SECURITY_GROUP_ID"),
 		PublicHost:         os.Getenv("CAPSULE_PUBLIC_HOST"),
+		DBHost:             getEnv("CAPSULE_DB_HOST", os.Getenv("CAPSULE_PUBLIC_HOST")),
 
 		AppsDomain:   os.Getenv("CAPSULE_APPS_DOMAIN"),
 		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", staticBucketDefault(accountID)),

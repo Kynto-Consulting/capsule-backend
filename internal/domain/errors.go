@@ -5,6 +5,7 @@ import "errors"
 var (
 	ErrNotFound      = errors.New("resource not found")
 	ErrConflict      = errors.New("resource already exists")
+	ErrRuleLimit     = errors.New("rule limit reached")
 	ErrUnauthorized  = errors.New("unauthorized")
 	ErrForbidden     = errors.New("forbidden")
 	ErrInvalidInput  = errors.New("invalid input")

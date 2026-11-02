@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	mrand "math/rand/v2"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -38,7 +40,9 @@ type DatabaseHandler struct {
 	dbSubnetGroup      string
 	rdsSecurityGroupID string
 	publicHost         string
+	tlsDir             string // host dir with server.crt/server.key for postgres TLS (CAPSULE_DB_TLS_DIR)
 	logger             *slog.Logger
+	onDelete           func(*domain.Database) // optional cleanup hook (revokes network access rules)
 }
 
 // NewDatabaseHandler creates a DatabaseHandler.
@@ -65,6 +69,7 @@ func NewDatabaseHandler(
 		dbSubnetGroup:      dbSubnetGroup,
 		rdsSecurityGroupID: rdsSecurityGroupID,
 		publicHost:         publicHost,
+		tlsDir:             os.Getenv("CAPSULE_DB_TLS_DIR"),
 		logger:             logger,
 	}
 }
@@ -215,6 +220,9 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go h.removeDockerContainer(db)
+	if h.onDelete != nil {
+		go h.onDelete(db)
+	}
 
 	respondNoContent(w)
 }
@@ -591,15 +599,37 @@ func (h *DatabaseHandler) provisionDocker(db *domain.Database) {
 	for _, e := range envVars {
 		args = append(args, "-e", e)
 	}
+	tlsMount, tlsCmd := postgresTLSArgs(db.Engine, h.tlsDir)
+	args = append(args, tlsMount...)
 	if db.Engine == "cockroachdb" {
 		args = append(args, image, "start-single-node", "--insecure", "--advertise-addr=localhost")
 	} else {
 		args = append(args, image)
+		args = append(args, tlsCmd...)
 	}
 
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
-	if err != nil {
-		logger.Error("docker run failed", "error", err, "output", string(out))
+	portFrom, portTo := dbPortRange()
+	var out []byte
+	for attempt := 0; ; attempt++ {
+		runArgs := append([]string(nil), args...)
+		if portFrom > 0 {
+			// Publish only inside the dedicated range so the firewall can expose it
+			// without also exposing app containers.
+			runArgs[5] = fmt.Sprintf("%d:%d", portFrom+mrand.IntN(portTo-portFrom+1), db.Port)
+		}
+		out, err = exec.CommandContext(ctx, "docker", runArgs...).Output()
+		if err == nil {
+			break
+		}
+		var stderr string
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = string(ee.Stderr)
+		}
+		if portFrom > 0 && attempt < 20 && strings.Contains(stderr, "port is already allocated") {
+			_ = exec.Command("docker", "rm", "-f", containerName).Run()
+			continue
+		}
+		logger.Error("docker run failed", "error", err, "output", string(out), "stderr", stderr)
 		_ = h.dbs.UpdateStatus(ctx, db.ID, "failed", "", 0)
 		return
 	}
@@ -698,7 +728,7 @@ func (h *DatabaseHandler) buildConnectionURL(db *domain.Database) string {
 	h2, p2 := db.Host, db.Port
 	switch db.Engine {
 	case "postgres":
-		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
+		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s%s", creds.Username, creds.Password, h2, p2, db.DBName, postgresSSLQuery(h.tlsDir))
 	case "mysql", "mariadb":
 		return fmt.Sprintf("mysql://%s:%s@%s:%d/%s", creds.Username, creds.Password, h2, p2, db.DBName)
 	case "redis":
@@ -837,3 +867,37 @@ func generatePassword(length int) (string, error) {
 	}
 	return string(buf), nil
 }
+
+// postgresTLSArgs returns the docker mount flags and the postgres server flags that
+// turn TLS on, or nothing when no certificate directory is configured.
+func postgresTLSArgs(engine, dir string) (mount []string, cmd []string) {
+	if engine != "postgres" || dir == "" {
+		return nil, nil
+	}
+	return []string{"-v", dir + ":/certs:ro"},
+		[]string{"-c", "ssl=on", "-c", "ssl_cert_file=/certs/server.crt", "-c", "ssl_key_file=/certs/server.key"}
+}
+
+// postgresSSLQuery is the connection string suffix that makes clients require TLS.
+func postgresSSLQuery(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return "?sslmode=require"
+}
+
+// dbPortRange parses CAPSULE_DB_PORT_RANGE ("40000-40199"). It returns 0,0 when unset
+// or invalid, which keeps docker's random port assignment.
+func dbPortRange() (from, to int) {
+	raw := os.Getenv("CAPSULE_DB_PORT_RANGE")
+	if raw == "" {
+		return 0, 0
+	}
+	if _, err := fmt.Sscanf(raw, "%d-%d", &from, &to); err != nil || from < 1024 || to < from || to > 65535 {
+		return 0, 0
+	}
+	return from, to
+}
+
+// SetOnDelete registers a hook run (in a goroutine) after a database is deleted.
+func (h *DatabaseHandler) SetOnDelete(fn func(*domain.Database)) { h.onDelete = fn }

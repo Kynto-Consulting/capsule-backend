@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/google/uuid"
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
@@ -28,6 +29,29 @@ type ProxyHandler struct {
 	deployments domain.DeploymentRepository
 	exLogs      domain.ExecutionLogRepository
 	aws         *awsclient.Clients
+	allow       *AllowlistCache // optional per-project IP allowlist enforcement
+}
+
+// SetAllowlist enables per-project IP allowlist enforcement on all proxy paths.
+func (h *ProxyHandler) SetAllowlist(c *AllowlistCache) { h.allow = c }
+
+// ipAllowed enforces the project's ip_allowlist (empty = public). When it
+// returns false the 403/503 page has already been written. If the allowlist
+// cannot be loaded the request is denied (fail closed).
+func (h *ProxyHandler) ipAllowed(w http.ResponseWriter, r *http.Request, project *domain.Project) bool {
+	if h.allow == nil {
+		return true
+	}
+	ok, err := h.allow.Allowed(r.Context(), project.ID, middleware.ClientIP(r))
+	if err != nil {
+		proxyErrorPage(w, http.StatusServiceUnavailable, "Service Unavailable", "The access policy for this application could not be verified. Try again in a moment.")
+		return false
+	}
+	if !ok {
+		proxyErrorPage(w, http.StatusForbidden, "Access Restricted", "This application only accepts connections from approved IP addresses.")
+		return false
+	}
+	return true
 }
 
 func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository, deployments domain.DeploymentRepository, exLogs domain.ExecutionLogRepository, aws *awsclient.Clients) *ProxyHandler {
@@ -52,6 +76,7 @@ func proxyErrorPage(w http.ResponseWriter, status int, title, detail string) {
 	w.WriteHeader(status)
 
 	statusLabel := map[int]string{
+		403: "403 Forbidden",
 		404: "404 Not Found",
 		502: "502 Bad Gateway",
 		500: "500 Internal Server Error",
@@ -121,6 +146,10 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.ipAllowed(w, r, project) {
+		return
+	}
+
 	switch resourceType {
 	case "app":
 		if project.DeployType == "static" {
@@ -181,6 +210,9 @@ func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.ipAllowed(w, r, project) {
+		return
+	}
 	if project.DeployType == "static" {
 		subPath := r.URL.Path
 		if subPath == "" || subPath == "/" {
@@ -206,6 +238,10 @@ func (h *ProxyHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	project, err := h.projects.GetBySlug(r.Context(), org.ID, projectSlug)
 	if err != nil {
 		proxyErrorPage(w, http.StatusNotFound, "Deployment Not Found", fmt.Sprintf("No project matching %q exists in this organization.", projectSlug))
+		return
+	}
+
+	if !h.ipAllowed(w, r, project) {
 		return
 	}
 
