@@ -210,7 +210,7 @@ func TestNetworkSettingsEndpoints(t *testing.T) {
 		return rec
 	}
 
-	owner := mk("member")
+	owner := mk("admin")
 	rec := call(owner, http.MethodPut, `{"ip_allowlist":["203.0.113.9","203.0.113.0/24","203.0.113.9/32"]}`)
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"ip_allowlist":["203.0.113.9/32","203.0.113.0/24"]}` {
 		t.Fatalf("put: %d %s", rec.Code, rec.Body)
@@ -221,10 +221,17 @@ func TestNetworkSettingsEndpoints(t *testing.T) {
 	if rec := call(owner, http.MethodPut, `{"ip_allowlist":[]}`); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"ip_allowlist":[]}` {
 		t.Fatalf("clear: %d %s", rec.Code, rec.Body)
 	}
-	for _, bad := range []string{`{"ip_allowlist":["0.0.0.0/0"]}`, `{"ip_allowlist":["10.0.0.0/4"]}`, `{"ip_allowlist":["x"]}`, `{"ip_allowlist":["::1"]}`} {
+	for _, bad := range []string{`{"ip_allowlist":["0.0.0.0/0"]}`, `{"ip_allowlist":["10.0.0.0/4"]}`, `{"ip_allowlist":["x"]}`, `{"ip_allowlist":["::/0"]}`, `{"ip_allowlist":["fe80::1%eth0"]}`} {
 		if rec := call(owner, http.MethodPut, bad); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
+	}
+	member := mk("member") // deployer in open mode: may read, may not change network settings
+	if rec := call(member, http.MethodGet, ""); rec.Code != 200 {
+		t.Fatalf("member read: %d", rec.Code)
+	}
+	if rec := call(member, http.MethodPut, `{"ip_allowlist":[]}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("member write: %d", rec.Code)
 	}
 	ro := mk("readonly")
 	if rec := call(ro, http.MethodGet, ""); rec.Code != 200 {

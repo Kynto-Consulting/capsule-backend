@@ -14,13 +14,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
-	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 // WorkerHandler handles background worker operations.
 type WorkerHandler struct {
+	authzHolder
 	workers    domain.WorkerRepository
 	orgs       domain.OrganizationRepository
 	projects   domain.ProjectRepository
@@ -52,7 +53,6 @@ func NewWorkerHandler(
 
 // Create creates a new background worker.
 func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -64,8 +64,7 @@ func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -132,7 +131,6 @@ func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List returns all workers for a project.
 func (h *WorkerHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -144,8 +142,7 @@ func (h *WorkerHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -173,7 +170,6 @@ func (h *WorkerHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single worker.
 func (h *WorkerHandler) Get(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -185,13 +181,13 @@ func (h *WorkerHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectRead)
+	if !ok {
 		return
 	}
 
 	worker, err := h.workers.GetByID(r.Context(), workerID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && worker.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "worker not found")
 		return
 	}
@@ -205,7 +201,6 @@ func (h *WorkerHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Delete soft-deletes a worker.
 func (h *WorkerHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -217,13 +212,13 @@ func (h *WorkerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	worker, err := h.workers.GetByID(r.Context(), workerID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && worker.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "worker not found")
 		return
 	}
@@ -253,7 +248,6 @@ func (h *WorkerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // Start launches the worker container via docker run.
 // Queue workers are always running — this is a no-op for them.
 func (h *WorkerHandler) Start(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -265,13 +259,13 @@ func (h *WorkerHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	worker, err := h.workers.GetByID(r.Context(), workerID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && worker.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "worker not found")
 		return
 	}
@@ -319,7 +313,6 @@ func (h *WorkerHandler) Start(w http.ResponseWriter, r *http.Request) {
 // Stop halts the worker container.
 // Queue workers are always running — this is a no-op for them.
 func (h *WorkerHandler) Stop(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -331,13 +324,13 @@ func (h *WorkerHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	worker, err := h.workers.GetByID(r.Context(), workerID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && worker.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "worker not found")
 		return
 	}

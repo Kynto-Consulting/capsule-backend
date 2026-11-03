@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
@@ -22,6 +23,7 @@ import (
 
 // DomainHandler handles custom domain operations.
 type DomainHandler struct {
+	authzHolder
 	domains    domain.DomainRepository
 	orgs       domain.OrganizationRepository
 	projects   domain.ProjectRepository
@@ -51,7 +53,6 @@ func NewDomainHandler(
 
 // List returns all domains for a project.
 func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -63,8 +64,7 @@ func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -101,8 +101,7 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -182,6 +181,18 @@ func (h *DomainHandler) ListByOrg(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list domains")
 		return
 	}
+	visible, err := h.service(h.orgs).Visibility(r.Context(), user.ID, orgID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check permissions")
+		return
+	}
+	kept := domains[:0]
+	for _, d := range domains {
+		if d.ProjectID == nil || visible(*d.ProjectID) {
+			kept = append(kept, d)
+		}
+	}
+	domains = kept
 	respondJSON(w, http.StatusOK, map[string]any{"data": domains})
 }
 
@@ -245,7 +256,6 @@ func (h *DomainHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request) {
 
 // Verify checks DNS propagation and marks the domain active or failed.
 func (h *DomainHandler) Verify(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -257,18 +267,22 @@ func (h *DomainHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	urlProject, ok := h.authorizeOptionalProject(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	d, err := h.domains.GetByID(r.Context(), domainID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && d.OrgID != orgID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "domain not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, d.ProjectID, authz.ProjectOps) {
 		return
 	}
 
@@ -314,18 +328,22 @@ func (h *DomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	urlProject, ok := h.authorizeOptionalProject(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	d, err := h.domains.GetByID(r.Context(), domainID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && d.OrgID != orgID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "domain not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, d.ProjectID, authz.ProjectOps) {
 		return
 	}
 

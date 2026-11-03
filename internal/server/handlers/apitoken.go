@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
@@ -18,6 +19,7 @@ import (
 // APITokenHandler manages platform API tokens (cap_ prefix).
 // These tokens authenticate to the full Capsule REST API as an alternative to JWT.
 type APITokenHandler struct {
+	authzHolder
 	tokens   domain.APITokenRepository
 	orgs     domain.OrganizationRepository
 	projects domain.ProjectRepository
@@ -214,7 +216,7 @@ func (h *APITokenHandler) resolveScopes(r *http.Request, userID uuid.UUID, raw j
 	var clean []string
 	for _, s := range scopes {
 		s = strings.TrimSpace(s)
-		if s != middleware.ScopeAll && s != middleware.ScopeDeploy {
+		if s != middleware.ScopeAll && s != middleware.ScopeDeploy && s != middleware.ScopeSecurityWrite {
 			return "", nil, "unknown scope: " + s
 		}
 		if !seen[s] {
@@ -227,13 +229,13 @@ func (h *APITokenHandler) resolveScopes(r *http.Request, userID uuid.UUID, raw j
 	}
 	if seen[middleware.ScopeAll] {
 		if projectID != nil {
-			return "", nil, "project_id is only valid with scope deploy"
+			return "", nil, "project_id is only valid with project-bound scopes (deploy, security:write)"
 		}
 		return middleware.ScopeAll, nil, ""
 	}
 	// deploy scope: must be bound to a project the caller belongs to.
 	if projectID == nil {
-		return "", nil, "project_id is required for scope deploy"
+		return "", nil, "project_id is required for project-bound scopes (deploy, security:write)"
 	}
 	if h.projects == nil || h.orgs == nil {
 		return "", nil, "project-scoped tokens are not available"
@@ -242,8 +244,15 @@ func (h *APITokenHandler) resolveScopes(r *http.Request, userID uuid.UUID, raw j
 	if err != nil {
 		return "", nil, "project not found"
 	}
-	if ok, _ := h.orgs.IsMember(r.Context(), p.OrgID, userID); !ok {
-		return "", nil, "project not found"
+	// A project-bound token can only be minted by someone who may do what it will do.
+	for _, sc := range clean {
+		action := authz.ProjectDeploy
+		if sc == middleware.ScopeSecurityWrite {
+			action = authz.SecurityTriage
+		}
+		if ok, _ := h.service(h.orgs).Can(r.Context(), userID, p.OrgID, p.ID, action); !ok {
+			return "", nil, "project not found"
+		}
 	}
-	return middleware.ScopeDeploy, projectID, ""
+	return strings.Join(clean, ","), projectID, ""
 }

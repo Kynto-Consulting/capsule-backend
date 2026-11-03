@@ -27,3 +27,35 @@ func TestClientIP(t *testing.T) {
 		}
 	}
 }
+
+func TestClientIPv6(t *testing.T) {
+	cases := []struct {
+		name, remote, xff, want string
+	}{
+		{"alb appends v6 client", "10.0.1.5:4000", "2001:db8::7", "2001:db8::7"},
+		{"canonicalised", "10.0.1.5:4000", "2001:DB8:0:0:0:0:0:7", "2001:db8::7"},
+		{"brackets", "10.0.1.5:4000", "[2001:db8::7]", "2001:db8::7"},
+		{"brackets and port", "10.0.1.5:4000", "[2001:db8::7]:51234", "2001:db8::7"},
+		{"v4 with port", "10.0.1.5:4000", "203.0.113.7:51234", "203.0.113.7"},
+		{"spoofed v6 on the left", "10.0.1.5:4000", "2001:db8::bad, 2001:db8::7", "2001:db8::7"},
+		{"spoofed v4 then real v6", "10.0.1.5:4000", "1.1.1.1, 2001:db8::7", "2001:db8::7"},
+		{"spoofed v6 then real v4", "10.0.1.5:4000", "2001:db8::bad, 203.0.113.7", "203.0.113.7"},
+		{"alb hop is ULA", "[fd00::5]:4000", "2001:db8::bad, 2001:db8::7, fd12:3456::5", "2001:db8::7"},
+		{"link-local hop skipped", "10.0.1.5:4000", "2001:db8::7, fe80::1", "2001:db8::7"},
+		{"link-local with zone skipped", "10.0.1.5:4000", "2001:db8::7, fe80::1%eth0", "2001:db8::7"},
+		{"loopback skipped", "10.0.1.5:4000", "2001:db8::7, ::1", "2001:db8::7"},
+		{"unspecified skipped", "10.0.1.5:4000", "2001:db8::7, ::", "2001:db8::7"},
+		{"multicast skipped", "10.0.1.5:4000", "2001:db8::7, ff02::1", "2001:db8::7"},
+		{"mapped private skipped", "10.0.1.5:4000", "2001:db8::7, ::ffff:10.0.0.9", "2001:db8::7"},
+		{"all infra falls back to right-most", "10.0.1.5:4000", "fc00::1, fd00::9", "fd00::9"},
+		{"remote v6 with port", "[2001:db8::9]:5555", "", "2001:db8::9"},
+		{"remote bare v6", "2001:db8::9", "", "2001:db8::9"},
+		{"remote v6 bracket no port", "[2001:db8::9]", "", "2001:db8::9"},
+		{"garbage uses v6 remote", "[2001:db8::9]:1", "nonsense, [bad", "2001:db8::9"},
+	}
+	for _, c := range cases {
+		if got := ClientIP(c.remote, c.xff); got != c.want {
+			t.Errorf("%s: ClientIP(%q,%q)=%q want %q", c.name, c.remote, c.xff, got, c.want)
+		}
+	}
+}

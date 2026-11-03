@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
@@ -32,6 +33,7 @@ import (
 
 // DatabaseHandler handles managed database operations.
 type DatabaseHandler struct {
+	authzHolder
 	dbs                domain.DatabaseRepository
 	orgs               domain.OrganizationRepository
 	projects           domain.ProjectRepository
@@ -76,7 +78,6 @@ func NewDatabaseHandler(
 
 // List returns all databases for a project.
 func (h *DatabaseHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -88,8 +89,7 @@ func (h *DatabaseHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -126,8 +126,7 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectDatabases) {
 		return
 	}
 
@@ -153,7 +152,6 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single database with connection URL.
 func (h *DatabaseHandler) Get(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -165,18 +163,22 @@ func (h *DatabaseHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	urlProject, ok := h.authorizeOptionalProject(w, r, h.orgs, orgID, authz.ProjectRead)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && db.OrgID != orgID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "database not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, db.ProjectID, authz.ProjectRead) {
 		return
 	}
 
@@ -197,18 +199,22 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	urlProject, ok := h.authorizeOptionalProject(w, r, h.orgs, orgID, authz.ProjectDatabases)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && db.OrgID != orgID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "database not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, db.ProjectID, authz.ProjectDatabases) {
 		return
 	}
 
@@ -246,6 +252,19 @@ func (h *DatabaseHandler) ListByOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	visible, err := h.service(h.orgs).Visibility(r.Context(), user.ID, orgID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check permissions")
+		return
+	}
+	kept := dbs[:0]
+	for _, d := range dbs {
+		if d.ProjectID == nil || visible(*d.ProjectID) {
+			kept = append(kept, d)
+		}
+	}
+	dbs = kept
+
 	respondJSON(w, http.StatusOK, map[string]any{"data": h.toResponseList(dbs)})
 }
 
@@ -275,7 +294,6 @@ func (h *DatabaseHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request)
 // Query executes a read-only SQL query against a postgres or mysql database.
 // Route: POST /orgs/{orgID}/databases/{dbID}/query (or with projectID)
 func (h *DatabaseHandler) Query(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -287,18 +305,22 @@ func (h *DatabaseHandler) Query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	urlProject, ok := h.authorizeOptionalProject(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && db.OrgID != orgID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "database not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, db.ProjectID, authz.ProjectOps) {
 		return
 	}
 

@@ -72,7 +72,7 @@ func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID, page
 	const q = `
 		SELECT id, org_id, name, slug, repo_url, branch, build_strategy, deploy_type, runtime,
 		       serverless, replicas, status, labels, created_at, updated_at
-		FROM projects WHERE org_id = $1 AND deleted_at IS NULL
+		FROM projects WHERE org_id = $1 AND deleted_at IS NULL AND parent_project_id IS NULL
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`
 
 	rows, err := r.pool.Query(ctx, q, orgID, perPage, (page-1)*perPage)
@@ -92,7 +92,7 @@ func (r *ProjectRepository) ListByOrg(ctx context.Context, orgID uuid.UUID, page
 
 	var total int
 	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, orgID,
+		`SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL AND parent_project_id IS NULL`, orgID,
 	).Scan(&total)
 
 	return projects, total, nil

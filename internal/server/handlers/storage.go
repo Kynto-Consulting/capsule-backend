@@ -15,13 +15,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
-	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 	"github.com/kynto/capsule/backend/pkg/crypto"
 )
 
 type StorageHandler struct {
+	authzHolder
 	dbs       domain.DatabaseRepository
 	orgs      domain.OrganizationRepository
 	projects  domain.ProjectRepository
@@ -49,7 +50,6 @@ func NewStorageHandler(
 }
 
 func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -61,8 +61,7 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectDatabases) {
 		return
 	}
 
@@ -121,7 +120,6 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -133,8 +131,7 @@ func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -165,7 +162,6 @@ func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -177,13 +173,13 @@ func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectRead)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && (db.ProjectID == nil || *db.ProjectID != projectID)) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
 		return
 	}
@@ -221,7 +217,6 @@ func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -233,13 +228,13 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectDatabases)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && (db.ProjectID == nil || *db.ProjectID != projectID)) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
 		return
 	}
@@ -261,7 +256,6 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) Presign(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -273,13 +267,13 @@ func (h *StorageHandler) Presign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	db, err := h.dbs.GetByID(r.Context(), dbID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && (db.ProjectID == nil || *db.ProjectID != projectID)) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
 		return
 	}

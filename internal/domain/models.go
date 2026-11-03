@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/kynto/capsule/backend/internal/connaudit"
 )
 
 type User struct {
@@ -49,6 +51,11 @@ type Project struct {
 	Replicas      int                    `json:"replicas"`
 	Status        string                 `json:"status"`
 	Labels        map[string]interface{} `json:"labels"`
+	// Health-check settings (filled by the handlers from ProjectHealthStore).
+	HealthPath            *string `json:"health_path,omitempty"`
+	HealthTimeoutSeconds  *int    `json:"health_timeout_seconds,omitempty"`
+	HealthIntervalSeconds *int    `json:"health_interval_seconds,omitempty"`
+	HealthExpectedStatus  *string `json:"health_expected_status,omitempty"`
 	CreatedAt     time.Time              `json:"created_at"`
 	UpdatedAt     time.Time              `json:"updated_at"`
 	DeletedAt     *time.Time             `json:"-"`
@@ -75,6 +82,11 @@ type Deployment struct {
 	SourceKey        *string    `json:"source_key,omitempty"`
 	HostPort         *int       `json:"host_port,omitempty"`
 	FunctionURL      *string    `json:"function_url,omitempty"`
+	// Health is the deploy health-check result (omitted when not applicable).
+	Health       *DeploymentHealth `json:"health,omitempty"`
+	ErrorMessage string            `json:"error_message,omitempty"`
+	// ConnectionWarnings are the non-routed internal connections found at deploy time (never secrets).
+	ConnectionWarnings []connaudit.Finding `json:"connection_warnings,omitempty"`
 	// ECS Fargate fields
 	ECSServiceARN *string `json:"ecs_service_arn,omitempty"`
 	ECSTaskDefARN *string `json:"ecs_task_def_arn,omitempty"`

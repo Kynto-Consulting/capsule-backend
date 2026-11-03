@@ -16,13 +16,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
-	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 // CronJobHandler handles cron job operations.
 type CronJobHandler struct {
+	authzHolder
 	crons      domain.CronJobRepository
 	orgs       domain.OrganizationRepository
 	projects   domain.ProjectRepository
@@ -57,7 +58,6 @@ func NewCronJobHandler(
 
 // Create creates a new cron job.
 func (h *CronJobHandler) Create(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -69,8 +69,7 @@ func (h *CronJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -130,7 +129,6 @@ func (h *CronJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List returns all cron jobs for a project.
 func (h *CronJobHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -142,8 +140,7 @@ func (h *CronJobHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -171,7 +168,6 @@ func (h *CronJobHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single cron job.
 func (h *CronJobHandler) Get(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -183,13 +179,13 @@ func (h *CronJobHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectRead)
+	if !ok {
 		return
 	}
 
 	cron, err := h.crons.GetByID(r.Context(), cronID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && cron.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "cron job not found")
 		return
 	}
@@ -203,7 +199,6 @@ func (h *CronJobHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Delete soft-deletes a cron job.
 func (h *CronJobHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -215,13 +210,13 @@ func (h *CronJobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
-	_, err = h.crons.GetByID(r.Context(), cronID)
-	if err == domain.ErrNotFound {
+	cron, err := h.crons.GetByID(r.Context(), cronID)
+	if err == domain.ErrNotFound || (err == nil && cron.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "cron job not found")
 		return
 	}
@@ -250,7 +245,6 @@ func (h *CronJobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Trigger runs the cron job's command immediately.
 func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -262,13 +256,13 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	projectID, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 
 	cron, err := h.crons.GetByID(r.Context(), cronID)
-	if err == domain.ErrNotFound {
+	if err == domain.ErrNotFound || (err == nil && cron.ProjectID != projectID) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "cron job not found")
 		return
 	}

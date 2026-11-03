@@ -202,7 +202,8 @@ func TestAccess501WhenNotConfigured(t *testing.T) {
 }
 
 func TestAccessReplaceAppliesAndIsIdempotent(t *testing.T) {
-	e := newAccessEnv(t, "member", true)
+	// Changing network rules needs ProjectNetwork: a plain org member (deployer) no longer has it.
+	e := newAccessEnv(t, "admin", true)
 	body := map[string]any{"rules": []map[string]string{{"cidr": "203.0.113.5", "description": "office"}}, "cidrs": []string{"198.51.100.0/24", "203.0.113.5/32"}}
 	for i := 0; i < 2; i++ {
 		rec := e.do(http.MethodPut, e.url(""), body)
@@ -231,12 +232,14 @@ func TestAccessReplaceAppliesAndIsIdempotent(t *testing.T) {
 func TestAccessValidation(t *testing.T) {
 	e := newAccessEnv(t, "owner", true)
 	bad := map[string]string{
-		"0.0.0.0/0":  "PUBLIC_NOT_ALLOWED",
-		"10.0.0.0/7": "INVALID_CIDR",
-		"::1/128":    "INVALID_CIDR",
-		"not-a-cidr": "INVALID_CIDR",
-		"1.2.3.4/33": "INVALID_CIDR",
-		"":           "INVALID_CIDR",
+		"0.0.0.0/0":     "PUBLIC_NOT_ALLOWED",
+		"10.0.0.0/7":    "INVALID_CIDR",
+		"::/0":          "PUBLIC_NOT_ALLOWED",
+		"2001:db8::/31": "INVALID_CIDR",
+		"fe80::1%eth0":  "INVALID_CIDR",
+		"not-a-cidr":    "INVALID_CIDR",
+		"1.2.3.4/33":    "INVALID_CIDR",
+		"":              "INVALID_CIDR",
 	}
 	for cidr, code := range bad {
 		rec := e.do(http.MethodPost, e.url(""), map[string]any{"cidr": cidr})

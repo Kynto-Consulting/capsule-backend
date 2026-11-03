@@ -8,11 +8,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
 type EnvVarHandler struct {
+	authzHolder
 	envvars domain.EnvVarRepository
 	orgs    domain.OrganizationRepository
 	projects domain.ProjectRepository
@@ -29,7 +31,11 @@ type envVarResponse struct {
 	Value     string    `json:"value"`
 	IsSecret  bool      `json:"is_secret"`
 	Scope     string    `json:"scope"`
+	Masked    bool      `json:"masked,omitempty"`
 }
+
+// envMask replaces secret values for roles that cannot reveal them.
+const envMask = "********"
 
 func toEnvVarResponse(e *domain.EnvVar) envVarResponse {
 	return envVarResponse{
@@ -43,12 +49,11 @@ func toEnvVarResponse(e *domain.EnvVar) envVarResponse {
 }
 
 func (h *EnvVarHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, projectID, ok := h.parseIDs(w, r)
 	if !ok {
 		return
 	}
-	if !h.checkMember(w, r, orgID, user.ID) {
+	if !h.checkMember(w, r, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 	if !h.checkProject(w, r, projectID, orgID) {
@@ -61,20 +66,28 @@ func (h *EnvVarHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Secret values are only revealed to roles with ProjectEnvReveal.
+	reveal := false
+	if user := middleware.GetUser(r.Context()); user != nil {
+		reveal, _ = h.service(h.orgs).Can(r.Context(), user.ID, orgID, projectID, authz.ProjectEnvReveal)
+	}
 	resp := make([]envVarResponse, len(vars))
 	for i, v := range vars {
 		resp[i] = toEnvVarResponse(v)
+		if v.IsSecret && !reveal {
+			resp[i].Value = envMask
+			resp[i].Masked = true
+		}
 	}
 	respondJSON(w, http.StatusOK, resp)
 }
 
 func (h *EnvVarHandler) Set(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, projectID, ok := h.parseIDs(w, r)
 	if !ok {
 		return
 	}
-	if !h.checkMember(w, r, orgID, user.ID) {
+	if !h.checkMember(w, r, orgID, projectID, authz.ProjectEnvWrite) {
 		return
 	}
 	if !h.checkProject(w, r, projectID, orgID) {
@@ -116,12 +129,11 @@ func (h *EnvVarHandler) Set(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EnvVarHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, projectID, ok := h.parseIDs(w, r)
 	if !ok {
 		return
 	}
-	if !h.checkMember(w, r, orgID, user.ID) {
+	if !h.checkMember(w, r, orgID, projectID, authz.ProjectEnvWrite) {
 		return
 	}
 	key := strings.ToUpper(chi.URLParam(r, "key"))
@@ -147,12 +159,8 @@ func (h *EnvVarHandler) parseIDs(w http.ResponseWriter, r *http.Request) (uuid.U
 	return orgID, projectID, true
 }
 
-func (h *EnvVarHandler) checkMember(w http.ResponseWriter, r *http.Request, orgID, userID uuid.UUID) bool {
-	ok, _ := h.orgs.IsMember(r.Context(), orgID, userID)
-	if !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
-	}
-	return ok
+func (h *EnvVarHandler) checkMember(w http.ResponseWriter, r *http.Request, orgID, projectID uuid.UUID, act authz.Action) bool {
+	return h.authorize(w, r, h.orgs, orgID, projectID, act)
 }
 
 func (h *EnvVarHandler) checkProject(w http.ResponseWriter, r *http.Request, projectID, orgID uuid.UUID) bool {

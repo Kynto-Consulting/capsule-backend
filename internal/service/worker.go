@@ -67,6 +67,12 @@ type DeployWorker struct {
 	logger      *slog.Logger
 	secretKey   string // for decrypting env_vars.value_enc
 	wg          sync.WaitGroup
+	// extraPorts (optional) returns the project's extra published TCP ports.
+	extraPorts func(ctx context.Context, projectID uuid.UUID) ([]domain.PortMapping, error)
+	// ext holds the deploy-robustness extensions (health checks, build limits, cleanup); see health.go.
+	ext workerExt
+	// connAudit (optional) reports non-routed internal connections; see connaudit.go.
+	connAudit *connAuditState
 }
 
 // NewDeployWorker creates a new deployment worker.
@@ -232,6 +238,7 @@ func (w *DeployWorker) failDeployment(ctx context.Context, id uuid.UUID, msg str
 		Message:      full,
 	})
 	_ = w.deployments.UpdateStatus(ctx, id, "failed")
+	w.recordFailure(ctx, id, full)
 }
 
 // runDeployment executes a single deployment end-to-end, dispatching by build strategy.
@@ -264,6 +271,11 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 		w.appendLog(ctx, id, "Source extracted successfully")
 	} else {
 		w.appendLog(ctx, id, "No source key provided, using generated Dockerfile")
+	}
+
+	// --- connection audit (warn / strict / off per project) ---
+	if !w.connAuditGate(ctx, id, projectID, buildDir) {
+		return
 	}
 
 	// --- find an available host port in range 20000-29999 (deterministic from project ID) ---
@@ -358,37 +370,20 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	// project; BUILDKIT_INLINE_CACHE bakes cache metadata into the image.
 	// If BuildKit/buildx isn't available, fall back to the legacy builder so
 	// deploys never hard-fail on tooling.
-	runBuild := func(useBuildKit bool) ([]byte, error) {
-		var args []string
-		var env []string
-		if useBuildKit {
-			args = []string{"build", "--build-arg", "BUILDKIT_INLINE_CACHE=1", "--cache-from", imageName, "-t", imageName, "."}
-			env = append(os.Environ(), "DOCKER_BUILDKIT=1", "BUILDKIT_PROGRESS=plain")
-		} else {
-			// Legacy builder still reuses cached layers from the previous image.
-			args = []string{"build", "--cache-from", imageName, "-t", imageName, "."}
-			env = append(os.Environ(), "DOCKER_BUILDKIT=0")
-		}
-		c := exec.CommandContext(ctx, "docker", args...)
-		c.Dir = buildDir
-		c.Env = env
-		return c.CombinedOutput()
-	}
-
-	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s (BuildKit + cache)", imageName))
-	buildOut, err := runBuild(true)
-	// buildx missing/broken → retry on the legacy builder.
-	if err != nil && strings.Contains(string(buildOut), "buildx") {
-		w.appendLog(ctx, id, "BuildKit unavailable, falling back to legacy builder")
-		buildOut, err = runBuild(false)
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
+	// Resource limits, timeout, concurrency gate and the BuildKit/legacy fallback
+	// live in buildlimits.go (runLimitedBuild).
+	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageName))
+	bres := w.runLimitedBuild(ctx, buildSpec{
+		Dir: buildDir, Tag: imageName, CacheFrom: imageName, DockerfilePath: dockerfilePath,
+		Log: func(m string) { w.appendLog(ctx, id, m) },
+	})
+	for _, line := range strings.Split(strings.TrimSpace(string(bres.Output)), "\n") {
 		if line != "" {
 			w.appendLog(ctx, id, line)
 		}
 	}
-	if err != nil {
-		w.failDeployment(ctx, id, "docker build failed", err)
+	if bres.Err != nil {
+		w.failDeployment(ctx, id, bres.Err.Error(), nil)
 		return
 	}
 
@@ -402,9 +397,8 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	// --- detect container port: Dockerfile EXPOSE as the baseline ---
 	containerPort := detectExposePort(dockerfilePath)
 
-	// --- stop and remove old container (keep volume) ---
-	rmCmd := exec.CommandContext(ctx, "docker", "rm", "-f", imageName)
-	_ = rmCmd.Run()
+	// The old container is NOT removed here any more: w.rollout starts the new one
+	// next to it and only retires the old one once the new one is healthy.
 
 	// --- ensure named volume exists for persistent data ---
 	// Volume survives redeploys; mounted at /data inside the container.
@@ -449,40 +443,46 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 	// All user env vars pass through untouched (incl. their PORT). Only when the
 	// user did NOT set PORT do we inject PORT=containerPort so the app knows which
 	// port to bind. Either way the proxy maps to containerPort, kept in sync.
-	runArgs := []string{"run", "-d",
-		"--name", imageName,
-		"--restart", "unless-stopped",
+	var extraPorts []domain.PortMapping
+	if w.extraPorts != nil {
+		var perr error
+		if extraPorts, perr = w.extraPorts(ctx, projectID); perr != nil {
+			w.failDeployment(ctx, id, "failed to load the project's extra ports", perr)
+			return
+		}
+		for _, m := range extraPorts {
+			w.appendLog(ctx, id, fmt.Sprintf("Publishing extra TCP port %d -> %d", m.HostPort, m.ContainerPort))
+		}
 	}
-	for _, kv := range envPairsDocker {
-		runArgs = append(runArgs, "-e", kv)
-	}
-	if !userPort {
-		runArgs = append(runArgs, "-e", fmt.Sprintf("PORT=%d", containerPort))
-	}
-	runArgs = append(runArgs,
-		"-p", fmt.Sprintf("%d:%d", hostPort, containerPort),
-		"-v", fmt.Sprintf("%s:/data", volumeName),
-		imageName,
-	)
-	runCmd := exec.CommandContext(ctx, "docker", runArgs...)
-	runOut, err := runCmd.CombinedOutput()
-	if err != nil {
-		w.failDeployment(ctx, id, fmt.Sprintf("docker run failed: %s", string(runOut)), err)
+	res := w.rollout(ctx, rolloutSpec{
+		Final:         imageName,
+		Network:       "capsule-prod_capsule-net", // backend network so the proxy can reach the app
+		ContainerPort: containerPort,
+		HostPorts:     []int{hostPort, hostPort + 10000, hostPort + 20000},
+		// Extra ports are published on fixed host ports, which the old and the new
+		// container cannot hold at the same time: no overlap in that case.
+		ExclusivePorts: len(extraPorts) > 0,
+		RunArgs: func(name string, hp int) []string {
+			return dockerRunArgs(name, volumeName, imageName, envPairsDocker, !userPort, containerPort, hp, extraPorts)
+		},
+		Health:  w.projectHealthConfig(ctx, projectID),
+		Secrets: envValues(envPairsDocker),
+		Log: func(level, msg string) {
+			_ = w.deployments.AppendLog(ctx, &domain.BuildLog{DeploymentID: id, Level: level, Message: msg})
+		},
+		SetHealth: func(h domain.DeploymentHealth) {
+			if w.ext.healthStore != nil {
+				_ = w.ext.healthStore.SetHealth(ctx, id, h)
+			}
+		},
+	})
+	if res.Err != nil {
+		w.failDeployment(ctx, id, res.Err.Error(), nil)
 		return
 	}
-
-	containerID := strings.TrimSpace(string(runOut))
-	w.appendLog(ctx, id, fmt.Sprintf("Container started: %s (port %d)", containerID, hostPort))
-
-	// Connect deployed container to backend network so proxy can reach it
-	networkName := "capsule-prod_capsule-net"
-	netCmd := exec.CommandContext(ctx, "docker", "network", "connect", networkName, imageName)
-	if netOut, netErr := netCmd.CombinedOutput(); netErr != nil {
-		w.logger.Warn("deploy worker: could not connect to backend network (proxy disabled)",
-			"id", id, "error", string(netOut))
-	} else {
-		w.appendLog(ctx, id, "Connected to backend network")
-	}
+	hostPort = res.HostPort
+	w.connAuditRuntime(id, projectID, res.ContainerID)
+	w.appendLog(ctx, id, fmt.Sprintf("Container started: %s (port %d)", res.ContainerID, hostPort))
 
 	// --- store host port ---
 	if err := w.deployments.UpdateHostPort(ctx, id, hostPort); err != nil {
@@ -528,18 +528,19 @@ func (w *DeployWorker) runFargateDeploy(ctx context.Context, id, projectID uuid.
 	imageTag := id.String()[:8]
 	imageURI := fmt.Sprintf("%s:%s", repoURI, imageTag)
 	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageURI))
-	buildCmd := exec.CommandContext(ctx, "docker", "build",
-		"--platform", "linux/amd64",
-		"-t", imageURI, ".")
-	buildCmd.Dir = buildDir
-	buildOut, err := buildCmd.CombinedOutput()
+	bres := w.runLimitedBuild(ctx, buildSpec{
+		Dir: buildDir, Tag: imageURI, Platform: "linux/amd64",
+		DockerfilePath: filepath.Join(buildDir, "Dockerfile"),
+		Log: func(m string) { w.appendLog(ctx, id, m) },
+	})
+	buildOut, err := bres.Output, bres.Err
 	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
 		if line != "" {
 			w.appendLog(ctx, id, line)
 		}
 	}
 	if err != nil {
-		w.failDeployment(ctx, id, "docker build failed", err)
+		w.failDeployment(ctx, id, err.Error(), nil)
 		return
 	}
 
@@ -953,18 +954,19 @@ func (w *DeployWorker) runLambdaContainerDeploy(ctx context.Context, id, project
 
 	// docker build (linux/amd64 — Lambda runs on x86)
 	w.appendLog(ctx, id, fmt.Sprintf("Building image: %s", imageURI))
-	buildCmd := exec.CommandContext(ctx, "docker", "build",
-		"--platform", "linux/amd64",
-		"-t", imageURI, ".")
-	buildCmd.Dir = buildDir
-	buildOut, err := buildCmd.CombinedOutput()
+	bres := w.runLimitedBuild(ctx, buildSpec{
+		Dir: buildDir, Tag: imageURI, Platform: "linux/amd64",
+		DockerfilePath: filepath.Join(buildDir, "Dockerfile"),
+		Log: func(m string) { w.appendLog(ctx, id, m) },
+	})
+	buildOut, err := bres.Output, bres.Err
 	for _, line := range strings.Split(strings.TrimSpace(string(buildOut)), "\n") {
 		if line != "" {
 			w.appendLog(ctx, id, line)
 		}
 	}
 	if err != nil {
-		w.failDeployment(ctx, id, "docker build failed", err)
+		w.failDeployment(ctx, id, err.Error(), nil)
 		return
 	}
 

@@ -17,13 +17,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
-	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 	"github.com/kynto/capsule/backend/pkg/crypto"
 )
 
 type EmailHandler struct {
+	authzHolder
 	dbs          domain.DatabaseRepository
 	orgs         domain.OrganizationRepository
 	projects     domain.ProjectRepository
@@ -54,7 +55,6 @@ func NewEmailHandler(
 }
 
 func (h *EmailHandler) Setup(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -66,8 +66,7 @@ func (h *EmailHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -146,7 +145,6 @@ func (h *EmailHandler) Setup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Status(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -158,8 +156,7 @@ func (h *EmailHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -216,7 +213,6 @@ func (h *EmailHandler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Test(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -228,8 +224,7 @@ func (h *EmailHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -306,7 +301,6 @@ func (h *EmailHandler) Test(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Stats(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -319,8 +313,7 @@ func (h *EmailHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = projectID
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -357,7 +350,6 @@ func (h *EmailHandler) Stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) DNSRecords(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -369,8 +361,7 @@ func (h *EmailHandler) DNSRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -459,7 +450,6 @@ func (h *EmailHandler) DNSRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Send(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -471,8 +461,7 @@ func (h *EmailHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectOps) {
 		return
 	}
 
@@ -569,7 +558,6 @@ func (h *EmailHandler) Send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Logs(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -581,8 +569,7 @@ func (h *EmailHandler) Logs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -606,7 +593,6 @@ func (h *EmailHandler) Logs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) Suppressions(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -619,8 +605,7 @@ func (h *EmailHandler) Suppressions(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = projectID
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -665,7 +650,6 @@ func (h *EmailHandler) Suppressions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) DeleteSuppression(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -677,8 +661,8 @@ func (h *EmailHandler) DeleteSuppression(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	_, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectOps)
+	if !ok {
 		return
 	}
 

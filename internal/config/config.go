@@ -38,6 +38,8 @@ type Config struct {
 	AppSecurityGroupID string // security group of the app host; per-database network access rules are applied to it (APP_SECURITY_GROUP_ID)
 	PublicHost         string
 	DBHost             string // host shown in database connection strings (must resolve to the EC2 host, not the ALB)
+	PortRange          string // host port range for extra project TCP ports (CAPSULE_PORT_RANGE, default 41000-41999)
+	TCPHost            string // host shown for extra project TCP ports (CAPSULE_TCP_HOST, default = DBHost)
 
 	// Platform domain (e.g. apps.example.com) — used to build default URLs shown to users
 	AppsDomain   string
@@ -53,6 +55,12 @@ type Config struct {
 
 	// Observability
 	SentryDSN string
+
+	// OIDC provider (Capsule as login system for Forgejo etc.)
+	OIDCIssuer             string // CAPSULE_OIDC_ISSUER
+	FrontendURL            string // CAPSULE_FRONTEND_URL (consent screen host)
+	OIDCSigningKey         string // CAPSULE_OIDC_SIGNING_KEY (PEM, optional)
+	OIDCPreviousSigningKey string // CAPSULE_OIDC_PREVIOUS_SIGNING_KEY (PEM, optional, rotation)
 }
 
 func Load() (*Config, error) {
@@ -109,6 +117,8 @@ func Load() (*Config, error) {
 		AppSecurityGroupID: os.Getenv("APP_SECURITY_GROUP_ID"),
 		PublicHost:         os.Getenv("CAPSULE_PUBLIC_HOST"),
 		DBHost:             getEnv("CAPSULE_DB_HOST", os.Getenv("CAPSULE_PUBLIC_HOST")),
+		PortRange:          getEnv("CAPSULE_PORT_RANGE", "41000-41999"),
+		TCPHost:            getEnv("CAPSULE_TCP_HOST", getEnv("CAPSULE_DB_HOST", os.Getenv("CAPSULE_PUBLIC_HOST"))),
 
 		AppsDomain:   os.Getenv("CAPSULE_APPS_DOMAIN"),
 		StaticBucket: getEnv("CAPSULE_STATIC_BUCKET", staticBucketDefault(accountID)),
@@ -121,6 +131,11 @@ func Load() (*Config, error) {
 		VpcID:               os.Getenv("VPC_ID"),
 
 		SentryDSN: os.Getenv("SENTRY_DSN"),
+
+		OIDCIssuer:             strings.TrimRight(getEnv("CAPSULE_OIDC_ISSUER", "https://api.tumi-ai.com"), "/"),
+		FrontendURL:            strings.TrimRight(getEnv("CAPSULE_FRONTEND_URL", "https://app.tumi-ai.com"), "/"),
+		OIDCSigningKey:         os.Getenv("CAPSULE_OIDC_SIGNING_KEY"),
+		OIDCPreviousSigningKey: os.Getenv("CAPSULE_OIDC_PREVIOUS_SIGNING_KEY"),
 	}, nil
 }
 

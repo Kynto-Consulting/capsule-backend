@@ -28,7 +28,8 @@ type Rule struct {
 
 // EC2API is the minimal EC2 surface the reconciler needs (injectable for tests).
 type EC2API interface {
-	// ListIngressRules returns every TCP IPv4 ingress rule of the security group.
+	// ListIngressRules returns every single-port TCP ingress rule of the security
+	// group, IPv4 and IPv6 (Rule.CIDR holds either family).
 	ListIngressRules(ctx context.Context, sgID string) ([]Rule, error)
 	AuthorizeIngress(ctx context.Context, sgID string, port int, cidr, description string) error
 	// RevokeIngressByID revokes exactly the given rules (by security-group-rule id).
@@ -94,7 +95,7 @@ func Diff(desired []Desired, current []Rule, scope *uuid.UUID) Plan {
 			continue
 		}
 		k := key{id, r.Port, cidr}
-		if _, wanted := want[k]; wanted && r.CIDR == cidr && !have[k] {
+		if _, wanted := want[k]; wanted && SameCIDR(r.CIDR, cidr) && !have[k] {
 			have[k] = true
 			continue
 		}

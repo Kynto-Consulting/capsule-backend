@@ -17,8 +17,8 @@ type EnvEntry struct {
 }
 
 // MergeEnvLayers merges variable layers; later layers win entirely (value and
-// scope). Call as MergeEnvLayers(org, project, deploy) so precedence is
-// deploy > project > org.
+// scope). Call as MergeEnvLayers(org, parentProject, project, deploy) so precedence
+// is deploy > project > parent project (PR previews) > org.
 func MergeEnvLayers(layers ...map[string]EnvEntry) map[string]EnvEntry {
 	out := map[string]EnvEntry{}
 	for _, l := range layers {
@@ -64,14 +64,22 @@ func (w *DeployWorker) loadEnvTable(ctx context.Context, q string, id uuid.UUID)
 }
 
 // resolveEnv returns the effective variables for a deployment:
-// deployment overrides > project variables > org (account) variables.
+// deployment overrides > project variables > parent project variables (previews only) > org (account) variables.
 func (w *DeployWorker) resolveEnv(ctx context.Context, deploymentID, projectID uuid.UUID) (map[string]EnvEntry, error) {
 	var orgID uuid.UUID
+	var parentID *uuid.UUID
 	var org map[string]EnvEntry
-	if err := w.pool.QueryRow(ctx, `SELECT org_id FROM projects WHERE id = $1`, projectID).Scan(&orgID); err == nil {
+	if err := w.pool.QueryRow(ctx, `SELECT org_id, parent_project_id FROM projects WHERE id = $1`, projectID).Scan(&orgID, &parentID); err == nil {
 		org, err = w.loadEnvTable(ctx, `SELECT key, value_enc, scope FROM org_env_vars WHERE org_id = $1`, orgID)
 		if err != nil {
 			return nil, err
+		}
+	}
+	parent := map[string]EnvEntry{}
+	if parentID != nil { // PR preview: inherit the parent project variables as a layer below its own
+		var perr error
+		if parent, perr = w.loadEnvTable(ctx, `SELECT key, value_enc, scope FROM env_vars WHERE project_id = $1`, *parentID); perr != nil {
+			return nil, perr
 		}
 	}
 	proj, err := w.loadEnvTable(ctx, `SELECT key, value_enc, scope FROM env_vars WHERE project_id = $1`, projectID)
@@ -94,5 +102,5 @@ func (w *DeployWorker) resolveEnv(ctx context.Context, deploymentID, projectID u
 			deploy[k] = EnvEntry{Value: v, Scope: "both"}
 		}
 	}
-	return MergeEnvLayers(org, proj, deploy), nil
+	return MergeEnvLayers(org, parent, proj, deploy), nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/netaccess"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
@@ -27,6 +28,7 @@ type AccessApplier interface {
 
 // DatabaseAccessHandler manages who can reach a database from the internet.
 type DatabaseAccessHandler struct {
+	authzHolder
 	dbs       domain.DatabaseRepository
 	orgs      domain.OrganizationRepository
 	projects  domain.ProjectRepository
@@ -106,8 +108,11 @@ func (h *DatabaseAccessHandler) load(w http.ResponseWriter, r *http.Request, wri
 		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
 		return nil, false
 	}
-	if write && !canWriteOrg(role) {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "your role cannot change database access")
+	act := authz.ProjectRead
+	if write {
+		act = authz.ProjectNetwork
+	}
+	if !h.authorize(w, r, h.orgs, orgID, projectID, act) {
 		return nil, false
 	}
 	project, err := h.projects.GetByID(r.Context(), projectID)
@@ -137,10 +142,6 @@ func (h *DatabaseAccessHandler) load(w http.ResponseWriter, r *http.Request, wri
 		return nil, false
 	}
 	return &accessCtx{user: user, role: role, db: db}, true
-}
-
-func canWriteOrg(role string) bool {
-	return role == "owner" || role == "admin" || role == "member"
 }
 
 type connectionInfo struct {
@@ -230,10 +231,10 @@ func checkCIDR(w http.ResponseWriter, raw string, allowPublic bool, role string)
 		respondError(w, http.StatusBadRequest, "INVALID_CIDR", err.Error())
 		return "", false
 	}
-	if cidr == netaccess.PublicCIDR {
+	if netaccess.IsPublicCIDR(cidr) {
 		if !allowPublic {
 			respondError(w, http.StatusBadRequest, "PUBLIC_NOT_ALLOWED",
-				"0.0.0.0/0 exposes the database to the whole internet; send \"allow_public\": true to confirm")
+				cidr+" exposes the database to the whole internet; send \"allow_public\": true to confirm")
 			return "", false
 		}
 		if !isOrgAdmin(role) {

@@ -11,10 +11,19 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/gitcore"
+	eventswire "github.com/kynto/capsule/backend/internal/gitevents/wire"
+	"github.com/kynto/capsule/backend/internal/environments"
+	"github.com/kynto/capsule/backend/internal/gitprotect"
+	"github.com/kynto/capsule/backend/internal/gittokens"
 	"github.com/kynto/capsule/backend/internal/netaccess"
+	"github.com/kynto/capsule/backend/internal/oidc"
+	"github.com/kynto/capsule/backend/internal/recovery"
 	"github.com/kynto/capsule/backend/internal/repository"
+	"github.com/kynto/capsule/backend/internal/security"
 	"github.com/kynto/capsule/backend/internal/server"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
 	"github.com/kynto/capsule/backend/internal/service"
@@ -114,9 +123,11 @@ func main() {
 	accessRepo := repository.NewDatabaseAccessRepository(pool)
 	networkRepo := repository.NewProjectNetworkRepository(pool)
 	var accessApplier handlers.AccessApplier // stays a true nil when not configured (API answers 501)
+	var portsFirewall service.PortsFirewall   // same reconciler (shared lock); true nil when not configured
 	if awsClients != nil && awsClients.EC2 != nil {
 		if rec := netaccess.NewReconciler(netaccess.AWSAdapter{Client: awsClients.EC2}, cfg.AppSecurityGroupID); rec != nil {
 			accessApplier = rec
+			portsFirewall = rec
 			go func() {
 				// Recover from drift: re-apply every stored rule, revoke owned rules of deleted databases.
 				sctx, scancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -156,6 +167,12 @@ func main() {
 		ECRRegistry:      cfg.ECRRegistry,
 	}
 	deployWorker := service.NewDeployWorker(deploymentRepo, pool, awsClients, cfg.ArtifactsBucket, fargateConfig, logger, cfg.SecretKey)
+	// Health checks + automatic rollback, build limits (CAPSULE_BUILD_*), scheduled docker cleanup.
+	deployWorker.WithDeployConfig(service.LoadDeployConfig()).WithHealthStores(deploymentRepo, projRepo)
+	connAuditRepo := repository.NewConnAuditRepository(pool)
+	deployWorker.SetConnAudit(connAuditRepo) // report of non-routed internal connections (policy warn|strict|off per project)
+	go deployWorker.RunCleanupLoop(workerCtx)
+	portsSvc := wirePorts(cfg, logger, pool, deployWorker, portsFirewall)
 	workerDone := make(chan struct{})
 	go func() {
 		deployWorker.Run(workerCtx)
@@ -164,6 +181,9 @@ func main() {
 
 	// Put app containers without traffic to sleep (CAPSULE_IDLE_SLEEP_HOURS, default 12).
 	go handlers.RunIdleReaper(workerCtx, logger)
+
+	// Git auto-deploy + PR previews (webhook receiver, preview lifecycle, TTL reaper).
+	gitHandler := wireGit(workerCtx, cfg, logger, pool, projRepo, orgRepo, deploymentRepo, awsClients, fargateConfig)
 
 	// Catch OS signals so we cancel the worker before the process exits.
 	sigCh := make(chan os.Signal, 1)
@@ -179,7 +199,57 @@ func main() {
 		}
 	}()
 
+	// OpenID Connect provider (Forgejo login etc.). A failure here disables only OIDC.
+	var oidcSvc *oidc.Service
+	oidcCtx, oidcCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	oidcKeys, oidcErr := oidc.LoadKeySet(oidcCtx, settingsRepo, cfg.SecretKey, cfg.OIDCSigningKey, cfg.OIDCPreviousSigningKey)
+	oidcCancel()
+	if oidcErr != nil {
+		logger.Error("OIDC provider disabled: signing key unavailable", "error", oidcErr)
+	} else {
+		oidcSvc = oidc.New(oidc.Config{Issuer: cfg.OIDCIssuer, FrontendURL: cfg.FrontendURL},
+			repository.NewOIDCRepository(pool), userRepo, oidcKeys, logger)
+		logger.Info("OIDC provider enabled", "issuer", cfg.OIDCIssuer, "kid", oidcKeys.Active.KID)
+	}
+
+	projectMemberRepo := repository.NewProjectMemberRepository(pool)
+	authzSvc := authz.New(projectMemberRepo)
+	if oidcSvc != nil {
+		// Project roles travel as "project:<org>/<project>:<role>" group claims.
+		oidcSvc.ExtraGroups = authzSvc.ProjectGroups
+	}
+	if gitHandler != nil {
+		gitHandler.SetAuthorizer(gitAuthorizer{svc: authzSvc})
+	}
+	// Core Git (Forgejo): provisioning, team sync, Git views, API previews, capabilities.
+	gitCoreHandler := wireGitCore(workerCtx, cfg, logger, pool, gitHandler, projRepo, orgRepo, deploymentRepo, projectMemberRepo, oidcSvc != nil)
+
+	// git-capsule:wiring begin
+	// Git Capsule wiring. A1 owns the shared Core: gitcore.Wire(workerCtx, logger, cacheStore)
+	// builds it from CAPSULE_GIT_* and publishes it (gitcore.Shared()). Add it here, then
+	// one line per package, alphabetical by id: `<pkg>.Wire<Pkg>(workerCtx, ...)`.
+	var gitCoreCache gitcore.Cache
+	if cacheStore != nil {
+		gitCoreCache = cacheStore
+	}
+	gitcore.Wire(workerCtx, logger, gitCoreCache)
+	wireGitSync(workerCtx, logger, pool, cfg.SecretKey, orgRepo, projRepo, projectMemberRepo, userRepo, oidcSvc, authzSvc, gitHandler) // A2
+	gitprotect.WireGitProtect(workerCtx, logger, repository.NewBranchProtectionRepository(pool)) // A4: branch protection rules, drift reconciler
+	eventswire.Wire(workerCtx, logger, pool, cfg.SecretKey, cfg.FrontendURL, awsClients) // A5: event bus, notifications, outbound webhooks, inbound webhook sink
+	environments.WireEnvironments(workerCtx, logger, environments.Deps{Store: repository.NewEnvironmentRepository(pool), Deployments: deploymentRepo, Users: userRepo, Authz: authzSvc, Admins: projectMemberRepo}) // A6: environments, promotions, approvals, queue/expiry loop (after A5: uses the shared event bus)
+	handlers.WireGitTokens(workerCtx, logger, handlers.GitTokensWiring{Store: repository.NewGitAccessRepository(pool), Users: userRepo, Orgs: orgRepo, Projects: projRepo, Authz: authzSvc, APITokens: apiTokenRepo, UsernameTaken: repository.NewOIDCRepository(pool), Identity: gittokens.GitsyncIdentity{IDs: sharedGitIdentities, Users: userRepo, Fallback: gittokens.NameRules{Users: userRepo, Taken: repository.NewOIDCRepository(pool)}}}) // A7: login = the one A2 (gitsync.Identities) registers
+	security.WireSecurity(workerCtx, logger, repository.NewSecurityRepository(pool), cfg.SecretKey) // B7: SARIF alerts, policy and capsule/security check, suppressions, Renovate state (after A5: subscribes to the event bus)
+	wireGitReview(workerCtx, logger, pool, cfg.SecretKey, orgRepo, projRepo, projectMemberRepo, authzSvc) // B8: CODEOWNERS, capsule/policy, auto-merge worker, review janitor (after A2 and A5)
+	wireGitImport(workerCtx, logger, pool, cfg.SecretKey, projRepo) // C1: GitHub import and push mirror (after A2: reconciles the teams of imported projects)
+	wireGitC2(workerCtx, logger, pool, cfg.FrontendURL, awsClients) // C2: audit read/retention, activity, insights, digest, expiry notices (after A5; A7 Notifier: gitinsights.SharedTokenNotifier())
+	recovery.WireRecovery(workerCtx, logger, repository.NewRecoveryRepository(pool), cfg.SecretKey, awsClients) // C3: total recovery (plan/apply/verify), enabled with CAPSULE_RECOVERY_ENABLED
+	// git-capsule:wiring end
+
+	backupsSvc := wireBackups(workerCtx, cfg, logger, pool, awsClients, projRepo, dbRepo)
+
 	srv := server.New(cfg, logger, version, server.Deps{
+		Authz:              authzSvc,
+		ProjectMembers:     projectMemberRepo,
 		AuthSvc:            authSvc,
 		OrgRepo:            orgRepo,
 		UserRepo:           userRepo,
@@ -207,6 +277,13 @@ func main() {
 		AccessRepo:         accessRepo,
 		NetworkRepo:        networkRepo,
 		AccessApplier:      accessApplier,
+		PortsSvc:           portsSvc,
+		ConnAudit:          connAuditRepo,
+		FargateConfigured:  awsClients != nil && fargateConfig.IsConfigured(),
+		Git:                gitHandler,
+		Backups:            backupsSvc,
+		GitCore:            gitCoreHandler,
+		OIDC:               oidcSvc,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

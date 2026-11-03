@@ -133,6 +133,7 @@ func (h *OrgMembersHandler) Invite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	notifyOrgChanged(orgID) // core Git: the new member may already have project access (open mode)
 	respondJSON(w, http.StatusCreated, map[string]any{
 		"user_id": target.ID,
 		"email":   target.Email,
@@ -210,6 +211,7 @@ func (h *OrgMembersHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	notifyOrgChanged(orgID) // core Git: org role changes the effective project role
 	respondJSON(w, http.StatusOK, map[string]any{
 		"user_id": targetUserID,
 		"role":    req.Role,
@@ -272,5 +274,6 @@ func (h *OrgMembersHandler) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	notifyOrgChanged(orgID) // core Git: revoke the user's team access
 	respondNoContent(w)
 }

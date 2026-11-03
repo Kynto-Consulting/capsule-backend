@@ -8,12 +8,33 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
 type OrgHandler struct {
-	repo domain.OrganizationRepository
+	repo  domain.OrganizationRepository
+	modes authz.MemberStore // optional: project_access_mode storage + audit
+}
+
+// SetAccessModes enables reading/updating project_access_mode.
+func (h *OrgHandler) SetAccessModes(s authz.MemberStore) { h.modes = s }
+
+// orgResponse adds the project access mode to the organization JSON.
+type orgResponse struct {
+	*domain.Organization
+	ProjectAccessMode string `json:"project_access_mode,omitempty"`
+}
+
+func (h *OrgHandler) orgJSON(r *http.Request, org *domain.Organization) orgResponse {
+	resp := orgResponse{Organization: org}
+	if h.modes != nil {
+		if m, err := h.modes.GetOrgAccessMode(r.Context(), org.ID); err == nil {
+			resp.ProjectAccessMode = m
+		}
+	}
+	return resp
 }
 
 func NewOrgHandler(repo domain.OrganizationRepository) *OrgHandler {
@@ -100,11 +121,12 @@ func (h *OrgHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, org)
+	respondJSON(w, http.StatusOK, h.orgJSON(r, org))
 }
 
 type updateOrgRequest struct {
-	Name string `json:"name"`
+	Name              string  `json:"name"`
+	ProjectAccessMode *string `json:"project_access_mode"`
 }
 
 func (h *OrgHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -130,9 +152,13 @@ func (h *OrgHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if org.OwnerID != user.ID {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "only owner can update")
-		return
+	// Owners may change everything; org admins may only change project_access_mode.
+	isOwner := org.OwnerID == user.ID
+	if !isOwner {
+		if role, _ := h.repo.GetMemberRole(r.Context(), orgID, user.ID); role != "admin" {
+			respondError(w, http.StatusForbidden, "FORBIDDEN", "only owner can update")
+			return
+		}
 	}
 
 	var req updateOrgRequest
@@ -141,19 +167,47 @@ func (h *OrgHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
+	if req.Name == "" && req.ProjectAccessMode == nil {
 		respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "name is required")
 		return
 	}
-
-	org.Name = req.Name
-	updated, err := h.repo.Update(r.Context(), org)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update organization")
+	if req.Name != "" && !isOwner {
+		respondError(w, http.StatusForbidden, "FORBIDDEN", "only owner can update")
 		return
 	}
+	if req.ProjectAccessMode != nil {
+		if !authz.ValidMode(*req.ProjectAccessMode) {
+			respondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "project_access_mode must be one of: open, restricted")
+			return
+		}
+		if h.modes == nil {
+			respondError(w, http.StatusNotImplemented, "NOT_CONFIGURED", "project access mode is not configured on this server")
+			return
+		}
+		oldMode, _ := h.modes.GetOrgAccessMode(r.Context(), orgID)
+		if err := h.modes.SetOrgAccessMode(r.Context(), orgID, *req.ProjectAccessMode); err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update project access mode")
+			return
+		}
+		_ = h.modes.Audit(r.Context(), authz.AuditEntry{
+			OrgID: orgID, UserID: user.ID, Action: "org.project_access_mode.set", ResourceType: "organization", ResourceID: orgID,
+			IP: middleware.ClientIP(r), OldValues: map[string]any{"project_access_mode": oldMode},
+			NewValues: map[string]any{"project_access_mode": *req.ProjectAccessMode},
+		})
+		notifyOrgChanged(orgID) // core Git: re-sync the teams of every project
+	}
 
-	respondJSON(w, http.StatusOK, updated)
+	updated := org
+	if req.Name != "" {
+		org.Name = req.Name
+		updated, err = h.repo.Update(r.Context(), org)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update organization")
+			return
+		}
+	}
+
+	respondJSON(w, http.StatusOK, h.orgJSON(r, updated))
 }
 
 func (h *OrgHandler) Delete(w http.ResponseWriter, r *http.Request) {

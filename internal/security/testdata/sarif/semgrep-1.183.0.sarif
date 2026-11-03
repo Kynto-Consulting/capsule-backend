@@ -1,0 +1,1594 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": []
+        }
+      ],
+      "results": [
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 57,
+                  "endLine": 13,
+                  "snippet": {
+                    "text": "const sessionToken = Math.random().toString(36).slice(2);"
+                  },
+                  "startColumn": 1,
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Math.random() no es criptograficamente seguro y es predecible. Para tokens, ids de sesion, nonces, OTP o sales usa crypto.randomBytes(32).toString(\"hex\"), crypto.randomUUID() o crypto.getRandomValues."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-math-random-secret"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 25,
+                  "endLine": 20,
+                  "snippet": {
+                    "text": "crypto.createHash(\"md5\");"
+                  },
+                  "startColumn": 1,
+                  "startLine": 20
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Algoritmo debil (md5, sha1, DES, RC4 o AES en modo ECB). Usa SHA-256/512 (o HMAC-SHA256) y AES-256-GCM para cifrar. Para contrasenas usa argon2id/scrypt/bcrypt, no un hash rapido."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-weak-hash-or-cipher"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 48,
+                  "endLine": 22,
+                  "snippet": {
+                    "text": "crypto.createCipheriv(\"aes-128-ecb\", key, null);"
+                  },
+                  "startColumn": 1,
+                  "startLine": 22
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Algoritmo debil (md5, sha1, DES, RC4 o AES en modo ECB). Usa SHA-256/512 (o HMAC-SHA256) y AES-256-GCM para cifrar. Para contrasenas usa argon2id/scrypt/bcrypt, no un hash rapido."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-weak-hash-or-cipher"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 79,
+                  "endLine": 27,
+                  "snippet": {
+                    "text": "crypto.createCipheriv(\"aes-256-gcm\", key, Buffer.from(\"000000000000\", \"utf8\"));"
+                  },
+                  "startColumn": 1,
+                  "startLine": 27
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "IV/nonce fijo (literal) en createCipheriv. Con AES-GCM repetir (llave, nonce) rompe la confidencialidad y la autenticidad. Genera un nonce de 12 bytes nuevo por cada cifrado con crypto.randomBytes(12), guardalo junto al texto cifrado y verifica el authTag al descifrar."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cipher-fixed-iv"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 60,
+                  "endLine": 29,
+                  "snippet": {
+                    "text": "crypto.createCipheriv(\"aes-256-gcm\", key, Buffer.alloc(12));"
+                  },
+                  "startColumn": 1,
+                  "startLine": 29
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "IV/nonce fijo (literal) en createCipheriv. Con AES-GCM repetir (llave, nonce) rompe la confidencialidad y la autenticidad. Genera un nonce de 12 bytes nuevo por cada cifrado con crypto.randomBytes(12), guardalo junto al texto cifrado y verifica el authTag al descifrar."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cipher-fixed-iv"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 38,
+                  "endLine": 35,
+                  "snippet": {
+                    "text": "  if (signature === expectedSignature) return true;"
+                  },
+                  "startColumn": 7,
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-hmac-nonconstant-compare"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 71,
+                  "endLine": 39,
+                  "snippet": {
+                    "text": "  if (createHmac(\"sha256\", k).update(body).digest(\"hex\") !== signature) return false;"
+                  },
+                  "startColumn": 7,
+                  "startLine": 39
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-hmac-nonconstant-compare"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 58,
+                  "endLine": 41,
+                  "snippet": {
+                    "text": "  if (req.headers.providedSignature !== expectedSignature) return false;"
+                  },
+                  "startColumn": 7,
+                  "startLine": 41
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-hmac-nonconstant-compare"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 46,
+                  "endLine": 53,
+                  "snippet": {
+                    "text": "const API_SECRET = \"Xk9fLm2PqR7sT4vW8yZ1aB3c\";"
+                  },
+                  "startColumn": 1,
+                  "startLine": 53
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Posible secreto o llave escrito en el codigo. Los secretos se leen del entorno/gestor de secretos y nunca se versionan; si ya se subio, rotalo. Si es un id o cabecera publica, renombra la variable."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-hardcoded-secret"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 61,
+                  "snippet": {
+                    "text": "  console.log(\"dek\", dek);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 61
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Material de llave/secreto pasa a un log. Nunca registres llaves, DEKs, KEKs, frases de paso ni su base64/hex; registra solo identificadores (keyId, version) y revisa los logs ya emitidos."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-key-material-in-log"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 29,
+                  "endLine": 63,
+                  "snippet": {
+                    "text": "  logger.info(\"loaded\", dek);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 63
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Material de llave/secreto pasa a un log. Nunca registres llaves, DEKs, KEKs, frases de paso ni su base64/hex; registra solo identificadores (keyId, version) y revisa los logs ya emitidos."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-key-material-in-log"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\crypto.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 41,
+                  "endLine": 67,
+                  "snippet": {
+                    "text": "  fs.writeFileSync(\"/data/dek.bin\", dek);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 67
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Se escribe material de llave a disco. Las llaves viven en memoria o en un KMS/gestor de secretos; un archivo con la llave acaba en respaldos, imagenes y volumenes. Si es una excepcion (llave local temporal) documentala y protege permisos 0600 fuera del volumen de datos."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-key-written-to-disk"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\deser-xxe.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 23,
+                  "endLine": 10,
+                  "snippet": {
+                    "text": "    pickle.loads(data)"
+                  },
+                  "startColumn": 5,
+                  "startLine": 10
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "pickle/marshal sobre datos no confiables ejecuta codigo arbitrario. Usa JSON o un formato con esquema."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-py-pickle-loads"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\deser-xxe.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 20,
+                  "endLine": 14,
+                  "snippet": {
+                    "text": "    yaml.load(data)"
+                  },
+                  "startColumn": 5,
+                  "startLine": 14
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "yaml.load sin SafeLoader permite construir objetos arbitrarios. Usa yaml.safe_load(...)."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-py-yaml-unsafe-load"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\deser-xxe.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 43,
+                  "endLine": 20,
+                  "snippet": {
+                    "text": "    etree.XMLParser(resolve_entities=True)"
+                  },
+                  "startColumn": 5,
+                  "startLine": 20
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "lxml con resolve_entities=True permite XXE. Deja resolve_entities=False y no_network=True, o usa defusedxml."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-py-xxe-lxml"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\deser-xxe.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 29,
+                  "endLine": 7,
+                  "snippet": {
+                    "text": "serialize.unserialize(input);"
+                  },
+                  "startColumn": 1,
+                  "startLine": 7
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "node-serialize/unserialize ejecuta codigo embebido en los datos. Usa JSON.parse y valida el esquema (zod)."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-js-unsafe-deserialization"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\deser-xxe.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 40,
+                  "endLine": 12,
+                  "snippet": {
+                    "text": "libxml.parseXml(input, { noent: true });"
+                  },
+                  "startColumn": 1,
+                  "startLine": 12
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Analisis XML con noent:true habilita entidades externas (XXE: lectura de archivos y SSRF). Quita noent o ponlo en false y no resuelvas DTD externos."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-js-xxe-libxml"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 71,
+                  "endLine": 11,
+                  "snippet": {
+                    "text": "  await prisma.$queryRawUnsafe(\"SELECT * FROM users WHERE id = \" + id);"
+                  },
+                  "startColumn": 9,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Uso de $queryRawUnsafe/$executeRawUnsafe con una consulta que no es un literal. Permite inyeccion SQL. Usa la forma etiquetada (prisma.$queryRaw`... ${valor}`) o Prisma.sql con parametros; nunca concatenes ni interpoles entrada en el texto SQL."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-prisma-raw-unsafe"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 67,
+                  "endLine": 13,
+                  "snippet": {
+                    "text": "  await prisma.$executeRawUnsafe(`DELETE FROM t WHERE id = ${id}`);"
+                  },
+                  "startColumn": 9,
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Uso de $queryRawUnsafe/$executeRawUnsafe con una consulta que no es un literal. Permite inyeccion SQL. Usa la forma etiquetada (prisma.$queryRaw`... ${valor}`) o Prisma.sql con parametros; nunca concatenes ni interpoles entrada en el texto SQL."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-prisma-raw-unsafe"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 65,
+                  "endLine": 17,
+                  "snippet": {
+                    "text": "  await prisma.$queryRaw(`SELECT * FROM users WHERE id = ${id}`);"
+                  },
+                  "startColumn": 9,
+                  "startLine": 17
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "prisma.$queryRaw/$executeRaw llamado como funcion con una plantilla interpolada: la interpolacion NO se parametriza (solo lo hace la etiqueta de plantilla). Escribe prisma.$queryRaw`SELECT ... ${valor}` (sin parentesis) o usa Prisma.sql."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-prisma-raw-template-call"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 10,
+                  "endLine": 24,
+                  "snippet": {
+                    "text": "  eval(x);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 24
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "eval() / new Function() ejecuta texto como codigo; si algun fragmento viene de un usuario o de la red es ejecucion remota de codigo. Reemplaza por JSON.parse, una tabla de funciones permitidas o un parser dedicado."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-eval-dynamic"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 33,
+                  "endLine": 26,
+                  "snippet": {
+                    "text": "  const f = new Function(\"a\", x);"
+                  },
+                  "startColumn": 13,
+                  "startLine": 26
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "eval() / new Function() ejecuta texto como codigo; si algun fragmento viene de un usuario o de la red es ejecucion remota de codigo. Reemplaza por JSON.parse, una tabla de funciones permitidas o un parser dedicado."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-eval-dynamic"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 35,
+                  "endLine": 33,
+                  "snippet": {
+                    "text": "  exec(\"convert \" + req.query.file);"
+                  },
+                  "startColumn": 8,
+                  "startLine": 33
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Entrada no confiable llega a child_process.exec/execSync (shell). Usa execFile/spawn con arreglo de argumentos y shell:false, y valida contra una lista permitida; nunca construyas el comando con texto del usuario."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-child-process-exec-tainted"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 24,
+                  "endLine": 35,
+                  "snippet": {
+                    "text": "  execSync(req.body.cmd);"
+                  },
+                  "startColumn": 12,
+                  "startLine": 35
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Entrada no confiable llega a child_process.exec/execSync (shell). Usa execFile/spawn con arreglo de argumentos y shell:false, y valida contra una lista permitida; nunca construyas el comando con texto del usuario."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-child-process-exec-tainted"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 28,
+                  "endLine": 44,
+                  "snippet": {
+                    "text": "  await fetch(req.query.url);"
+                  },
+                  "startColumn": 15,
+                  "startLine": 44
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Una URL controlada por el usuario llega a fetch/axios/got/http.get (SSRF: el servidor puede llegar a la red interna o al servicio de metadatos). Valida con lista de hosts permitidos y rechaza rangos privados tras resolver el DNS; encapsula eso en assertSafeUrl()."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-ssrf-fetch-tainted"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\injection.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 30,
+                  "endLine": 46,
+                  "snippet": {
+                    "text": "  await fetch(req.body.target, { method: \"GET\" });"
+                  },
+                  "startColumn": 15,
+                  "startLine": 46
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Una URL controlada por el usuario llega a fetch/axios/got/http.get (SSRF: el servidor puede llegar a la red interna o al servicio de metadatos). Valida con lista de hosts permitidos y rechaza rangos privados tras resolver el DNS; encapsula eso en assertSafeUrl()."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-ssrf-fetch-tainted"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\react.tsx",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 60,
+                  "endLine": 6,
+                  "snippet": {
+                    "text": "  return <div dangerouslySetInnerHTML={{ __html: html }} />;"
+                  },
+                  "startColumn": 10,
+                  "startLine": 6
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "dangerouslySetInnerHTML con contenido no literal: riesgo de XSS. Sanitiza con DOMPurify.sanitize() (lista de etiquetas permitidas) o renderiza como texto/Markdown seguro."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-react-dangerously-set-inner-html"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 25,
+                  "endLine": 11,
+                  "snippet": {
+                    "text": "  jwt.verify(token, key);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 11
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "jwt.verify sin fijar \"algorithms\": se aceptan los algoritmos que declare el token (confusion HS256/RS256). Pasa siempre { algorithms: [\"HS256\"] } (o el que uses)."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-jwt-verify-without-algorithms"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 48,
+                  "endLine": 13,
+                  "snippet": {
+                    "text": "  jwt.verify(token, key, { issuer: \"capsule\" });"
+                  },
+                  "startColumn": 3,
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "jwt.verify sin fijar \"algorithms\": se aceptan los algoritmos que declare el token (confusion HS256/RS256). Pasa siempre { algorithms: [\"HS256\"] } (o el que uses)."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-jwt-verify-without-algorithms"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 49,
+                  "endLine": 17,
+                  "snippet": {
+                    "text": "  jwt.sign({ a: 1 }, key, { algorithm: \"none\" });"
+                  },
+                  "startColumn": 3,
+                  "startLine": 17
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Algoritmo \"none\" en JWT: el token queda sin firma y cualquiera puede falsificarlo. Usa HS256/RS256/ES256."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-jwt-alg-none"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 20,
+                  "endLine": 21,
+                  "snippet": {
+                    "text": "  jwt.decode(token);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 21
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "jwt.decode NO verifica la firma. No lo uses para autenticar ni autorizar; usa jwt.verify con algorithms."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-jwt-decode-for-auth"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 27,
+                  "endLine": 26,
+                  "snippet": {
+                    "text": "  res.cookie(\"sid\", token);"
+                  },
+                  "startColumn": 3,
+                  "startLine": 26
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Cookie sin httpOnly/secure/sameSite. Una cookie de sesion debe llevar { httpOnly: true, secure: true, sameSite: \"lax\" } (o \"strict\"); sin ellas es legible por JS (XSS), viaja por HTTP y es enviable entre sitios."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cookie-missing-flags"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 47,
+                  "endLine": 28,
+                  "snippet": {
+                    "text": "  res.cookie(\"sid\", token, { httpOnly: true });"
+                  },
+                  "startColumn": 3,
+                  "startLine": 28
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Cookie sin httpOnly/secure/sameSite. Una cookie de sesion debe llevar { httpOnly: true, secure: true, sameSite: \"lax\" } (o \"strict\"); sin ellas es legible por JS (XSS), viaja por HTTP y es enviable entre sitios."
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cookie-missing-flags"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 41,
+                  "endLine": 34,
+                  "snippet": {
+                    "text": "cors({ origin: \"*\", credentials: true });"
+                  },
+                  "startColumn": 1,
+                  "startLine": 34
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "CORS con origen comodin (o reflejado con \"true\") junto a credentials:true: si se refleja el Origin, cualquier sitio puede leer respuestas autenticadas. Enumera los origenes permitidos. (Excepcion documentada: la API multi-tenant sin cookies y sin credentials.)"
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cors-wildcard-credentials"
+        },
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src\\web.ts",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 42,
+                  "endLine": 36,
+                  "snippet": {
+                    "text": "cors({ credentials: true, origin: true });"
+                  },
+                  "startColumn": 1,
+                  "startLine": 36
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "CORS con origen comodin (o reflejado con \"true\") junto a credentials:true: si se refleja el Origin, cualquier sitio puede leer respuestas autenticadas. Enumera los origenes permitidos. (Excepcion documentada: la API multi-tenant sin cookies y sin credentials.)"
+          },
+          "properties": {},
+          "ruleId": "rules.tumi-cors-wildcard-credentials"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "Semgrep OSS",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Entrada no confiable llega a child_process.exec/execSync (shell). Usa execFile/spawn con arreglo de argumentos y shell:false, y valida contra una lista permitida; nunca construyas el comando con texto del usuario."
+              },
+              "help": {
+                "markdown": "Entrada no confiable llega a child_process.exec/execSync (shell). Usa execFile/spawn con arreglo de argumentos y shell:false, y valida contra una lista permitida; nunca construyas el comando con texto del usuario.",
+                "text": "Entrada no confiable llega a child_process.exec/execSync (shell). Usa execFile/spawn con arreglo de argumentos y shell:false, y valida contra una lista permitida; nunca construyas el comando con texto del usuario."
+              },
+              "id": "rules.tumi-child-process-exec-tainted",
+              "name": "rules.tumi-child-process-exec-tainted",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-78",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-child-process-exec-tainted"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "IV/nonce fijo (literal) en createCipheriv. Con AES-GCM repetir (llave, nonce) rompe la confidencialidad y la autenticidad. Genera un nonce de 12 bytes nuevo por cada cifrado con crypto.randomBytes(12), guardalo junto al texto cifrado y verifica el authTag al descifrar."
+              },
+              "help": {
+                "markdown": "IV/nonce fijo (literal) en createCipheriv. Con AES-GCM repetir (llave, nonce) rompe la confidencialidad y la autenticidad. Genera un nonce de 12 bytes nuevo por cada cifrado con crypto.randomBytes(12), guardalo junto al texto cifrado y verifica el authTag al descifrar.",
+                "text": "IV/nonce fijo (literal) en createCipheriv. Con AES-GCM repetir (llave, nonce) rompe la confidencialidad y la autenticidad. Genera un nonce de 12 bytes nuevo por cada cifrado con crypto.randomBytes(12), guardalo junto al texto cifrado y verifica el authTag al descifrar."
+              },
+              "id": "rules.tumi-cipher-fixed-iv",
+              "name": "rules.tumi-cipher-fixed-iv",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-329",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-cipher-fixed-iv"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "Cookie sin httpOnly/secure/sameSite. Una cookie de sesion debe llevar { httpOnly: true, secure: true, sameSite: \"lax\" } (o \"strict\"); sin ellas es legible por JS (XSS), viaja por HTTP y es enviable entre sitios."
+              },
+              "help": {
+                "markdown": "Cookie sin httpOnly/secure/sameSite. Una cookie de sesion debe llevar { httpOnly: true, secure: true, sameSite: \"lax\" } (o \"strict\"); sin ellas es legible por JS (XSS), viaja por HTTP y es enviable entre sitios.",
+                "text": "Cookie sin httpOnly/secure/sameSite. Una cookie de sesion debe llevar { httpOnly: true, secure: true, sameSite: \"lax\" } (o \"strict\"); sin ellas es legible por JS (XSS), viaja por HTTP y es enviable entre sitios."
+              },
+              "id": "rules.tumi-cookie-missing-flags",
+              "name": "rules.tumi-cookie-missing-flags",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-1004",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-cookie-missing-flags"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "CORS con origen comodin (o reflejado con \"true\") junto a credentials:true: si se refleja el Origin, cualquier sitio puede leer respuestas autenticadas. Enumera los origenes permitidos. (Excepcion documentada: la API multi-tenant sin cookies y sin credentials.)"
+              },
+              "help": {
+                "markdown": "CORS con origen comodin (o reflejado con \"true\") junto a credentials:true: si se refleja el Origin, cualquier sitio puede leer respuestas autenticadas. Enumera los origenes permitidos. (Excepcion documentada: la API multi-tenant sin cookies y sin credentials.)",
+                "text": "CORS con origen comodin (o reflejado con \"true\") junto a credentials:true: si se refleja el Origin, cualquier sitio puede leer respuestas autenticadas. Enumera los origenes permitidos. (Excepcion documentada: la API multi-tenant sin cookies y sin credentials.)"
+              },
+              "id": "rules.tumi-cors-wildcard-credentials",
+              "name": "rules.tumi-cors-wildcard-credentials",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-942",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-cors-wildcard-credentials"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "eval() / new Function() ejecuta texto como codigo; si algun fragmento viene de un usuario o de la red es ejecucion remota de codigo. Reemplaza por JSON.parse, una tabla de funciones permitidas o un parser dedicado."
+              },
+              "help": {
+                "markdown": "eval() / new Function() ejecuta texto como codigo; si algun fragmento viene de un usuario o de la red es ejecucion remota de codigo. Reemplaza por JSON.parse, una tabla de funciones permitidas o un parser dedicado.",
+                "text": "eval() / new Function() ejecuta texto como codigo; si algun fragmento viene de un usuario o de la red es ejecucion remota de codigo. Reemplaza por JSON.parse, una tabla de funciones permitidas o un parser dedicado."
+              },
+              "id": "rules.tumi-eval-dynamic",
+              "name": "rules.tumi-eval-dynamic",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-95",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-eval-dynamic"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Posible secreto o llave escrito en el codigo. Los secretos se leen del entorno/gestor de secretos y nunca se versionan; si ya se subio, rotalo. Si es un id o cabecera publica, renombra la variable."
+              },
+              "help": {
+                "markdown": "Posible secreto o llave escrito en el codigo. Los secretos se leen del entorno/gestor de secretos y nunca se versionan; si ya se subio, rotalo. Si es un id o cabecera publica, renombra la variable.",
+                "text": "Posible secreto o llave escrito en el codigo. Los secretos se leen del entorno/gestor de secretos y nunca se versionan; si ya se subio, rotalo. Si es un id o cabecera publica, renombra la variable."
+              },
+              "id": "rules.tumi-hardcoded-secret",
+              "name": "rules.tumi-hardcoded-secret",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-798",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-hardcoded-secret"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden."
+              },
+              "help": {
+                "markdown": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden.",
+                "text": "Comparacion de secretos/firmas/HMAC con ===/==: tiene tiempo variable y permite adivinarlos byte a byte. Usa crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)) comprobando antes que las longitudes coinciden."
+              },
+              "id": "rules.tumi-hmac-nonconstant-compare",
+              "name": "rules.tumi-hmac-nonconstant-compare",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-208",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-hmac-nonconstant-compare"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "node-serialize/unserialize ejecuta codigo embebido en los datos. Usa JSON.parse y valida el esquema (zod)."
+              },
+              "help": {
+                "markdown": "node-serialize/unserialize ejecuta codigo embebido en los datos. Usa JSON.parse y valida el esquema (zod).",
+                "text": "node-serialize/unserialize ejecuta codigo embebido en los datos. Usa JSON.parse y valida el esquema (zod)."
+              },
+              "id": "rules.tumi-js-unsafe-deserialization",
+              "name": "rules.tumi-js-unsafe-deserialization",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-502",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-js-unsafe-deserialization"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Analisis XML con noent:true habilita entidades externas (XXE: lectura de archivos y SSRF). Quita noent o ponlo en false y no resuelvas DTD externos."
+              },
+              "help": {
+                "markdown": "Analisis XML con noent:true habilita entidades externas (XXE: lectura de archivos y SSRF). Quita noent o ponlo en false y no resuelvas DTD externos.",
+                "text": "Analisis XML con noent:true habilita entidades externas (XXE: lectura de archivos y SSRF). Quita noent o ponlo en false y no resuelvas DTD externos."
+              },
+              "id": "rules.tumi-js-xxe-libxml",
+              "name": "rules.tumi-js-xxe-libxml",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-611",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-js-xxe-libxml"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Algoritmo \"none\" en JWT: el token queda sin firma y cualquiera puede falsificarlo. Usa HS256/RS256/ES256."
+              },
+              "help": {
+                "markdown": "Algoritmo \"none\" en JWT: el token queda sin firma y cualquiera puede falsificarlo. Usa HS256/RS256/ES256.",
+                "text": "Algoritmo \"none\" en JWT: el token queda sin firma y cualquiera puede falsificarlo. Usa HS256/RS256/ES256."
+              },
+              "id": "rules.tumi-jwt-alg-none",
+              "name": "rules.tumi-jwt-alg-none",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-347",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-jwt-alg-none"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "jwt.decode NO verifica la firma. No lo uses para autenticar ni autorizar; usa jwt.verify con algorithms."
+              },
+              "help": {
+                "markdown": "jwt.decode NO verifica la firma. No lo uses para autenticar ni autorizar; usa jwt.verify con algorithms.",
+                "text": "jwt.decode NO verifica la firma. No lo uses para autenticar ni autorizar; usa jwt.verify con algorithms."
+              },
+              "id": "rules.tumi-jwt-decode-for-auth",
+              "name": "rules.tumi-jwt-decode-for-auth",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-345",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-jwt-decode-for-auth"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "jwt.verify sin fijar \"algorithms\": se aceptan los algoritmos que declare el token (confusion HS256/RS256). Pasa siempre { algorithms: [\"HS256\"] } (o el que uses)."
+              },
+              "help": {
+                "markdown": "jwt.verify sin fijar \"algorithms\": se aceptan los algoritmos que declare el token (confusion HS256/RS256). Pasa siempre { algorithms: [\"HS256\"] } (o el que uses).",
+                "text": "jwt.verify sin fijar \"algorithms\": se aceptan los algoritmos que declare el token (confusion HS256/RS256). Pasa siempre { algorithms: [\"HS256\"] } (o el que uses)."
+              },
+              "id": "rules.tumi-jwt-verify-without-algorithms",
+              "name": "rules.tumi-jwt-verify-without-algorithms",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-347",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-jwt-verify-without-algorithms"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Material de llave/secreto pasa a un log. Nunca registres llaves, DEKs, KEKs, frases de paso ni su base64/hex; registra solo identificadores (keyId, version) y revisa los logs ya emitidos."
+              },
+              "help": {
+                "markdown": "Material de llave/secreto pasa a un log. Nunca registres llaves, DEKs, KEKs, frases de paso ni su base64/hex; registra solo identificadores (keyId, version) y revisa los logs ya emitidos.",
+                "text": "Material de llave/secreto pasa a un log. Nunca registres llaves, DEKs, KEKs, frases de paso ni su base64/hex; registra solo identificadores (keyId, version) y revisa los logs ya emitidos."
+              },
+              "id": "rules.tumi-key-material-in-log",
+              "name": "rules.tumi-key-material-in-log",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-532",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-key-material-in-log"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Se escribe material de llave a disco. Las llaves viven en memoria o en un KMS/gestor de secretos; un archivo con la llave acaba en respaldos, imagenes y volumenes. Si es una excepcion (llave local temporal) documentala y protege permisos 0600 fuera del volumen de datos."
+              },
+              "help": {
+                "markdown": "Se escribe material de llave a disco. Las llaves viven en memoria o en un KMS/gestor de secretos; un archivo con la llave acaba en respaldos, imagenes y volumenes. Si es una excepcion (llave local temporal) documentala y protege permisos 0600 fuera del volumen de datos.",
+                "text": "Se escribe material de llave a disco. Las llaves viven en memoria o en un KMS/gestor de secretos; un archivo con la llave acaba en respaldos, imagenes y volumenes. Si es una excepcion (llave local temporal) documentala y protege permisos 0600 fuera del volumen de datos."
+              },
+              "id": "rules.tumi-key-written-to-disk",
+              "name": "rules.tumi-key-written-to-disk",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-312",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-key-written-to-disk"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Math.random() no es criptograficamente seguro y es predecible. Para tokens, ids de sesion, nonces, OTP o sales usa crypto.randomBytes(32).toString(\"hex\"), crypto.randomUUID() o crypto.getRandomValues."
+              },
+              "help": {
+                "markdown": "Math.random() no es criptograficamente seguro y es predecible. Para tokens, ids de sesion, nonces, OTP o sales usa crypto.randomBytes(32).toString(\"hex\"), crypto.randomUUID() o crypto.getRandomValues.",
+                "text": "Math.random() no es criptograficamente seguro y es predecible. Para tokens, ids de sesion, nonces, OTP o sales usa crypto.randomBytes(32).toString(\"hex\"), crypto.randomUUID() o crypto.getRandomValues."
+              },
+              "id": "rules.tumi-math-random-secret",
+              "name": "rules.tumi-math-random-secret",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-338",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-math-random-secret"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "prisma.$queryRaw/$executeRaw llamado como funcion con una plantilla interpolada: la interpolacion NO se parametriza (solo lo hace la etiqueta de plantilla). Escribe prisma.$queryRaw`SELECT ... ${valor}` (sin parentesis) o usa Prisma.sql."
+              },
+              "help": {
+                "markdown": "prisma.$queryRaw/$executeRaw llamado como funcion con una plantilla interpolada: la interpolacion NO se parametriza (solo lo hace la etiqueta de plantilla). Escribe prisma.$queryRaw`SELECT ... ${valor}` (sin parentesis) o usa Prisma.sql.",
+                "text": "prisma.$queryRaw/$executeRaw llamado como funcion con una plantilla interpolada: la interpolacion NO se parametriza (solo lo hace la etiqueta de plantilla). Escribe prisma.$queryRaw`SELECT ... ${valor}` (sin parentesis) o usa Prisma.sql."
+              },
+              "id": "rules.tumi-prisma-raw-template-call",
+              "name": "rules.tumi-prisma-raw-template-call",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-89",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-prisma-raw-template-call"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Uso de $queryRawUnsafe/$executeRawUnsafe con una consulta que no es un literal. Permite inyeccion SQL. Usa la forma etiquetada (prisma.$queryRaw`... ${valor}`) o Prisma.sql con parametros; nunca concatenes ni interpoles entrada en el texto SQL."
+              },
+              "help": {
+                "markdown": "Uso de $queryRawUnsafe/$executeRawUnsafe con una consulta que no es un literal. Permite inyeccion SQL. Usa la forma etiquetada (prisma.$queryRaw`... ${valor}`) o Prisma.sql con parametros; nunca concatenes ni interpoles entrada en el texto SQL.",
+                "text": "Uso de $queryRawUnsafe/$executeRawUnsafe con una consulta que no es un literal. Permite inyeccion SQL. Usa la forma etiquetada (prisma.$queryRaw`... ${valor}`) o Prisma.sql con parametros; nunca concatenes ni interpoles entrada en el texto SQL."
+              },
+              "id": "rules.tumi-prisma-raw-unsafe",
+              "name": "rules.tumi-prisma-raw-unsafe",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-89",
+                  "OWASP-A03:2021 Injection",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-prisma-raw-unsafe"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "pickle/marshal sobre datos no confiables ejecuta codigo arbitrario. Usa JSON o un formato con esquema."
+              },
+              "help": {
+                "markdown": "pickle/marshal sobre datos no confiables ejecuta codigo arbitrario. Usa JSON o un formato con esquema.",
+                "text": "pickle/marshal sobre datos no confiables ejecuta codigo arbitrario. Usa JSON o un formato con esquema."
+              },
+              "id": "rules.tumi-py-pickle-loads",
+              "name": "rules.tumi-py-pickle-loads",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-502",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-py-pickle-loads"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "lxml con resolve_entities=True permite XXE. Deja resolve_entities=False y no_network=True, o usa defusedxml."
+              },
+              "help": {
+                "markdown": "lxml con resolve_entities=True permite XXE. Deja resolve_entities=False y no_network=True, o usa defusedxml.",
+                "text": "lxml con resolve_entities=True permite XXE. Deja resolve_entities=False y no_network=True, o usa defusedxml."
+              },
+              "id": "rules.tumi-py-xxe-lxml",
+              "name": "rules.tumi-py-xxe-lxml",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-611",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-py-xxe-lxml"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "yaml.load sin SafeLoader permite construir objetos arbitrarios. Usa yaml.safe_load(...)."
+              },
+              "help": {
+                "markdown": "yaml.load sin SafeLoader permite construir objetos arbitrarios. Usa yaml.safe_load(...).",
+                "text": "yaml.load sin SafeLoader permite construir objetos arbitrarios. Usa yaml.safe_load(...)."
+              },
+              "id": "rules.tumi-py-yaml-unsafe-load",
+              "name": "rules.tumi-py-yaml-unsafe-load",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-502",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-py-yaml-unsafe-load"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "fullDescription": {
+                "text": "dangerouslySetInnerHTML con contenido no literal: riesgo de XSS. Sanitiza con DOMPurify.sanitize() (lista de etiquetas permitidas) o renderiza como texto/Markdown seguro."
+              },
+              "help": {
+                "markdown": "dangerouslySetInnerHTML con contenido no literal: riesgo de XSS. Sanitiza con DOMPurify.sanitize() (lista de etiquetas permitidas) o renderiza como texto/Markdown seguro.",
+                "text": "dangerouslySetInnerHTML con contenido no literal: riesgo de XSS. Sanitiza con DOMPurify.sanitize() (lista de etiquetas permitidas) o renderiza como texto/Markdown seguro."
+              },
+              "id": "rules.tumi-react-dangerously-set-inner-html",
+              "name": "rules.tumi-react-dangerously-set-inner-html",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-79",
+                  "OWASP-A03:2021 Injection",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-react-dangerously-set-inner-html"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Una URL controlada por el usuario llega a fetch/axios/got/http.get (SSRF: el servidor puede llegar a la red interna o al servicio de metadatos). Valida con lista de hosts permitidos y rechaza rangos privados tras resolver el DNS; encapsula eso en assertSafeUrl()."
+              },
+              "help": {
+                "markdown": "Una URL controlada por el usuario llega a fetch/axios/got/http.get (SSRF: el servidor puede llegar a la red interna o al servicio de metadatos). Valida con lista de hosts permitidos y rechaza rangos privados tras resolver el DNS; encapsula eso en assertSafeUrl().",
+                "text": "Una URL controlada por el usuario llega a fetch/axios/got/http.get (SSRF: el servidor puede llegar a la red interna o al servicio de metadatos). Valida con lista de hosts permitidos y rechaza rangos privados tras resolver el DNS; encapsula eso en assertSafeUrl()."
+              },
+              "id": "rules.tumi-ssrf-fetch-tainted",
+              "name": "rules.tumi-ssrf-fetch-tainted",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-918",
+                  "OWASP-A10:2021 SSRF",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-ssrf-fetch-tainted"
+              }
+            },
+            {
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "fullDescription": {
+                "text": "Algoritmo debil (md5, sha1, DES, RC4 o AES en modo ECB). Usa SHA-256/512 (o HMAC-SHA256) y AES-256-GCM para cifrar. Para contrasenas usa argon2id/scrypt/bcrypt, no un hash rapido."
+              },
+              "help": {
+                "markdown": "Algoritmo debil (md5, sha1, DES, RC4 o AES en modo ECB). Usa SHA-256/512 (o HMAC-SHA256) y AES-256-GCM para cifrar. Para contrasenas usa argon2id/scrypt/bcrypt, no un hash rapido.",
+                "text": "Algoritmo debil (md5, sha1, DES, RC4 o AES en modo ECB). Usa SHA-256/512 (o HMAC-SHA256) y AES-256-GCM para cifrar. Para contrasenas usa argon2id/scrypt/bcrypt, no un hash rapido."
+              },
+              "id": "rules.tumi-weak-hash-or-cipher",
+              "name": "rules.tumi-weak-hash-or-cipher",
+              "properties": {
+                "precision": "very-high",
+                "tags": [
+                  "CWE-327",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Semgrep Finding: rules.tumi-weak-hash-or-cipher"
+              }
+            }
+          ],
+          "semanticVersion": "1.183.0"
+        }
+      }
+    }
+  ],
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
+}

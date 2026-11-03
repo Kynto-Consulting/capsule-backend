@@ -12,12 +12,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
 // LogsHandler handles runtime/lambda/worker/storage log retrieval.
 type LogsHandler struct {
+	authzHolder
 	orgs     domain.OrganizationRepository
 	projects domain.ProjectRepository
 	exLogs   domain.ExecutionLogRepository
@@ -50,8 +52,17 @@ func (h *LogsHandler) resolveProject(r *http.Request) (*domain.Project, int, str
 	if err != nil {
 		return nil, http.StatusBadRequest, "INVALID_ID", "invalid project id"
 	}
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
+	acc, err := h.service(h.orgs).Access(r.Context(), user.ID, orgID, projectID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to check permissions"
+	}
+	switch {
+	case !acc.Member:
 		return nil, http.StatusForbidden, "FORBIDDEN", "not a member"
+	case acc.Hidden:
+		return nil, http.StatusNotFound, "NOT_FOUND", "project not found"
+	case !authz.RoleAllows(acc.Role, authz.ProjectRead):
+		return nil, http.StatusForbidden, "FORBIDDEN", "your project role does not allow this action"
 	}
 	project, err := h.projects.GetByID(r.Context(), projectID)
 	if err == domain.ErrNotFound || (err == nil && project.OrgID != orgID) {

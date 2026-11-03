@@ -33,7 +33,7 @@ func (a AWSAdapter) ListIngressRules(ctx context.Context, sgID string) ([]Rule, 
 			return nil, err
 		}
 		for _, r := range resp.SecurityGroupRules {
-			if aws.ToBool(r.IsEgress) || r.CidrIpv4 == nil {
+			if aws.ToBool(r.IsEgress) || (r.CidrIpv4 == nil && r.CidrIpv6 == nil) {
 				continue
 			}
 			if aws.ToString(r.IpProtocol) != "tcp" || aws.ToInt32(r.FromPort) != aws.ToInt32(r.ToPort) {
@@ -42,7 +42,7 @@ func (a AWSAdapter) ListIngressRules(ctx context.Context, sgID string) ([]Rule, 
 			out = append(out, Rule{
 				RuleID:      aws.ToString(r.SecurityGroupRuleId),
 				Port:        int(aws.ToInt32(r.FromPort)),
-				CIDR:        aws.ToString(r.CidrIpv4),
+				CIDR:        ruleCIDR(r),
 				Description: aws.ToString(r.Description),
 			})
 		}
@@ -54,16 +54,31 @@ func (a AWSAdapter) ListIngressRules(ctx context.Context, sgID string) ([]Rule, 
 }
 
 func (a AWSAdapter) AuthorizeIngress(ctx context.Context, sgID string, port int, cidr, description string) error {
+	// EC2 rule descriptions: <=255 chars, charset a-zA-Z0-9 space and ._-:/()#,@[]+=&;{}!$*
+	// (":" is allowed); "capsule:port:<uuid>:<port>:<ipv6>/128" is <=100 chars.
+	perm := ec2types.IpPermission{
+		IpProtocol: aws.String("tcp"),
+		FromPort:   aws.Int32(int32(port)),
+		ToPort:     aws.Int32(int32(port)),
+	}
+	if IsIPv6CIDR(cidr) {
+		perm.Ipv6Ranges = []ec2types.Ipv6Range{{CidrIpv6: aws.String(cidr), Description: aws.String(description)}}
+	} else {
+		perm.IpRanges = []ec2types.IpRange{{CidrIp: aws.String(cidr), Description: aws.String(description)}}
+	}
 	_, err := a.Client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
-		GroupId: aws.String(sgID),
-		IpPermissions: []ec2types.IpPermission{{
-			IpProtocol: aws.String("tcp"),
-			FromPort:   aws.Int32(int32(port)),
-			ToPort:     aws.Int32(int32(port)),
-			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String(cidr), Description: aws.String(description)}},
-		}},
+		GroupId:       aws.String(sgID),
+		IpPermissions: []ec2types.IpPermission{perm},
 	})
 	return err
+}
+
+// ruleCIDR returns the CIDR of a described rule, whichever family it is.
+func ruleCIDR(r ec2types.SecurityGroupRule) string {
+	if r.CidrIpv6 != nil {
+		return aws.ToString(r.CidrIpv6)
+	}
+	return aws.ToString(r.CidrIpv4)
 }
 
 func (a AWSAdapter) RevokeIngressByID(ctx context.Context, sgID string, ruleIDs []string) error {

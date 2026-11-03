@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/netaccess"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
@@ -88,6 +89,7 @@ func (c *AllowlistCache) Allowed(ctx context.Context, projectID uuid.UUID, ip st
 
 // NetworkHandler serves /network/my-ip and the per-project network settings.
 type NetworkHandler struct {
+	authzHolder
 	orgs     domain.OrganizationRepository
 	projects domain.ProjectRepository
 	repo     domain.ProjectNetworkRepository
@@ -98,13 +100,25 @@ func NewNetworkHandler(orgs domain.OrganizationRepository, projects domain.Proje
 	return &NetworkHandler{orgs: orgs, projects: projects, repo: repo, cache: cache}
 }
 
-// GET /network/my-ip  ->  {"ip":"x.x.x.x"}
+// GET /network/my-ip  ->  {"ip":"x.x.x.x","family":"ipv4"}  (or "2001:db8::1" / "ipv6")
+//
+// A connection has exactly one source address, so only that family is known:
+// the other one (a dual-stack client usually has both) cannot be learned from
+// this request. "family" is omitted when the address is not a valid IP.
 func (h *NetworkHandler) MyIP(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{"ip": middleware.ClientIP(r)})
+	ip := middleware.ClientIP(r)
+	out := map[string]string{"ip": ip}
+	if a, ok := netaccess.ParseIP(ip); ok {
+		if a.Is4() {
+			out["family"] = "ipv4"
+		} else {
+			out["family"] = "ipv6"
+		}
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *NetworkHandler) load(w http.ResponseWriter, r *http.Request, write bool) (uuid.UUID, bool) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -115,13 +129,11 @@ func (h *NetworkHandler) load(w http.ResponseWriter, r *http.Request, write bool
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid project id")
 		return uuid.Nil, false
 	}
-	role, err := h.orgs.GetMemberRole(r.Context(), orgID, user.ID)
-	if err != nil {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
-		return uuid.Nil, false
+	act := authz.ProjectRead
+	if write {
+		act = authz.ProjectNetwork
 	}
-	if write && !canWriteOrg(role) {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "your role cannot change network settings")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, act) {
 		return uuid.Nil, false
 	}
 	project, err := h.projects.GetByID(r.Context(), projectID)
@@ -179,7 +191,7 @@ func (h *NetworkHandler) Put(w http.ResponseWriter, r *http.Request) {
 }
 
 // normalizeAllowlist validates, canonicalises and de-duplicates an allowlist.
-// 0.0.0.0/0 is rejected: an empty list already means "public".
+// 0.0.0.0/0 and ::/0 are rejected: an empty list already means "public" (both families).
 func normalizeAllowlist(in []string) ([]string, error) {
 	if len(in) > netaccess.MaxAllowlistEntries {
 		return nil, &allowlistError{"at most 50 entries are allowed"}
@@ -190,7 +202,7 @@ func normalizeAllowlist(in []string) ([]string, error) {
 		c, err := netaccess.NormalizeCIDR(raw, false)
 		if err != nil {
 			if strings.Contains(err.Error(), netaccess.ErrPublicCIDR.Error()) {
-				return nil, &allowlistError{"0.0.0.0/0 is not a valid allowlist entry; use an empty list to make the app public"}
+				return nil, &allowlistError{"0.0.0.0/0 and ::/0 are not valid allowlist entries; use an empty list to make the app public"}
 			}
 			return nil, err
 		}

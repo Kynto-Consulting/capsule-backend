@@ -1,0 +1,315 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/google/osv-scanner",
+          "name": "osv-scanner",
+          "rules": [
+            {
+              "id": "CVE-2020-28500",
+              "name": "CVE-2020-28500",
+              "shortDescription": {
+                "text": "CVE-2020-28500: Regular Expression Denial of Service (ReDoS) in lodash"
+              },
+              "fullDescription": {
+                "text": "All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n\nSteps to reproduce (provided by reporter Liyuan Chen):\n```js\nvar lo = require('lodash');\n\nfunction build_blank(n) {\n    var ret = \"1\"\n    for (var i = 0; i < n; i++) {\n        ret += \" \"\n    }\n    return ret + \"1\";\n}\nvar s = build_blank(50000) var time0 = Date.now();\nlo.trim(s) \nvar time_cost0 = Date.now() - time0;\nconsole.log(\"time_cost0: \" + time_cost0);\nvar time1 = Date.now();\nlo.toNumber(s) var time_cost1 = Date.now() - time1;\nconsole.log(\"time_cost1: \" + time_cost1);\nvar time2 = Date.now();\nlo.trimEnd(s);\nvar time_cost2 = Date.now() - time2;\nconsole.log(\"time_cost2: \" + time_cost2);\n```",
+                "markdown": "All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n\nSteps to reproduce (provided by reporter Liyuan Chen):\n```js\nvar lo = require('lodash');\n\nfunction build_blank(n) {\n    var ret = \"1\"\n    for (var i = 0; i < n; i++) {\n        ret += \" \"\n    }\n    return ret + \"1\";\n}\nvar s = build_blank(50000) var time0 = Date.now();\nlo.trim(s) \nvar time_cost0 = Date.now() - time0;\nconsole.log(\"time_cost0: \" + time_cost0);\nvar time1 = Date.now();\nlo.toNumber(s) var time_cost1 = Date.now() - time1;\nconsole.log(\"time_cost1: \" + time_cost1);\nvar time2 = Date.now();\nlo.trimEnd(s);\nvar time_cost2 = Date.now() - time2;\nconsole.log(\"time_cost2: \" + time_cost2);\n```"
+              },
+              "deprecatedIds": [
+                "CVE-2020-28500",
+                "GHSA-29mw-wpgm-hmr9"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2020-28500](https://osv.dev/list?q=CVE-2020-28500)**.\n\n## [GHSA-29mw-wpgm-hmr9](https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9)\n\n<details>\n<summary>Details</summary>\n\n> All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n> \n> Steps to reproduce (provided by reporter Liyuan Chen):\n> ```js\n> var lo = require('lodash');\n> \n> function build_blank(n) {\n>     var ret = \"1\"\n>     for (var i = 0; i < n; i++) {\n>         ret += \" \"\n>     }\n>     return ret + \"1\";\n> }\n> var s = build_blank(50000) var time0 = Date.now();\n> lo.trim(s) \n> var time_cost0 = Date.now() - time0;\n> console.log(\"time_cost0: \" + time_cost0);\n> var time1 = Date.now();\n> lo.toNumber(s) var time_cost1 = Date.now() - time1;\n> console.log(\"time_cost1: \" + time_cost1);\n> var time2 = Date.now();\n> lo.trimEnd(s);\n> var time_cost2 = Date.now() - time2;\n> console.log(\"time_cost2: \" + time_cost2);\n> ```\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-29mw-wpgm-hmr9 | lodash | 4.17.21 |\n| GHSA-29mw-wpgm-hmr9 | lodash-es | 4.17.21 |\n| GHSA-29mw-wpgm-hmr9 | lodash-rails | 4.17.21 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-28500\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2020-28500](https://osv.dev/list?q=CVE-2020-28500)**.\n\n## [GHSA-29mw-wpgm-hmr9](https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9)\n\n<details>\n<summary>Details</summary>\n\n> All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n> \n> Steps to reproduce (provided by reporter Liyuan Chen):\n> ```js\n> var lo = require('lodash');\n> \n> function build_blank(n) {\n>     var ret = \"1\"\n>     for (var i = 0; i < n; i++) {\n>         ret += \" \"\n>     }\n>     return ret + \"1\";\n> }\n> var s = build_blank(50000) var time0 = Date.now();\n> lo.trim(s) \n> var time_cost0 = Date.now() - time0;\n> console.log(\"time_cost0: \" + time_cost0);\n> var time1 = Date.now();\n> lo.toNumber(s) var time_cost1 = Date.now() - time1;\n> console.log(\"time_cost1: \" + time_cost1);\n> var time2 = Date.now();\n> lo.trimEnd(s);\n> var time_cost2 = Date.now() - time2;\n> console.log(\"time_cost2: \" + time_cost2);\n> ```\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-29mw-wpgm-hmr9 | lodash | 4.17.21 |\n| GHSA-29mw-wpgm-hmr9 | lodash-es | 4.17.21 |\n| GHSA-29mw-wpgm-hmr9 | lodash-rails | 4.17.21 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-28500\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2021-23337",
+              "name": "CVE-2021-23337",
+              "shortDescription": {
+                "text": "CVE-2021-23337: Command Injection in lodash"
+              },
+              "fullDescription": {
+                "text": "`lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.",
+                "markdown": "`lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function."
+              },
+              "deprecatedIds": [
+                "CVE-2021-23337",
+                "GHSA-35jh-r3h4-6jhm"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2021-23337](https://osv.dev/list?q=CVE-2021-23337)**.\n\n## [GHSA-35jh-r3h4-6jhm](https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm)\n\n<details>\n<summary>Details</summary>\n\n> `lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-35jh-r3h4-6jhm | lodash-rails | 4.17.21 |\n| GHSA-35jh-r3h4-6jhm | lodash | 4.17.21 |\n| GHSA-35jh-r3h4-6jhm | lodash-es | 4.17.21 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2021-23337\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2021-23337](https://osv.dev/list?q=CVE-2021-23337)**.\n\n## [GHSA-35jh-r3h4-6jhm](https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm)\n\n<details>\n<summary>Details</summary>\n\n> `lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-35jh-r3h4-6jhm | lodash-rails | 4.17.21 |\n| GHSA-35jh-r3h4-6jhm | lodash | 4.17.21 |\n| GHSA-35jh-r3h4-6jhm | lodash-es | 4.17.21 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2021-23337\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2026-2950",
+              "name": "CVE-2026-2950",
+              "shortDescription": {
+                "text": "CVE-2026-2950: lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`"
+              },
+              "fullDescription": {
+                "text": "### Impact\n\nLodash versions 4.17.23 and earlier are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. The fix for [CVE-2025-13465](https://github.com/lodash/lodash/security/advisories/GHSA-xxjr-mmjv-4gpg) only guards against string key members, so an attacker can bypass the check by passing array-wrapped path segments. This allows deletion of properties from built-in prototypes such as `Object.prototype`, `Number.prototype`, and `String.prototype`.\n\nThe issue permits deletion of prototype properties but does not allow overwriting their original behavior.\n\n### Patches\n\nThis issue is patched in 4.18.0.\n\n### Workarounds\n\nNone. Upgrade to the patched version.",
+                "markdown": "### Impact\n\nLodash versions 4.17.23 and earlier are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. The fix for [CVE-2025-13465](https://github.com/lodash/lodash/security/advisories/GHSA-xxjr-mmjv-4gpg) only guards against string key members, so an attacker can bypass the check by passing array-wrapped path segments. This allows deletion of properties from built-in prototypes such as `Object.prototype`, `Number.prototype`, and `String.prototype`.\n\nThe issue permits deletion of prototype properties but does not allow overwriting their original behavior.\n\n### Patches\n\nThis issue is patched in 4.18.0.\n\n### Workarounds\n\nNone. Upgrade to the patched version."
+              },
+              "deprecatedIds": [
+                "CVE-2026-2950",
+                "GHSA-f23m-r3pf-42rh"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2026-2950](https://osv.dev/list?q=CVE-2026-2950)**.\n\n## [GHSA-f23m-r3pf-42rh](https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> Lodash versions 4.17.23 and earlier are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. The fix for [CVE-2025-13465](https://github.com/lodash/lodash/security/advisories/GHSA-xxjr-mmjv-4gpg) only guards against string key members, so an attacker can bypass the check by passing array-wrapped path segments. This allows deletion of properties from built-in prototypes such as `Object.prototype`, `Number.prototype`, and `String.prototype`.\n> \n> The issue permits deletion of prototype properties but does not allow overwriting their original behavior.\n> \n> ### Patches\n> \n> This issue is patched in 4.18.0.\n> \n> ### Workarounds\n> \n> None. Upgrade to the patched version.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-f23m-r3pf-42rh | lodash | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash-es | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash-amd | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash.unset | 4.18.0 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2026-2950\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2026-2950](https://osv.dev/list?q=CVE-2026-2950)**.\n\n## [GHSA-f23m-r3pf-42rh](https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> Lodash versions 4.17.23 and earlier are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. The fix for [CVE-2025-13465](https://github.com/lodash/lodash/security/advisories/GHSA-xxjr-mmjv-4gpg) only guards against string key members, so an attacker can bypass the check by passing array-wrapped path segments. This allows deletion of properties from built-in prototypes such as `Object.prototype`, `Number.prototype`, and `String.prototype`.\n> \n> The issue permits deletion of prototype properties but does not allow overwriting their original behavior.\n> \n> ### Patches\n> \n> This issue is patched in 4.18.0.\n> \n> ### Workarounds\n> \n> None. Upgrade to the patched version.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-f23m-r3pf-42rh | lodash | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash-es | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash-amd | 4.18.0 |\n| GHSA-f23m-r3pf-42rh | lodash.unset | 4.18.0 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2026-2950\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2020-8203",
+              "name": "CVE-2020-8203",
+              "shortDescription": {
+                "text": "CVE-2020-8203: Prototype Pollution in lodash"
+              },
+              "fullDescription": {
+                "text": "Versions of lodash prior to 4.17.19 are vulnerable to Prototype Pollution. The functions `pick`, `set`, `setWith`, `update`, `updateWith`, and `zipObjectDeep` allow a malicious user to modify the prototype of Object if the property identifiers are user-supplied. Being affected by this issue requires manipulating objects based on user-provided property values or arrays.\n\nThis vulnerability causes the addition or modification of an existing property that will exist on all objects and may lead to Denial of Service or Code Execution under specific circumstances.",
+                "markdown": "Versions of lodash prior to 4.17.19 are vulnerable to Prototype Pollution. The functions `pick`, `set`, `setWith`, `update`, `updateWith`, and `zipObjectDeep` allow a malicious user to modify the prototype of Object if the property identifiers are user-supplied. Being affected by this issue requires manipulating objects based on user-provided property values or arrays.\n\nThis vulnerability causes the addition or modification of an existing property that will exist on all objects and may lead to Denial of Service or Code Execution under specific circumstances."
+              },
+              "deprecatedIds": [
+                "CVE-2020-8203",
+                "GHSA-p6mc-m468-83gw"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2020-8203](https://osv.dev/list?q=CVE-2020-8203)**.\n\n## [GHSA-p6mc-m468-83gw](https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw)\n\n<details>\n<summary>Details</summary>\n\n> Versions of lodash prior to 4.17.19 are vulnerable to Prototype Pollution. The functions `pick`, `set`, `setWith`, `update`, `updateWith`, and `zipObjectDeep` allow a malicious user to modify the prototype of Object if the property identifiers are user-supplied. Being affected by this issue requires manipulating objects based on user-provided property values or arrays.\n> \n> This vulnerability causes the addition or modification of an existing property that will exist on all objects and may lead to Denial of Service or Code Execution under specific circumstances.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-p6mc-m468-83gw | lodash-rails | 4.17.19 |\n| GHSA-p6mc-m468-83gw | lodash | 4.17.19 |\n| GHSA-p6mc-m468-83gw | lodash-es | 4.17.20 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-8203\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2020-8203](https://osv.dev/list?q=CVE-2020-8203)**.\n\n## [GHSA-p6mc-m468-83gw](https://osv.dev/vulnerability/GHSA-p6mc-m468-83gw)\n\n<details>\n<summary>Details</summary>\n\n> Versions of lodash prior to 4.17.19 are vulnerable to Prototype Pollution. The functions `pick`, `set`, `setWith`, `update`, `updateWith`, and `zipObjectDeep` allow a malicious user to modify the prototype of Object if the property identifiers are user-supplied. Being affected by this issue requires manipulating objects based on user-provided property values or arrays.\n> \n> This vulnerability causes the addition or modification of an existing property that will exist on all objects and may lead to Denial of Service or Code Execution under specific circumstances.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-p6mc-m468-83gw | lodash-rails | 4.17.19 |\n| GHSA-p6mc-m468-83gw | lodash | 4.17.19 |\n| GHSA-p6mc-m468-83gw | lodash-es | 4.17.20 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-8203\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2026-4800",
+              "name": "CVE-2026-4800",
+              "shortDescription": {
+                "text": "CVE-2026-4800: lodash vulnerable to Code Injection via `_.template` imports key names"
+              },
+              "fullDescription": {
+                "text": "### Impact\n\nThe fix for [CVE-2021-23337](https://github.com/advisories/GHSA-35jh-r3h4-6jhm) added validation for the `variable` option in `_.template` but did not apply the same validation to `options.imports` key names. Both paths flow into the same `Function()` constructor sink.\n\nWhen an application passes untrusted input as `options.imports` key names, an attacker can inject default-parameter expressions that execute arbitrary code at template compilation time.\n\nAdditionally, `_.template` uses `assignInWith` to merge imports, which enumerates inherited properties via `for..in`. If `Object.prototype` has been polluted by any other vector, the polluted keys are copied into the imports object and passed to `Function()`.\n\n### Patches\n\nUsers should upgrade to version 4.18.0.\n\nThe fix applies two changes:\n1. Validate `importsKeys` against the existing `reForbiddenIdentifierChars` regex (same check already used for the `variable` option)\n2. Replace `assignInWith` with `assignWith` when merging imports, so only own properties are enumerated\n\n### Workarounds\n\nDo not pass untrusted input as key names in `options.imports`. Only use developer-controlled, static key names.",
+                "markdown": "### Impact\n\nThe fix for [CVE-2021-23337](https://github.com/advisories/GHSA-35jh-r3h4-6jhm) added validation for the `variable` option in `_.template` but did not apply the same validation to `options.imports` key names. Both paths flow into the same `Function()` constructor sink.\n\nWhen an application passes untrusted input as `options.imports` key names, an attacker can inject default-parameter expressions that execute arbitrary code at template compilation time.\n\nAdditionally, `_.template` uses `assignInWith` to merge imports, which enumerates inherited properties via `for..in`. If `Object.prototype` has been polluted by any other vector, the polluted keys are copied into the imports object and passed to `Function()`.\n\n### Patches\n\nUsers should upgrade to version 4.18.0.\n\nThe fix applies two changes:\n1. Validate `importsKeys` against the existing `reForbiddenIdentifierChars` regex (same check already used for the `variable` option)\n2. Replace `assignInWith` with `assignWith` when merging imports, so only own properties are enumerated\n\n### Workarounds\n\nDo not pass untrusted input as key names in `options.imports`. Only use developer-controlled, static key names."
+              },
+              "deprecatedIds": [
+                "CVE-2026-4800",
+                "GHSA-r5fr-rjxr-66jc"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2026-4800](https://osv.dev/list?q=CVE-2026-4800)**.\n\n## [GHSA-r5fr-rjxr-66jc](https://osv.dev/vulnerability/GHSA-r5fr-rjxr-66jc)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> The fix for [CVE-2021-23337](https://github.com/advisories/GHSA-35jh-r3h4-6jhm) added validation for the `variable` option in `_.template` but did not apply the same validation to `options.imports` key names. Both paths flow into the same `Function()` constructor sink.\n> \n> When an application passes untrusted input as `options.imports` key names, an attacker can inject default-parameter expressions that execute arbitrary code at template compilation time.\n> \n> Additionally, `_.template` uses `assignInWith` to merge imports, which enumerates inherited properties via `for..in`. If `Object.prototype` has been polluted by any other vector, the polluted keys are copied into the imports object and passed to `Function()`.\n> \n> ### Patches\n> \n> Users should upgrade to version 4.18.0.\n> \n> The fix applies two changes:\n> 1. Validate `importsKeys` against the existing `reForbiddenIdentifierChars` regex (same check already used for the `variable` option)\n> 2. Replace `assignInWith` with `assignWith` when merging imports, so only own properties are enumerated\n> \n> ### Workarounds\n> \n> Do not pass untrusted input as key names in `options.imports`. Only use developer-controlled, static key names.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-r5fr-rjxr-66jc | lodash-amd | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash.template | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash-es | 4.18.0 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2026-4800\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2026-4800](https://osv.dev/list?q=CVE-2026-4800)**.\n\n## [GHSA-r5fr-rjxr-66jc](https://osv.dev/vulnerability/GHSA-r5fr-rjxr-66jc)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> The fix for [CVE-2021-23337](https://github.com/advisories/GHSA-35jh-r3h4-6jhm) added validation for the `variable` option in `_.template` but did not apply the same validation to `options.imports` key names. Both paths flow into the same `Function()` constructor sink.\n> \n> When an application passes untrusted input as `options.imports` key names, an attacker can inject default-parameter expressions that execute arbitrary code at template compilation time.\n> \n> Additionally, `_.template` uses `assignInWith` to merge imports, which enumerates inherited properties via `for..in`. If `Object.prototype` has been polluted by any other vector, the polluted keys are copied into the imports object and passed to `Function()`.\n> \n> ### Patches\n> \n> Users should upgrade to version 4.18.0.\n> \n> The fix applies two changes:\n> 1. Validate `importsKeys` against the existing `reForbiddenIdentifierChars` regex (same check already used for the `variable` option)\n> 2. Replace `assignInWith` with `assignWith` when merging imports, so only own properties are enumerated\n> \n> ### Workarounds\n> \n> Do not pass untrusted input as key names in `options.imports`. Only use developer-controlled, static key names.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-r5fr-rjxr-66jc | lodash-amd | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash.template | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash | 4.18.0 |\n| GHSA-r5fr-rjxr-66jc | lodash-es | 4.18.0 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2026-4800\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2020-7598",
+              "name": "CVE-2020-7598",
+              "shortDescription": {
+                "text": "CVE-2020-7598: Prototype Pollution in minimist"
+              },
+              "fullDescription": {
+                "text": "Affected versions of `minimist` are vulnerable to prototype pollution. Arguments are not properly sanitized, allowing an attacker to modify the prototype of `Object`, causing the addition or modification of an existing property that will exist on all objects.  \nParsing the argument `--__proto__.y=Polluted` adds a `y` property with value `Polluted` to all objects. The argument `--__proto__=Polluted` raises and uncaught error and crashes the application.  \nThis is exploitable if attackers have control over the arguments being passed to `minimist`.\n\n\n## Recommendation\n\nUpgrade to versions 0.2.1, 1.2.3 or later.",
+                "markdown": "Affected versions of `minimist` are vulnerable to prototype pollution. Arguments are not properly sanitized, allowing an attacker to modify the prototype of `Object`, causing the addition or modification of an existing property that will exist on all objects.  \nParsing the argument `--__proto__.y=Polluted` adds a `y` property with value `Polluted` to all objects. The argument `--__proto__=Polluted` raises and uncaught error and crashes the application.  \nThis is exploitable if attackers have control over the arguments being passed to `minimist`.\n\n\n## Recommendation\n\nUpgrade to versions 0.2.1, 1.2.3 or later."
+              },
+              "deprecatedIds": [
+                "CVE-2020-7598",
+                "GHSA-vh95-rmgr-6w4m"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2020-7598](https://osv.dev/list?q=CVE-2020-7598)**.\n\n## [GHSA-vh95-rmgr-6w4m](https://osv.dev/vulnerability/GHSA-vh95-rmgr-6w4m)\n\n<details>\n<summary>Details</summary>\n\n> Affected versions of `minimist` are vulnerable to prototype pollution. Arguments are not properly sanitized, allowing an attacker to modify the prototype of `Object`, causing the addition or modification of an existing property that will exist on all objects.  \n> Parsing the argument `--__proto__.y=Polluted` adds a `y` property with value `Polluted` to all objects. The argument `--__proto__=Polluted` raises and uncaught error and crashes the application.  \n> This is exploitable if attackers have control over the arguments being passed to `minimist`.\n> \n> \n> ## Recommendation\n> \n> Upgrade to versions 0.2.1, 1.2.3 or later.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | minimist | 1.2.0 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-vh95-rmgr-6w4m | minimist | 0.2.1, 1.2.3 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-7598\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2020-7598](https://osv.dev/list?q=CVE-2020-7598)**.\n\n## [GHSA-vh95-rmgr-6w4m](https://osv.dev/vulnerability/GHSA-vh95-rmgr-6w4m)\n\n<details>\n<summary>Details</summary>\n\n> Affected versions of `minimist` are vulnerable to prototype pollution. Arguments are not properly sanitized, allowing an attacker to modify the prototype of `Object`, causing the addition or modification of an existing property that will exist on all objects.  \n> Parsing the argument `--__proto__.y=Polluted` adds a `y` property with value `Polluted` to all objects. The argument `--__proto__=Polluted` raises and uncaught error and crashes the application.  \n> This is exploitable if attackers have control over the arguments being passed to `minimist`.\n> \n> \n> ## Recommendation\n> \n> Upgrade to versions 0.2.1, 1.2.3 or later.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | minimist | 1.2.0 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-vh95-rmgr-6w4m | minimist | 0.2.1, 1.2.3 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2020-7598\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2021-44906",
+              "name": "CVE-2021-44906",
+              "shortDescription": {
+                "text": "CVE-2021-44906: Prototype Pollution in minimist"
+              },
+              "fullDescription": {
+                "text": "Minimist prior to 1.2.6 and 0.2.4 is vulnerable to Prototype Pollution via file `index.js`, function `setKey()` (lines 69-95).",
+                "markdown": "Minimist prior to 1.2.6 and 0.2.4 is vulnerable to Prototype Pollution via file `index.js`, function `setKey()` (lines 69-95)."
+              },
+              "deprecatedIds": [
+                "CVE-2021-44906",
+                "GHSA-xvch-5gv4-984h"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2021-44906](https://osv.dev/list?q=CVE-2021-44906)**.\n\n## [GHSA-xvch-5gv4-984h](https://osv.dev/vulnerability/GHSA-xvch-5gv4-984h)\n\n<details>\n<summary>Details</summary>\n\n> Minimist prior to 1.2.6 and 0.2.4 is vulnerable to Prototype Pollution via file `index.js`, function `setKey()` (lines 69-95).\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | minimist | 1.2.0 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-xvch-5gv4-984h | minimist | 0.2.4, 1.2.6 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2021-44906\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2021-44906](https://osv.dev/list?q=CVE-2021-44906)**.\n\n## [GHSA-xvch-5gv4-984h](https://osv.dev/vulnerability/GHSA-xvch-5gv4-984h)\n\n<details>\n<summary>Details</summary>\n\n> Minimist prior to 1.2.6 and 0.2.4 is vulnerable to Prototype Pollution via file `index.js`, function `setKey()` (lines 69-95).\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | minimist | 1.2.0 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-xvch-5gv4-984h | minimist | 0.2.4, 1.2.6 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2021-44906\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            },
+            {
+              "id": "CVE-2025-13465",
+              "name": "CVE-2025-13465",
+              "shortDescription": {
+                "text": "CVE-2025-13465: Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions"
+              },
+              "fullDescription": {
+                "text": "### Impact\n\nLodash versions 4.0.0 through 4.17.22 are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. An attacker can pass crafted paths which cause Lodash to delete methods from global prototypes. \n\nThe issue permits deletion of properties but does not allow overwriting their original behavior.  \n\n### Patches\n\nThis issue is patched on 4.17.23.",
+                "markdown": "### Impact\n\nLodash versions 4.0.0 through 4.17.22 are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. An attacker can pass crafted paths which cause Lodash to delete methods from global prototypes. \n\nThe issue permits deletion of properties but does not allow overwriting their original behavior.  \n\n### Patches\n\nThis issue is patched on 4.17.23."
+              },
+              "deprecatedIds": [
+                "CVE-2025-13465",
+                "GHSA-xxjr-mmjv-4gpg"
+              ],
+              "help": {
+                "text": "**Your dependency is vulnerable to [CVE-2025-13465](https://osv.dev/list?q=CVE-2025-13465)**.\n\n## [GHSA-xxjr-mmjv-4gpg](https://osv.dev/vulnerability/GHSA-xxjr-mmjv-4gpg)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> Lodash versions 4.0.0 through 4.17.22 are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. An attacker can pass crafted paths which cause Lodash to delete methods from global prototypes. \n> \n> The issue permits deletion of properties but does not allow overwriting their original behavior.  \n> \n> ### Patches\n> \n> This issue is patched on 4.17.23.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-xxjr-mmjv-4gpg | lodash-es | 4.17.23 |\n| GHSA-xxjr-mmjv-4gpg | lodash-amd | 4.17.23 |\n| GHSA-xxjr-mmjv-4gpg | lodash | 4.17.23 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2025-13465\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n",
+                "markdown": "**Your dependency is vulnerable to [CVE-2025-13465](https://osv.dev/list?q=CVE-2025-13465)**.\n\n## [GHSA-xxjr-mmjv-4gpg](https://osv.dev/vulnerability/GHSA-xxjr-mmjv-4gpg)\n\n<details>\n<summary>Details</summary>\n\n> ### Impact\n> \n> Lodash versions 4.0.0 through 4.17.22 are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. An attacker can pass crafted paths which cause Lodash to delete methods from global prototypes. \n> \n> The issue permits deletion of properties but does not allow overwriting their original behavior.  \n> \n> ### Patches\n> \n> This issue is patched on 4.17.23.\n\n</details>\n\n---\n\n### Affected Packages\n\n| Source | Package Name | Package Version |\n| --- | --- | --- |\n| lockfile:/workspace/acme/app/package-lock.json | lodash | 4.17.15 |\n\n## Remediation\n\nTo fix these vulnerabilities, update the vulnerabilities past the listed fixed versions below.\n\n### Fixed Versions\n\n| Vulnerability ID | Package Name | Fixed Version |\n| --- | --- | --- |\n| GHSA-xxjr-mmjv-4gpg | lodash-es | 4.17.23 |\n| GHSA-xxjr-mmjv-4gpg | lodash-amd | 4.17.23 |\n| GHSA-xxjr-mmjv-4gpg | lodash | 4.17.23 |\n\nIf you believe these vulnerabilities do not affect your code and wish to ignore them, add them to the ignore list in an\n`osv-scanner.toml` file located in the same directory as the lockfile containing the vulnerable dependency.\n\nSee the format and more options in our documentation here: https://google.github.io/osv-scanner/configuration/\n\nAdd or append these values to the following config files to ignore this vulnerability:\n\n`/workspace/acme/app/osv-scanner.toml`\n\n```\n[[IgnoredVulns]]\nid = \"CVE-2025-13465\"\nreason = \"Your reason for ignoring this vulnerability\"\n```\n"
+              }
+            }
+          ],
+          "version": "1.9.2"
+        }
+      },
+      "artifacts": [
+        {
+          "location": {
+            "uri": "file:///workspace/acme/app/package-lock.json"
+          },
+          "length": -1
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "CVE-2020-28500",
+          "ruleIndex": 0,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2020-28500' (also known as 'GHSA-29mw-wpgm-hmr9')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2021-23337",
+          "ruleIndex": 1,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2021-23337' (also known as 'GHSA-35jh-r3h4-6jhm')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-2950",
+          "ruleIndex": 2,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2026-2950' (also known as 'GHSA-f23m-r3pf-42rh')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2020-8203",
+          "ruleIndex": 3,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2020-8203' (also known as 'GHSA-p6mc-m468-83gw')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-4800",
+          "ruleIndex": 4,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2026-4800' (also known as 'GHSA-r5fr-rjxr-66jc')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2020-7598",
+          "ruleIndex": 5,
+          "level": "warning",
+          "message": {
+            "text": "Package 'minimist@1.2.0' is vulnerable to 'CVE-2020-7598' (also known as 'GHSA-vh95-rmgr-6w4m')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2021-44906",
+          "ruleIndex": 6,
+          "level": "warning",
+          "message": {
+            "text": "Package 'minimist@1.2.0' is vulnerable to 'CVE-2021-44906' (also known as 'GHSA-xvch-5gv4-984h')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-13465",
+          "ruleIndex": 7,
+          "level": "warning",
+          "message": {
+            "text": "Package 'lodash@4.17.15' is vulnerable to 'CVE-2025-13465' (also known as 'GHSA-xxjr-mmjv-4gpg')."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "file:///workspace/acme/app/package-lock.json"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -16,12 +16,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
 type DeploymentHandler struct {
+	authzHolder
+	connAttach
 	deployments     domain.DeploymentRepository
 	orgs            domain.OrganizationRepository
 	projects        domain.ProjectRepository
@@ -50,7 +53,6 @@ func NewDeploymentHandler(deployments domain.DeploymentRepository, orgs domain.O
 }
 
 func (h *DeploymentHandler) UploadURL(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -62,8 +64,7 @@ func (h *DeploymentHandler) UploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectDeploy) {
 		return
 	}
 
@@ -106,8 +107,7 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectDeploy) {
 		return
 	}
 
@@ -267,7 +267,6 @@ func (h *DeploymentHandler) deployLambda(ctx context.Context, d *domain.Deployme
 }
 
 func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -279,8 +278,7 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if !h.authorize(w, r, h.orgs, orgID, projectID, authz.ProjectRead) {
 		return
 	}
 
@@ -295,6 +293,7 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.attachConn(r.Context(), projectID, deployments...)
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": deployments,
 		"meta": domain.ListMeta{Page: page, PerPage: limit, Total: total},
@@ -302,7 +301,6 @@ func (h *DeploymentHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeploymentHandler) Get(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -314,8 +312,7 @@ func (h *DeploymentHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if _, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectRead); !ok {
 		return
 	}
 
@@ -324,11 +321,11 @@ func (h *DeploymentHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.attachConn(r.Context(), d.ProjectID, d)
 	respondJSON(w, http.StatusOK, d)
 }
 
 func (h *DeploymentHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -340,8 +337,7 @@ func (h *DeploymentHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if _, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectRead); !ok {
 		return
 	}
 
@@ -362,7 +358,6 @@ func (h *DeploymentHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
-	user := middleware.GetUser(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid org id")
@@ -374,8 +369,7 @@ func (h *DeploymentHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, _ := h.orgs.IsMember(r.Context(), orgID, user.ID); !ok {
-		respondError(w, http.StatusForbidden, "FORBIDDEN", "not a member")
+	if _, ok := h.authorizeRoute(w, r, h.orgs, orgID, authz.ProjectDeploy); !ok {
 		return
 	}
 
