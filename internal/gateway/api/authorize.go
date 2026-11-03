@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,6 +132,10 @@ func (s *Service) Authorize(ctx context.Context, req AuthorizeRequest) (*Authori
 		routeName = proj.Slug + "/" + rv.ServiceName
 	}
 
+	if ctype == CredNone {
+		// "none" is valid ONLY for a random port (UDP and credential-less TCP): anything else is plain unauthorized.
+		return s.authorizeRandomPort(ctx, req, src, rv, ix), nil
+	}
 	pr := s.authenticate(ctx, ctype, req.Credential, rv, routeName)
 	authorised := pr != nil && rv != nil && proj != nil
 	if authorised && pr.userID != uuid.Nil { // user principals need project.connect now (role may have changed)
@@ -274,4 +279,45 @@ func (s *Service) recordDeny(ctx context.Context, rv *store.RouteView, pr *princ
 	s.log.Info("gateway: connection denied", append(attrs, "service_id", rv.ServiceID.String())...)
 	s.auditEvent(ctx, gitaudit.Entry{OrgID: rv.OrgID, ProjectID: &rv.ProjectID, UserID: uid, Action: "gateway.connect.deny", ResourceType: "gateway_service",
 		ResourceID: &rv.ServiceID, IP: src, Metadata: meta})
+}
+
+// authorizeRandomPort decides a connection to a leased random port that carries no credential (credential_type "none",
+// access "random_port"). Only these hold, all of them:
+//  1. the route exists and the port has an active lease for THAT route's service;
+//  2. the port is inside the pool range;
+//  3. the service's IP list (the one netaccess enforces) contains the source address. An empty or missing list denies
+//     everybody here: a random port is never open to the world, even if the project's list is empty ("public").
+//
+// Every failure is the same uniform denial (and feeds the failed-attempt limiter). The allow is cacheable for at most 30 s.
+func (s *Service) authorizeRandomPort(ctx context.Context, req AuthorizeRequest, src string, rv *store.RouteView, ix *routeIndex) *AuthorizeResponse {
+	deny := func() *AuthorizeResponse {
+		blocked := s.lim.Fail(src)
+		s.recordDeny(ctx, rv, nil, CredNone, req.Access, src, DenyUnauthorized, blocked)
+		return &AuthorizeResponse{Allow: false, DenyReason: DenyUnauthorized}
+	}
+	if req.Access != "random_port" || rv == nil || req.Port < 1 {
+		return deny()
+	}
+	l, leased := ix.leases[rv.ServiceID]
+	if !leased || l.Port != req.Port {
+		return deny()
+	}
+	cfg := s.cfg
+	if cfg.PoolOff || req.Port < cfg.PoolLo || req.Port > cfg.PoolHi {
+		return deny()
+	}
+	svc, err := s.d.Store.GetService(ctx, rv.ServiceID)
+	if err != nil {
+		return deny()
+	}
+	cidrs, restricted, err := s.d.IPLists.AllowedCIDRs(ctx, svc)
+	if err != nil || !restricted || len(cidrs) == 0 || !netaccess.ContainsIP(cidrs, src) {
+		return deny()
+	}
+	_ = s.d.Store.TouchLease(ctx, req.Port)
+	pid := "port:" + strconv.Itoa(req.Port)
+	s.auditEvent(ctx, gitaudit.Entry{OrgID: rv.OrgID, ProjectID: &rv.ProjectID, Action: "gateway.connect.allow", ResourceType: "gateway_service",
+		ResourceID: &rv.ServiceID, IP: src, Metadata: map[string]any{"service": rv.ServiceName, "access": req.Access, "credential_type": CredNone, "principal": pid}})
+	return &AuthorizeResponse{Allow: true, PrincipalID: pid, MaxConns: s.cfg.MaxConns, MaxConnsPerIP: s.cfg.MaxConnsPerIP,
+		IdleTimeoutSecond: int(s.cfg.IdleTimeout / time.Second), CacheTTLSeconds: int(s.cfg.AuthCacheTTL / time.Second)}
 }

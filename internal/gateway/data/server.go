@@ -113,6 +113,9 @@ type Server struct {
 	cgc     *CGCVerifier
 	ip      *IPTracker
 	rl      *RouteLimits
+	udpLim  udpLimits
+	udpm    *udpMetrics
+	pool    *portPool
 
 	sniffers      []Sniffer
 	kindHandlers  map[Kind]KindHandler
@@ -154,6 +157,8 @@ func New(cfg Config, d Deps) (*Server, error) {
 	fill(&cfg.HalfCloseIdle, def.HalfCloseIdle)
 	fill(&cfg.AuthTimeout, def.AuthTimeout)
 	fill(&cfg.DrainGrace, def.DrainGrace)
+	cfg.UDP.fill()
+	cfg.Pool.fill()
 	if cfg.MaxHelloBytes <= 0 {
 		cfg.MaxHelloBytes = def.MaxHelloBytes
 	}
@@ -179,6 +184,8 @@ func New(cfg Config, d Deps) (*Server, error) {
 	s.authz = &Authorizer{CP: d.Control, Timeout: cfg.AuthTimeout, StaleGrace: cfg.AuthStale}
 	s.ip = &IPTracker{MaxPre: cfg.MaxPreauthPerIP, Rate: cfg.NewConnsPerIP}
 	s.rl = &RouteLimits{DefaultMax: cfg.RouteMaxConns, DefaultMaxIP: cfg.RouteMaxConnsIP, RouteRate: cfg.RouteConnRate}
+	s.udpm = newUDPMetrics(d.Metrics.Reg)
+	s.pool = newPortPool(s)
 	if len(cfg.CGCKeys) > 0 {
 		s.cgc = &CGCVerifier{Keys: cfg.CGCKeys}
 	}
@@ -256,6 +263,8 @@ func (s *Server) Addrs() []net.Addr {
 func (s *Server) onRoutes(old, nw *Table) {
 	s.metrics.RouteRev.Set(float64(nw.Rev))
 	s.metrics.RoutesLoaded.Set(float64(nw.Len()))
+	s.forgetUDPRoutes(old, nw)
+	s.pool.Reconcile(nw)
 	if old != nil {
 		for _, r := range old.Routes() {
 			if nw.byID[r.ID] == nil {
@@ -315,6 +324,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.listeners = ls
 	s.started = true
+	s.pool.setReserved(ls)
 	if s.cfg.RoutesCache != "" {
 		s.routes.LoadCache()
 	}
@@ -354,7 +364,8 @@ func (s *Server) sweeper() {
 				s.cgc.Sweep(time.Now())
 			}
 			if tb := s.routes.Table(); tb != nil {
-				s.rl.Forget(func(id string) bool { return tb.byID[id] != nil })
+				s.rl.Forget(tb.HasRoute)
+				s.pool.Retry()
 			}
 		}
 	}
@@ -611,6 +622,7 @@ func (s *Server) Drain(ctx context.Context, grace time.Duration) error {
 func (s *Server) Close() {
 	s.draining.Store(true)
 	s.closeListeners()
+	s.pool.CloseAll()
 	s.conns.Range(func(k, _ any) bool { k.(*Conn).Conn.Close(); return true })
 	s.stop()
 	s.wg.Wait()
@@ -622,9 +634,11 @@ func (s *Server) closeListeners() {
 		l.ln.Close()
 	}
 	s.mu.Unlock()
+	s.pool.Shutdown() // random-port listeners: no new connections or flows; open ones continue
 }
 
 func (s *Server) stop() {
+	s.pool.CloseAll()
 	s.cancel()
 	s.bg.Wait()
 }

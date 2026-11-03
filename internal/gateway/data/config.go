@@ -56,6 +56,9 @@ type Config struct {
 
 	CGCKeys []CGCKey // public keys that verify cgc_ tokens locally
 
+	UDP  UDPConfig  // UDP over the capsule/1 tunnel (transport 2)
+	Pool PoolConfig // random-port listeners
+
 	AllowLoopbackDest bool // allow routes whose destination is a loopback address (tests, host-network setups)
 	LogLevel          string
 }
@@ -251,6 +254,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 			c.CGCKeys = append(c.CGCKeys, CGCKey{KID: kid, Pub: raw})
 		}
 	}
+	errs = append(errs, applyUDPEnv(&c, getenv)...)
 	if len(errs) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(errs, "; "))
 	}

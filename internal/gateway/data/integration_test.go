@@ -545,7 +545,6 @@ func TestTunnelHeaderErrors(t *testing.T) {
 		{"unknown version", mut(func(b []byte) { b[4] = 9 }), false, 0x0101},
 		{"hdr_len too large", mut(func(b []byte) { b[6], b[7] = 0x08, 0 }), false, 0x0103},
 		{"reserved flags", mut(func(b []byte) { b[5] = 2 }), false, 0x0104},
-		{"transport udp not enabled", mut(func(b []byte) { b[8] = 2 }), false, 0x0109},
 		{"transport 3", mut(func(b []byte) { b[8] = 3 }), false, 0x0109},
 		{"truncated at EOF", good[:30], true, 0x010A},
 		{"empty at EOF", nil, true, 0x010A},

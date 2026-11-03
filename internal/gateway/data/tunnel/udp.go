@@ -14,7 +14,7 @@ var ErrFrameTooLarge = errors.New("capsule/1: frame_too_large")
 
 // SplitFrames extracts complete len16 frames from b. It returns the datagrams (slices into b), the number of
 // keepalives (len 0) and how many bytes of an incomplete trailing frame are pending (header or body bytes present).
-// The UDP transport itself is not served by the data plane yet (phase F3); the codec is ready for it.
+// The data plane serves transport 2 with a streaming reader (udp_session.go); this block codec is its reference in tests.
 func SplitFrames(b []byte) (datagrams [][]byte, keepalives, pending int, err error) {
 	for len(b) > 0 {
 		if len(b) < 2 {

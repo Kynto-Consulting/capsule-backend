@@ -31,6 +31,9 @@ type Service struct {
 
 	syncMu   sync.Mutex
 	syncedAt map[uuid.UUID]time.Time
+
+	slugMu sync.Mutex
+	slugs  map[uuid.UUID]slugEntry
 }
 
 // New builds the Service. cfg should come from ConfigFromEnv (WithDefaults is applied again, harmlessly).

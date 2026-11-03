@@ -37,6 +37,8 @@ type Route struct {
 // Lease mirrors LeaseView (random-port fallback; consumed by a later package).
 type Lease struct {
 	Port      int     `json:"port"`
+	RouteID   string  `json:"route_id,omitempty"`  // optional: the route the lease exposes
+	Transport string  `json:"transport,omitempty"` // optional: tcp | udp | both (default: every route of the service)
 	ServiceID string  `json:"service_id"`
 	ProjectID *string `json:"project_id"`
 	OrgID     string  `json:"org_id"`
@@ -73,6 +75,7 @@ type AuthorizeRequest struct {
 	CredentialType string `json:"credential_type"`
 	Credential     string `json:"credential,omitempty"`
 	Access         string `json:"access,omitempty"`
+	Port           int    `json:"port,omitempty"` // leased port when Access is random_port
 }
 
 // AuthorizeResponse mirrors AuthorizeResponse of the OpenAPI contract.

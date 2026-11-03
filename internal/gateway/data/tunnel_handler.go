@@ -116,7 +116,8 @@ func (s *Server) serveTunnel(ctx context.Context, c *Conn, raw []byte, hello *He
 		s.reply(tc, c, tunnel.StatusBusy, tunnel.CodeDraining, "gateway draining", u16(1), tunnel.Version)
 		return
 	}
-	if req.Transport != tunnel.TransportTCP { // 2 (UDP over stream) belongs to phase F3; 3 (QUIC) is future
+	udp := req.Transport == tunnel.TransportUDPFlow && !s.cfg.UDP.TunnelDisabled
+	if req.Transport != tunnel.TransportTCP && !udp { // 3 (QUIC) is future: see udp_quic.go
 		c.Ev.Result = "bad_transport"
 		s.reply(tc, c, tunnel.StatusBadRequest, tunnel.CodeBadTransport, "transport not enabled", nil, tunnel.Version)
 		return
@@ -135,7 +136,12 @@ func (s *Server) serveTunnel(ctx context.Context, c *Conn, raw []byte, hello *He
 		s.reply(tc, c, tunnel.StatusNotAuthorized, tunnel.CodeNotAuthorized, tunnel.MsgNotAuthorized, nil, tunnel.Version)
 	}
 
-	route := s.routes.Table().LookupService(req.Project, req.Service)
+	var route *Route
+	if udp {
+		route = s.routes.Table().LookupUDPService(req.Project, req.Service)
+	} else {
+		route = s.routes.Table().LookupService(req.Project, req.Service)
+	}
 	if route != nil {
 		c.Ev.RouteID = route.ID
 		if route.ProjectID != nil {
@@ -216,6 +222,12 @@ func (s *Server) serveTunnel(ctx context.Context, c *Conn, raw []byte, hello *He
 	}
 	defer release()
 	c.leavePreauth()
+	if udp {
+		s.serveUDPTunnel(ctx, c, tc, func(status byte, code uint16, msg string, retry *uint16) {
+			s.reply(tc, c, status, code, msg, retry, tunnel.Version)
+		}, route, req, extra)
+		return
+	}
 	bk, derr := s.dial(ctx, route)
 	if derr != nil {
 		c.Ev.Result = "dest_down"

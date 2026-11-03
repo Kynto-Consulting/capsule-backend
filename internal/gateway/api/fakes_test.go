@@ -650,3 +650,14 @@ func (e *env) routeID(name string) uuid.UUID {
 	}
 	return rv.ID
 }
+
+func (e *env) routeServiceID(name string) uuid.UUID {
+	e.t.Helper()
+	for _, sv := range e.st.services {
+		if sv.Name == name {
+			return sv.ID
+		}
+	}
+	e.t.Fatalf("no service %s", name)
+	return uuid.Nil
+}

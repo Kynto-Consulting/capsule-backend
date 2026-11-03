@@ -22,6 +22,9 @@ type Table struct {
 	wildcards []wildRoute
 	byService map[string]*Route // "project/service"
 	byID      map[string]*Route
+	udpBySvc  map[string]*Route // "project/service" of UDP routes (udp_support.go)
+	udpByID   map[string]*Route
+	bySvcID   map[string][]*Route // every usable route of a service, by id
 }
 
 type wildRoute struct {
@@ -64,6 +67,7 @@ func NewTable(s *Snapshot) *Table {
 			t.byService[r.Project+"/"+r.Service] = rp
 		}
 	}
+	t.indexExtra()
 	return t
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -69,7 +70,7 @@ func (a *Authorizer) now() time.Time {
 
 func keyOf(req AuthorizeRequest) authKey {
 	h := sha256.New()
-	for _, s := range []string{req.RouteID, req.SrcIP, req.CredentialType, req.Credential, req.Access} {
+	for _, s := range []string{req.RouteID, req.SrcIP, req.CredentialType, req.Credential, req.Access, strconv.Itoa(req.Port)} {
 		h.Write([]byte(s))
 		h.Write([]byte{0})
 	}
