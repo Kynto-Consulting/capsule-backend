@@ -53,6 +53,7 @@ func (h *GitAuthInternalHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	// Whatever the caller sent in X-WEBAUTH-USER is never read nor echoed: only forward_auth's
 	// response header, set below, reaches Forgejo.
 	w.Header().Del("X-WEBAUTH-USER")
+	w.Header().Del("X-WEBAUTH-EMAIL")
 	if ok, status := h.internalCaller(r); !ok {
 		http.Error(w, http.StatusText(status), status)
 		return
@@ -71,6 +72,9 @@ func (h *GitAuthInternalHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusOK)
 	case gittokens.OutcomeAllow:
 		w.Header().Set("X-WEBAUTH-USER", d.Login)
+		if d.Email != "" {
+			w.Header().Set("X-WEBAUTH-EMAIL", d.Email)
+		}
 		w.WriteHeader(http.StatusOK)
 	case gittokens.OutcomeUnauthorized:
 		h.logDenied(r, d)

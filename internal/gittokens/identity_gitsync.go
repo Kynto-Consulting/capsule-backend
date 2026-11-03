@@ -20,6 +20,18 @@ type GitsyncIdentity struct {
 	Fallback IdentityResolver
 }
 
+// ForgejoEmail implements EmailResolver.
+func (g GitsyncIdentity) ForgejoEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	u, err := g.Users.GetByID(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	if u == nil || u.DeletedAt != nil {
+		return "", domain.ErrNotFound
+	}
+	return AliasEmail(u.Email, userID), nil
+}
+
 // ForgejoLogin implements IdentityResolver.
 func (g GitsyncIdentity) ForgejoLogin(ctx context.Context, userID uuid.UUID) (string, error) {
 	var ids *gitsync.Identities

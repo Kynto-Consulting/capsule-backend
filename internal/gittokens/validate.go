@@ -45,6 +45,7 @@ type AuthRequest struct {
 type Decision struct {
 	Outcome    Outcome
 	Login      string
+	Email      string // address Forgejo gets for a first-time account (optional, see EmailResolver)
 	RetryAfter time.Duration
 	TokenID    uuid.UUID
 	Reason     string
@@ -286,6 +287,7 @@ func (s *Service) Authenticate(ctx context.Context, req AuthRequest) Decision {
 	}
 	s.touchUsed(tok, req.IP, ref)
 	d.Outcome, d.Login = OutcomeAllow, login
+	d.Email = s.emailFor(ctx, tok)
 	return d
 }
 
