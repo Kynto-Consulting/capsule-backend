@@ -10,12 +10,12 @@ import (
 func TestPortDescriptionRoundTrip(t *testing.T) {
 	p := uuid.New()
 	d := PortDescription(p, 41005, "10.0.0.0/8")
-	id, port, cidr, ok := parseOwnedPort(d)
+	id, _, port, cidr, ok := parseOwnedPort(d)
 	if !ok || id != p || port != 41005 || cidr != "10.0.0.0/8" {
 		t.Fatalf("round trip failed: %v %v %v %v", id, port, cidr, ok)
 	}
 	for _, bad := range []string{"", "capsule:db:" + p.String() + ":1.2.3.4/32", "capsule:port:xyz", "capsule:port:" + p.String() + ":abc:1.2.3.4/32", "capsule:port:" + p.String() + ":0:1.2.3.4/32"} {
-		if _, _, _, ok := parseOwnedPort(bad); ok {
+		if _, _, _, _, ok := parseOwnedPort(bad); ok {
 			t.Errorf("%q must not parse", bad)
 		}
 	}
@@ -31,7 +31,7 @@ func TestDiffPortsNeverTouchesForeignOrDBRules(t *testing.T) {
 		{RuleID: "sgr-keep", Port: 41000, CIDR: "10.0.0.0/8", Description: PortDescription(p, 41000, "10.0.0.0/8")},
 		{RuleID: "sgr-stale", Port: 41000, CIDR: "11.0.0.0/8", Description: PortDescription(p, 41000, "11.0.0.0/8")},
 	}
-	desired := []PortDesired{{p, 41000, "10.0.0.0/8"}, {p, 41001, "12.0.0.0/8"}}
+	desired := []PortDesired{{ProjectID: p, HostPort: 41000, CIDR: "10.0.0.0/8"}, {ProjectID: p, HostPort: 41001, CIDR: "12.0.0.0/8"}}
 	// Scoped and global sweeps both revoke only owned stale rules.
 	for _, scope := range []*uuid.UUID{&p, nil} {
 		plan := DiffPorts(desired, current, scope)
@@ -67,7 +67,7 @@ func TestDiffPortsOrphansAndScope(t *testing.T) {
 		t.Fatalf("sweep revoke = %+v", plan.Revoke)
 	}
 	// Drift is repaired.
-	plan = DiffPorts([]PortDesired{{a, 41002, "10.0.0.0/8"}}, current, &a)
+	plan = DiffPorts([]PortDesired{{ProjectID: a, HostPort: 41002, CIDR: "10.0.0.0/8"}}, current, &a)
 	if len(plan.Add) != 1 || plan.Add[0].HostPort != 41002 {
 		t.Fatalf("drift add = %+v", plan.Add)
 	}
@@ -80,7 +80,7 @@ func TestReconcileProjectPortsAppliesAndKeepsDBRules(t *testing.T) {
 		{RuleID: "sgr-old", Port: 41003, CIDR: "5.0.0.0/8", Description: PortDescription(p, 41003, "5.0.0.0/8")},
 	}}
 	r := NewReconciler(f, "sg-1")
-	err := r.ReconcileProjectPorts(context.Background(), p, []PortDesired{{p, 41000, "10.0.0.0/8"}, {uuid.New(), 41500, "1.0.0.0/8"}})
+	err := r.ReconcileProjectPorts(context.Background(), p, []PortDesired{{ProjectID: p, HostPort: 41000, CIDR: "10.0.0.0/8"}, {ProjectID: uuid.New(), HostPort: 41500, CIDR: "1.0.0.0/8"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestReconcileProjectPortsAppliesAndKeepsDBRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rr := range f.rules {
-		if _, _, _, ok := parseOwnedPort(rr.Description); ok {
+		if _, _, _, _, ok := parseOwnedPort(rr.Description); ok {
 			t.Fatalf("port rule left behind: %+v", rr)
 		}
 	}

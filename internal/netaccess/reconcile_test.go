@@ -24,13 +24,21 @@ func (f *fakeEC2) ListIngressRules(context.Context, string) ([]Rule, error) {
 	return append([]Rule(nil), f.rules...), f.listErr
 }
 
-func (f *fakeEC2) AuthorizeIngress(_ context.Context, _ string, port int, cidr, desc string) error {
+func (f *fakeEC2) AuthorizeIngress(ctx context.Context, sg string, port int, cidr, desc string) error {
+	return f.AuthorizeIngressProto(ctx, sg, "tcp", port, cidr, desc)
+}
+
+func (f *fakeEC2) AuthorizeIngressProto(_ context.Context, _ string, proto string, port int, cidr, desc string) error {
 	if f.authErr != nil {
 		return f.authErr
 	}
 	f.next++
-	f.authorize = append(f.authorize, fmt.Sprintf("%d|%s|%s", port, cidr, desc))
-	f.rules = append(f.rules, Rule{RuleID: fmt.Sprintf("sgr-new%d", f.next), Port: port, CIDR: cidr, Description: desc})
+	entry := fmt.Sprintf("%d|%s|%s", port, cidr, desc)
+	if proto != "tcp" {
+		entry = proto + "|" + entry
+	}
+	f.authorize = append(f.authorize, entry)
+	f.rules = append(f.rules, Rule{RuleID: fmt.Sprintf("sgr-new%d", f.next), Protocol: proto, Port: port, CIDR: cidr, Description: desc})
 	return nil
 }
 

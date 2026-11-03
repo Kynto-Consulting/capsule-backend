@@ -336,3 +336,101 @@ func TestObserveAndDegrade(t *testing.T) {
 		t.Fatalf("want degrade, got %v", err)
 	}
 }
+
+// UDP direct ports: destinations in the published range are INTERNAL_DIRECT_PORT
+// and the advice names the capsule:// URI.
+const procUDP = `  sk  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops
+   0: 0200A8C0:1E61 00000000:0000 07 00000000:00000000 00:00000000 00000000 0 0 1 2 0 0
+   1: 0200A8C0:D431 0100007F:A029 01 00000000:00000000 00:00000000 00000000 0 0 2 2 0 0
+   2: 0200A8C0:D432 0B00000B:0035 01 00000000:00000000 00:00000000 00000000 0 0 3 2 0 0
+   3: 0200A8C0:1E61 0600A8C0:C001 01 00000000:00000000 00:00000000 00000000 0 0 4 2 0 0
+`
+
+func TestUDPDirectPortFindings(t *testing.T) {
+	c := testClassifier()
+	// udp:// URLs are extracted like the other schemes.
+	fs := AnalyzeEnv(map[string]string{"GAME_SERVER": "udp://db.tumi-ai.com:41007"}, c)
+	if len(fs) != 1 || fs[0].Kind != KindDirectPort || !strings.HasPrefix(fs[0].Endpoint, "udp://") {
+		t.Fatalf("env udp: %+v", fs)
+	}
+	if !strings.Contains(fs[0].Recommendation, "capsule://") || !strings.Contains(fs[0].Recommendation, "UDP") {
+		t.Errorf("udp advice must point to capsule://: %q", fs[0].Recommendation)
+	}
+	// the TCP advice is unchanged
+	tcp := AnalyzeEnv(map[string]string{"DB": "postgres://u:p@db.tumi-ai.com:41007/x"}, c)
+	if len(tcp) != 1 || strings.Contains(tcp[0].Recommendation, "capsule://") {
+		t.Errorf("tcp advice changed: %+v", tcp)
+	}
+	// runtime: connected UDP sockets
+	conns := ParseProcNetUDP(strings.NewReader(procUDP), false)
+	if len(conns) != 4 || !conns[0].UDP {
+		t.Fatalf("parse udp: %+v", conns)
+	}
+	out := Outbound(conns)
+	// the socket bound on 7777 (state 07) is a server: its replies and any connected socket on that port are inbound
+	if len(out) != 2 {
+		t.Fatalf("outbound udp = %+v", out)
+	}
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		switch args[len(args)-1] {
+		case "/proc/net/tcp":
+			return []byte(procTCP), nil
+		case "/proc/net/udp":
+			return []byte(procUDP), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	c.PortFrom, c.PortTo = 41000, 41999
+	fs, err := Observe(context.Background(), run, nil, "c1", c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpN := 0
+	for _, f := range fs {
+		if strings.HasPrefix(f.Endpoint, "udp://") {
+			udpN++
+			if f.Endpoint != "udp://127.0.0.1:41001" {
+				t.Errorf("only the published-range destination may be reported, got %+v", f)
+			}
+		}
+	}
+	if udpN != 1 {
+		t.Errorf("want exactly one udp finding (the :53 resolver and the server socket are ignored), got %d: %+v", udpN, fs)
+	}
+	// A connected UDP socket to a published port of the host is reported.
+	c2 := testClassifier()
+	c2.PortFrom, c2.PortTo = 41000, 41999
+	run2 := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if args[len(args)-1] == "/proc/net/tcp" {
+			return []byte(procTCP), nil
+		}
+		if args[len(args)-1] == "/proc/net/udp" {
+			// 127.0.0.1:41000 (A028 hex) from local 50000
+			return []byte("  sk\n   0: 0200A8C0:D431 0100007F:A028 01 00000000:00000000 00:00000000 00000000 0 0 2 2 0 0\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	fs, err = Observe(context.Background(), run2, nil, "c1", c2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range fs {
+		if f.Kind == KindDirectPort && f.Endpoint == "udp://127.0.0.1:41000" && strings.Contains(f.Recommendation, "capsule://") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("udp direct port not reported: %+v", fs)
+	}
+	// UDP files alone never make a container observable.
+	onlyUDP := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if args[len(args)-1] == "/proc/net/udp" {
+			return []byte(procUDP), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	if _, err := Observe(context.Background(), onlyUDP, nil, "c1", nil); err != ErrRuntimeUnavailable {
+		t.Fatalf("want degrade, got %v", err)
+	}
+}

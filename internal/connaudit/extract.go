@@ -35,7 +35,7 @@ func (e Endpoint) String() string {
 	return e.Scheme + "://" + cred + h
 }
 
-var urlRe = regexp.MustCompile("(?i)(jdbc:[a-z0-9]+|postgres(?:ql)?|mysql|mariadb|rediss?|mongodb(?:\\+srv)?|amqps?|https?|tcp|ssl|wss?|kafka|nats|memcached|sqlserver)://([^\\s'\"`<>(){},;\\\\|^]+)")
+var urlRe = regexp.MustCompile("(?i)(jdbc:[a-z0-9]+|postgres(?:ql)?|mysql|mariadb|rediss?|mongodb(?:\\+srv)?|amqps?|https?|tcp|udp|ssl|wss?|kafka|nats|memcached|sqlserver)://([^\\s'\"`<>(){},;\\\\|^]+)")
 
 var defaultPorts = map[string]int{
 	"postgres": 5432, "postgresql": 5432, "mysql": 3306, "mariadb": 3306, "redis": 6379, "rediss": 6379,

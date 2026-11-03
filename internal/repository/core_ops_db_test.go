@@ -44,29 +44,29 @@ func TestProjectPortsDB(t *testing.T) {
 
 	// ---- rules ----
 	mk := func(c string) *domain.PortRule { return &domain.PortRule{CIDR: c, Description: "d", CreatedBy: &u} }
-	r1, err := r.AddRule(ctx, p1, 8080, mk("203.0.113.5/32"), 3)
+	r1, err := r.AddRule(ctx, p1, 8080, "tcp", mk("203.0.113.5/32"), 3)
 	if err != nil || r1.PortID != out[0].ID || r1.CreatedBy == nil {
 		t.Fatalf("AddRule: %+v %v", r1, err)
 	}
-	if _, err := r.AddRule(ctx, p1, 8080, mk("203.0.113.5/32"), 3); err != domain.ErrConflict {
+	if _, err := r.AddRule(ctx, p1, 8080, "tcp", mk("203.0.113.5/32"), 3); err != domain.ErrConflict {
 		t.Fatalf("dup rule: %v", err)
 	}
-	if _, err := r.AddRule(ctx, p1, 4444, mk("203.0.113.6/32"), 3); err != domain.ErrNotFound {
+	if _, err := r.AddRule(ctx, p1, 4444, "tcp", mk("203.0.113.6/32"), 3); err != domain.ErrNotFound {
 		t.Fatalf("rule on unknown port: %v", err)
 	}
-	if _, err := r.AddRule(ctx, p2, 8080, mk("203.0.113.6/32"), 3); err != domain.ErrNotFound {
+	if _, err := r.AddRule(ctx, p2, 8080, "tcp", mk("203.0.113.6/32"), 3); err != domain.ErrNotFound {
 		t.Fatalf("rule through wrong project: %v", err)
 	}
-	if _, err := r.AddRule(ctx, p1, 8080, mk("255.255.255.255/32"), 3); err != nil { // longest cidr fits varchar(18)
+	if _, err := r.AddRule(ctx, p1, 8080, "tcp", mk("255.255.255.255/32"), 3); err != nil { // longest cidr fits varchar(18)
 		t.Fatalf("longest cidr: %v", err)
 	}
-	if _, err := r.AddRule(ctx, p1, 8080, mk("198.51.100.0/24"), 3); err != nil {
+	if _, err := r.AddRule(ctx, p1, 8080, "tcp", mk("198.51.100.0/24"), 3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.AddRule(ctx, p1, 8080, mk("192.0.2.0/24"), 3); err != domain.ErrRuleLimit {
+	if _, err := r.AddRule(ctx, p1, 8080, "tcp", mk("192.0.2.0/24"), 3); err != domain.ErrRuleLimit {
 		t.Fatalf("limit: %v", err)
 	}
-	rr9, err := r.AddRule(ctx, p1, 9090, mk("203.0.113.9/32"), 3)
+	rr9, err := r.AddRule(ctx, p1, 9090, "tcp", mk("203.0.113.9/32"), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestProjectPortsDB(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, err := r.AddRule(ctx, p2, 80, mk("198.51.100."+itoa(i)+"/32"), 3)
+			_, err := r.AddRule(ctx, p2, 80, "tcp", mk("198.51.100."+itoa(i)+"/32"), 3)
 			mu.Lock()
 			defer mu.Unlock()
 			switch err {
@@ -143,7 +143,7 @@ func TestProjectPortsDB(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE deployments SET host_port=$2 WHERE id=$1`, dep, depPort); err != nil {
 		t.Fatal(err)
 	}
-	used, err := r.UsedHostPorts(ctx, lo, hi)
+	used, err := r.UsedHostPorts(ctx, "tcp", lo, hi)
 	if err != nil {
 		t.Fatalf("UsedHostPorts: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestProjectPortsDB(t *testing.T) {
 		t.Error("out of range port reported")
 	}
 	if _, err := pool.Exec(ctx, `UPDATE databases SET deleted_at=now() WHERE id=$1`, dbID); err == nil {
-		used, _ = r.UsedHostPorts(ctx, lo, hi)
+		used, _ = r.UsedHostPorts(ctx, "tcp", lo, hi)
 		if used[dbPort] {
 			t.Error("deleted database still reserves its port")
 		}
@@ -192,8 +192,8 @@ func TestProjectPortsDB(t *testing.T) {
 	if err := r.DeleteRule(ctx, p1, ruleID); err != domain.ErrNotFound {
 		t.Fatalf("DeleteRule twice: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO project_ports (project_id, container_port, protocol, host_port) VALUES ($1,1,'udp',$2)`, p1, randPort()); err == nil {
-		t.Error("udp accepted")
+	if _, err := pool.Exec(ctx, `INSERT INTO project_ports (project_id, container_port, protocol, host_port) VALUES ($1,1,'sctp',$2)`, p1, randPort()); err == nil {
+		t.Error("sctp accepted")
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO project_ports (project_id, container_port, host_port) VALUES ($1,2,80)`, p1); err == nil {
 		t.Error("host port < 1024 accepted")

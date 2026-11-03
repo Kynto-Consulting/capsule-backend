@@ -31,10 +31,12 @@ func (f *memPortRepo) List(context.Context, uuid.UUID) ([]*domain.ProjectPort, e
 	defer f.mu.Unlock()
 	return append([]*domain.ProjectPort{}, f.ports...), nil
 }
-func (f *memPortRepo) UsedHostPorts(context.Context, int, int) (map[int]bool, error) {
+func (f *memPortRepo) UsedHostPorts(_ context.Context, proto string, _, _ int) (map[int]bool, error) {
 	out := map[int]bool{}
 	for _, p := range f.ports {
-		out[p.HostPort] = true
+		if pp, _ := domain.NormalizeProtocol(p.Protocol); pp == proto {
+			out[p.HostPort] = true
+		}
 	}
 	return out, nil
 }
@@ -54,11 +56,11 @@ func (f *memPortRepo) Replace(_ context.Context, pid uuid.UUID, ports []*domain.
 	}
 	return append([]*domain.ProjectPort{}, f.ports...), nil
 }
-func (f *memPortRepo) AddRule(_ context.Context, _ uuid.UUID, cp int, rule *domain.PortRule, max int) (*domain.PortRule, error) {
+func (f *memPortRepo) AddRule(_ context.Context, _ uuid.UUID, cp int, proto string, rule *domain.PortRule, max int) (*domain.PortRule, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, p := range f.ports {
-		if p.ContainerPort == cp {
+		if pp, _ := domain.NormalizeProtocol(p.Protocol); p.ContainerPort == cp && pp == proto {
 			c := *rule
 			c.ID = uuid.New()
 			p.Rules = append(p.Rules, &c)
@@ -306,5 +308,68 @@ func TestPortsValidationErrors(t *testing.T) {
 	}
 	if rec := e.do(http.MethodPost, "/9999/access", map[string]any{"cidr": "10.0.0.0/8"}); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown port: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPortsUDPCreateListAccess(t *testing.T) {
+	e := newPortsEnv(t, "owner", true, "docker", dockerDep(), false)
+	rec := e.do(http.MethodPut, "", map[string]any{"ports": []map[string]any{
+		{"name": "game", "container_port": 7777, "protocol": "tcp"},
+		{"name": "game-udp", "container_port": 7777, "protocol": "UDP"},
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Ports []struct {
+			Name     string `json:"name"`
+			Protocol string `json:"protocol"`
+			HostPort int    `json:"host_port"`
+		} `json:"ports"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Ports) != 2 {
+		t.Fatalf("body = %s", rec.Body)
+	}
+	if got.Ports[0].Protocol != "tcp" || got.Ports[1].Protocol != "udp" || got.Ports[0].HostPort != 41000 || got.Ports[1].HostPort != 41000 {
+		t.Fatalf("tcp and udp must each take the lowest free number of their own protocol: %s", rec.Body)
+	}
+
+	// access on the udp port, selected by ?protocol=udp
+	rec = e.do(http.MethodPost, "/7777/access?protocol=udp", map[string]any{"cidr": "203.0.113.5", "description": "jugadores"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("post udp: %d %s", rec.Code, rec.Body)
+	}
+	var rule map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &rule)
+	// the same CIDR on tcp is a separate rule; the body can carry the protocol too
+	if rec = e.do(http.MethodPost, "/7777/access", map[string]any{"cidr": "203.0.113.5", "protocol": "tcp"}); rec.Code != http.StatusCreated {
+		t.Fatalf("post tcp: %d %s", rec.Code, rec.Body)
+	}
+	// deleting with the wrong protocol does not find it; the right one does
+	if rec = e.do(http.MethodDelete, "/7777/access/"+rule["id"].(string), nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("delete default tcp: %d %s", rec.Code, rec.Body)
+	}
+	if rec = e.do(http.MethodDelete, "/7777/access/"+rule["id"].(string)+"?protocol=udp", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete udp: %d %s", rec.Code, rec.Body)
+	}
+
+	// errors in Spanish
+	rec = e.do(http.MethodPost, "/7777/access?protocol=sctp", map[string]any{"cidr": "10.0.0.0/8"})
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "INVALID_PROTOCOL" || !bytes.Contains(rec.Body.Bytes(), []byte("tcp o udp")) {
+		t.Fatalf("sctp: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(http.MethodPut, "", map[string]any{"ports": []map[string]any{{"container_port": 7777, "protocol": "icmp"}}})
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "INVALID_PROTOCOL" {
+		t.Fatalf("put icmp: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(http.MethodPost, "/9999/access?protocol=udp", map[string]any{"cidr": "10.0.0.0/8"})
+	if rec.Code != http.StatusNotFound || !bytes.Contains(rec.Body.Bytes(), []byte("9999/udp")) {
+		t.Fatalf("missing udp port: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do(http.MethodPut, "", map[string]any{"ports": []map[string]any{
+		{"container_port": 7777, "protocol": "udp"}, {"container_port": 7777, "protocol": "udp"},
+	}})
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "DUPLICATE_PORT" {
+		t.Fatalf("duplicate udp: %d %s", rec.Code, rec.Body)
 	}
 }

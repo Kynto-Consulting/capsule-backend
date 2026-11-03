@@ -17,7 +17,12 @@ import (
 	"github.com/kynto/capsule/backend/internal/service"
 )
 
-// ProjectPortsHandler manages the extra TCP ports a project publishes on the app host.
+func portProtoName(p string) string {
+	n, _ := domain.NormalizeProtocol(p)
+	return n
+}
+
+// ProjectPortsHandler manages the extra TCP and UDP ports a project publishes on the app host.
 type ProjectPortsHandler struct {
 	authzHolder
 	orgs              domain.OrganizationRepository
@@ -65,7 +70,7 @@ func (h *ProjectPortsHandler) load(w http.ResponseWriter, r *http.Request, write
 	}
 	if !h.svc.Enabled() {
 		respondError(w, http.StatusNotImplemented, "NOT_CONFIGURED",
-			"TCP port management is not configured on this server (APP_SECURITY_GROUP_ID is not set)")
+			"la gestión de puertos TCP/UDP no está configurada en este servidor (falta APP_SECURITY_GROUP_ID)")
 		return nil, false
 	}
 	role, err := h.orgs.GetMemberRole(r.Context(), orgID, user.ID)
@@ -104,7 +109,7 @@ func (h *ProjectPortsHandler) supported(w http.ResponseWriter, r *http.Request, 
 	}
 	if !service.SupportsPorts(pc.project, dep, h.fargateConfigured) {
 		respondError(w, http.StatusBadRequest, "UNSUPPORTED",
-			"extra TCP ports are only available for projects deployed as docker containers on the Capsule host (not fargate, lambda or static)")
+			"los puertos extra (TCP y UDP) solo están disponibles para proyectos desplegados como contenedores docker en el host de Capsule (no fargate, lambda ni estáticos)")
 		return false
 	}
 	return true
@@ -151,7 +156,7 @@ func (h *ProjectPortsHandler) respondPorts(w http.ResponseWriter, ports []*domai
 			cidrs = append(cidrs, portCIDRJSON{ID: r.ID, CIDR: r.CIDR, Description: r.Description})
 		}
 		out.Ports = append(out.Ports, portJSON{
-			Name: p.Name, ContainerPort: p.ContainerPort, Protocol: "tcp", HostPort: p.HostPort,
+			Name: p.Name, ContainerPort: p.ContainerPort, Protocol: portProtoName(p.Protocol), HostPort: p.HostPort,
 			Access: portAccess(p.Rules), CIDRs: cidrs,
 		})
 	}
@@ -234,9 +239,14 @@ func (h *ProjectPortsHandler) AddAccess(w http.ResponseWriter, r *http.Request) 
 		CIDR        string `json:"cidr"`
 		Description string `json:"description"`
 		AllowPublic bool   `json:"allow_public"`
+		Protocol    string `json:"protocol"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	proto, ok := accessProtocol(w, r, body.Protocol)
+	if !ok {
 		return
 	}
 	if len(body.Description) > 200 {
@@ -247,7 +257,7 @@ func (h *ProjectPortsHandler) AddAccess(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rule, err := h.svc.AddRule(r.Context(), pc.projectID, containerPort, cidr, body.Description, pc.user.ID)
+	rule, err := h.svc.AddRule(r.Context(), pc.projectID, containerPort, proto, cidr, body.Description, pc.user.ID)
 	if err != nil {
 		h.fail(w, err, "failed to save access rule")
 		return
@@ -271,11 +281,30 @@ func (h *ProjectPortsHandler) RemoveAccess(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusBadRequest, "INVALID_ID", "invalid rule id")
 		return
 	}
-	if err := h.svc.RemoveRule(r.Context(), pc.projectID, containerPort, ruleID); err != nil {
+	proto, ok := accessProtocol(w, r, "")
+	if !ok {
+		return
+	}
+	if err := h.svc.RemoveRule(r.Context(), pc.projectID, containerPort, proto, ruleID); err != nil {
 		h.fail(w, err, "failed to delete access rule")
 		return
 	}
 	respondNoContent(w)
+}
+
+// accessProtocol resolves the protocol of an access request: the body value, else
+// the ?protocol= query, else tcp. It writes the 400 itself.
+func accessProtocol(w http.ResponseWriter, r *http.Request, fromBody string) (string, bool) {
+	raw := fromBody
+	if raw == "" {
+		raw = r.URL.Query().Get("protocol")
+	}
+	proto, ok := domain.NormalizeProtocol(raw)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "INVALID_PROTOCOL", "protocolo no soportado ("+raw+"): usa tcp o udp")
+		return "", false
+	}
+	return proto, true
 }
 
 // Cleanup revokes the firewall rules of a deleted project and drops its ports.

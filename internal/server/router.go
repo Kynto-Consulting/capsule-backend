@@ -19,6 +19,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/connaudit"
 	"github.com/kynto/capsule/backend/internal/domain"
+	gwapi "github.com/kynto/capsule/backend/internal/gateway/api"
 	"github.com/kynto/capsule/backend/internal/gitsync"
 	"github.com/kynto/capsule/backend/internal/oidc"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
@@ -242,6 +243,10 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	}
 	// Internal edge auth for git-over-HTTP (Caddy forward_auth); protected by a shared secret, never public.
 	handlers.MountGitAuthInternal(r)
+	// gateway:mounts-internal begin
+	// Data-plane endpoints of the gateway (/internal/gateway/*): shared secret, closed while CAPSULE_GW_SECRET is empty, never behind the user middleware.
+	gwapi.MountInternal(r) // G3
+	// gateway:mounts-internal end
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		token := os.Getenv("METRICS_TOKEN")
 		if token != "" {
@@ -369,6 +374,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			handlers.MountC2(r, handlers.C2Deps{Authz: az, Orgs: deps.OrgRepo, Logger: logger}) // C2: /orgs/{o}/audit-log (+CSV), git/activity and git/insights from git_activity (after B1: replaces its versions of those two paths)
 			handlers.MountRecover(r, az, deps.OrgRepo, deps.ProjRepo) // C3: POST /git/admin/recover, GET /git/admin/recover/{runID}, POST /orgs/{o}/projects/{p}/recover
 			// git-capsule:mounts end
+
+			// gateway:mounts begin
+			// Universal gateway user API (services, connection-info/token, random port, service tokens, org policy), inside the authenticated group.
+			gwapi.MountAPI(r) // G3: /orgs/{o}/projects/{p}/gateway/..., /orgs/{o}/gateway/policy
+			// gateway:mounts end
 
 			// Deployments (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/deployments/upload-url", deploymentHandler.UploadURL)

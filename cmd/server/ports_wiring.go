@@ -32,10 +32,11 @@ func wirePorts(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, work
 		Reserved:  []int{cfg.Port},
 		AvoidHost: avoid,
 		InUse:     service.PortFree,
+		InUseUDP:  service.PortFreeUDP,
 	}, logger)
 	worker.SetExtraPorts(svc.ExtraPorts)
 	handlers.RegisterCapability("ports", func() any {
-		return map[string]any{"enabled": svc.Enabled(), "range": svc.Range(), "host": svc.Host()}
+		return map[string]any{"enabled": svc.Enabled(), "range": svc.Range(), "host": svc.Host(), "protocols": []string{"tcp", "udp"}}
 	})
 	if !svc.Enabled() {
 		logger.Info("project TCP ports API disabled (APP_SECURITY_GROUP_ID not set)")

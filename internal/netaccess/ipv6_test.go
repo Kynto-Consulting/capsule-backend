@@ -25,7 +25,7 @@ func TestDescriptionIPv6RoundTripAndLength(t *testing.T) {
 		if !ok || id != db || cidr != c {
 			t.Errorf("db round trip %q: %v %v %v", c, id, cidr, ok)
 		}
-		pid, port, cidr, ok := parseOwnedPort(PortDescription(p, 41005, c))
+		pid, _, port, cidr, ok := parseOwnedPort(PortDescription(p, 41005, c))
 		if !ok || pid != p || port != 41005 || cidr != c {
 			t.Errorf("port round trip %q: %v %v %v %v", c, pid, port, cidr, ok)
 		}
@@ -110,7 +110,7 @@ func TestReconcilePortsBothFamilies(t *testing.T) {
 	f.rules = append(f.rules, Rule{RuleID: "sgr-q", Port: 41100, CIDR: "2001:db8::/32", Description: PortDescription(q, 41100, "2001:db8::/32")})
 	r := NewReconciler(f, "sg-1")
 	ctx := context.Background()
-	want := []PortDesired{{p, 41005, "198.51.100.0/24"}, {p, 41005, "2001:db8:a::/48"}}
+	want := []PortDesired{{ProjectID: p, HostPort: 41005, CIDR: "198.51.100.0/24"}, {ProjectID: p, HostPort: 41005, CIDR: "2001:db8:a::/48"}}
 	if err := r.ReconcileProjectPorts(ctx, p, want); err != nil {
 		t.Fatal(err)
 	}

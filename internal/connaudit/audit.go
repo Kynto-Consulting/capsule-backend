@@ -32,6 +32,11 @@ var recommendations = map[Kind]string{
 	KindMetadata:     "El servicio de metadatos de la nube entrega credenciales del host. Una app de cliente no debe consultarlo: elimina esta conexión.",
 }
 
+// recommendationUDPDirect is the advice for a UDP destination inside the
+// published port range: UDP has no SNI or Host, so the gateway route is the
+// capsule:// URI (library or `capsule tunnel`) when the service has it.
+const recommendationUDPDirect = "Conectas por UDP directo a un puerto publicado del host: no pasa por la autorización ni la auditoría del gateway. Usa la URI capsule://<proyecto>/<servicio> (librería de Capsule o capsule tunnel) cuando el servicio tenga acceso por gateway; el puerto UDP directo es el método secundario."
+
 func recommendationFor(k Kind, own bool) string {
 	if k == KindContainer && own {
 		return "Esta app se conecta a su propio contenedor por nombre interno; Capsule lo reemplaza en cada despliegue. Usa el nombre de gateway o localhost dentro del mismo contenedor."
@@ -63,9 +68,13 @@ func newFinding(c *Classifier, ep Endpoint, source string) (Finding, bool) {
 	}
 	end := ep.String()
 	own := kind == KindContainer && sev == SevWarning
+	rec := recommendationFor(kind, own)
+	if kind == KindDirectPort && ep.Scheme == "udp" {
+		rec = recommendationUDPDirect
+	}
 	return Finding{
 		ID: stableID(kind, srcKey, end), Severity: sev, Kind: kind, Source: source, Endpoint: end,
-		Recommendation: recommendationFor(kind, own),
+		Recommendation: rec,
 	}, true
 }
 

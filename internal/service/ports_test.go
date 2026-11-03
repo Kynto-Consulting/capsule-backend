@@ -36,16 +36,20 @@ func (f *fakePortRepo) List(_ context.Context, pid uuid.UUID) ([]*domain.Project
 	return append([]*domain.ProjectPort{}, f.ports[pid]...), nil
 }
 
-func (f *fakePortRepo) UsedHostPorts(_ context.Context, from, to int) (map[int]bool, error) {
+func (f *fakePortRepo) UsedHostPorts(_ context.Context, proto string, from, to int) (map[int]bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := map[int]bool{}
-	for p := range f.foreignUsed {
-		out[p] = true
+	if proto != domain.ProtoUDP {
+		for p := range f.foreignUsed {
+			out[p] = true
+		}
 	}
 	for _, ps := range f.ports {
 		for _, p := range ps {
-			out[p.HostPort] = true
+			if pp, _ := domain.NormalizeProtocol(p.Protocol); pp == proto || (proto == "" && pp == domain.ProtoTCP) {
+				out[p.HostPort] = true
+			}
 		}
 	}
 	return out, nil
@@ -72,11 +76,11 @@ func (f *fakePortRepo) Replace(_ context.Context, pid uuid.UUID, ports []*domain
 	return append([]*domain.ProjectPort{}, out...), nil
 }
 
-func (f *fakePortRepo) AddRule(_ context.Context, pid uuid.UUID, cp int, rule *domain.PortRule, max int) (*domain.PortRule, error) {
+func (f *fakePortRepo) AddRule(_ context.Context, pid uuid.UUID, cp int, proto string, rule *domain.PortRule, max int) (*domain.PortRule, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, p := range f.ports[pid] {
-		if p.ContainerPort != cp {
+		if pp, _ := domain.NormalizeProtocol(p.Protocol); p.ContainerPort != cp || pp != proto {
 			continue
 		}
 		if len(p.Rules) >= max {
@@ -116,7 +120,7 @@ func (f *fakePortRepo) ListDesired(context.Context) ([]domain.DesiredPortRule, e
 	for pid, ps := range f.ports {
 		for _, p := range ps {
 			for _, r := range p.Rules {
-				out = append(out, domain.DesiredPortRule{ProjectID: pid, HostPort: p.HostPort, CIDR: r.CIDR})
+				out = append(out, domain.DesiredPortRule{ProjectID: pid, Protocol: p.Protocol, HostPort: p.HostPort, CIDR: r.CIDR})
 			}
 		}
 	}
@@ -283,8 +287,8 @@ func TestValidateSpecsReservedAndLimits(t *testing.T) {
 	if _, err := s.ValidateSpecs([]PortInput{{ContainerPort: 5432}, {ContainerPort: 5432}}); code(err) != "DUPLICATE_PORT" {
 		t.Errorf("duplicate: %v", err)
 	}
-	if _, err := s.ValidateSpecs([]PortInput{{ContainerPort: 5432, Protocol: "udp"}}); code(err) != "INVALID_PROTOCOL" {
-		t.Errorf("udp: %v", err)
+	if _, err := s.ValidateSpecs([]PortInput{{ContainerPort: 5432, Protocol: "sctp"}}); code(err) != "INVALID_PROTOCOL" {
+		t.Errorf("sctp: %v", err)
 	}
 	if _, err := s.ValidateSpecs([]PortInput{{ContainerPort: 5432, Name: strings.Repeat("a", 41)}}); code(err) != "INVALID_NAME" {
 		t.Errorf("long name: %v", err)
@@ -318,7 +322,7 @@ func TestReplaceRestartsContainerWithNewPorts(t *testing.T) {
 	if _, err := s.Replace(context.Background(), pid, specs(5432)); err != nil {
 		t.Fatal(err)
 	}
-	if len(rs.calls) != 1 || len(rs.calls[0]) != 1 || rs.calls[0][0] != (domain.PortMapping{ContainerPort: 5432, HostPort: 41000}) {
+	if len(rs.calls) != 1 || len(rs.calls[0]) != 1 || rs.calls[0][0] != (domain.PortMapping{ContainerPort: 5432, HostPort: 41000, Protocol: "tcp"}) {
 		t.Fatalf("calls = %v", rs.calls)
 	}
 	// Rename only: no restart.
@@ -401,10 +405,10 @@ func TestReplaceRemovingPortRevokesItsRulesAndRollsBackOnFirewallError(t *testin
 	if _, err := s.Replace(context.Background(), pid, specs(5432, 6379)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AddRule(context.Background(), pid, 5432, "203.0.113.5/32", "", uuid.New()); err != nil {
+	if _, err := s.AddRule(context.Background(), pid, 5432, "", "203.0.113.5/32", "", uuid.New()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AddRule(context.Background(), pid, 6379, "198.51.100.0/24", "", uuid.New()); err != nil {
+	if _, err := s.AddRule(context.Background(), pid, 6379, "", "198.51.100.0/24", "", uuid.New()); err != nil {
 		t.Fatal(err)
 	}
 	fw.reconciled = nil
@@ -433,7 +437,7 @@ func TestAddRuleAWSFirstThenPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	fw.err = errors.New("AWS refuses")
-	_, err := s.AddRule(context.Background(), pid, 5432, "203.0.113.5/32", "office", uuid.New())
+	_, err := s.AddRule(context.Background(), pid, 5432, "", "203.0.113.5/32", "office", uuid.New())
 	if code(err) != "FIREWALL_ERROR" {
 		t.Fatalf("err = %v", err)
 	}
@@ -441,7 +445,7 @@ func TestAddRuleAWSFirstThenPersist(t *testing.T) {
 		t.Fatal("rule persisted although AWS refused")
 	}
 	fw.err = nil
-	rule, err := s.AddRule(context.Background(), pid, 5432, "203.0.113.5/32", " office ", uuid.New())
+	rule, err := s.AddRule(context.Background(), pid, 5432, "", "203.0.113.5/32", " office ", uuid.New())
 	if err != nil || rule.Description != "office" {
 		t.Fatalf("rule=%v err=%v", rule, err)
 	}
@@ -449,19 +453,19 @@ func TestAddRuleAWSFirstThenPersist(t *testing.T) {
 	if len(d) != 1 || d[0].HostPort != 41000 || d[0].CIDR != "203.0.113.5/32" {
 		t.Fatalf("desired = %+v", d)
 	}
-	if _, err := s.AddRule(context.Background(), pid, 5432, "203.0.113.5/32", "", uuid.New()); code(err) != "ALREADY_EXISTS" {
+	if _, err := s.AddRule(context.Background(), pid, 5432, "", "203.0.113.5/32", "", uuid.New()); code(err) != "ALREADY_EXISTS" {
 		t.Fatalf("duplicate: %v", err)
 	}
-	if _, err := s.AddRule(context.Background(), pid, 9999, "10.0.0.0/8", "", uuid.New()); code(err) != "NOT_FOUND" {
+	if _, err := s.AddRule(context.Background(), pid, 9999, "", "10.0.0.0/8", "", uuid.New()); code(err) != "NOT_FOUND" {
 		t.Fatalf("unknown port: %v", err)
 	}
-	if err := s.RemoveRule(context.Background(), pid, 5432, rule.ID); err != nil {
+	if err := s.RemoveRule(context.Background(), pid, 5432, "", rule.ID); err != nil {
 		t.Fatal(err)
 	}
 	if last := fw.reconciled[len(fw.reconciled)-1]; len(last) != 0 {
 		t.Fatalf("after remove desired = %+v", last)
 	}
-	if err := s.RemoveRule(context.Background(), pid, 5432, rule.ID); code(err) != "NOT_FOUND" {
+	if err := s.RemoveRule(context.Background(), pid, 5432, "", rule.ID); code(err) != "NOT_FOUND" {
 		t.Fatalf("remove twice: %v", err)
 	}
 }
@@ -475,11 +479,11 @@ func TestAddRuleLimit(t *testing.T) {
 	}
 	for i := 0; i < netaccess.MaxRulesPerPort; i++ {
 		cidr := "10.0." + strconv.Itoa(i) + ".0/24"
-		if _, err := s.AddRule(context.Background(), pid, 5432, cidr, "", uuid.New()); err != nil {
+		if _, err := s.AddRule(context.Background(), pid, 5432, "", cidr, "", uuid.New()); err != nil {
 			t.Fatalf("rule %d: %v", i, err)
 		}
 	}
-	_, err := s.AddRule(context.Background(), pid, 5432, "11.0.0.0/8", "", uuid.New())
+	_, err := s.AddRule(context.Background(), pid, 5432, "", "11.0.0.0/8", "", uuid.New())
 	if code(err) != "LIMIT_EXCEEDED" {
 		t.Fatalf("26th rule: %v", err)
 	}
@@ -491,7 +495,7 @@ func TestCleanupAndSweep(t *testing.T) {
 	s := newTestPorts(repo, fw, &fakeRestarter{})
 	pid := uuid.New()
 	_, _ = s.Replace(context.Background(), pid, specs(5432))
-	_, _ = s.AddRule(context.Background(), pid, 5432, "203.0.113.5/32", "", uuid.New())
+	_, _ = s.AddRule(context.Background(), pid, 5432, "", "203.0.113.5/32", "", uuid.New())
 
 	if err := s.Sweep(context.Background()); err != nil || len(fw.synced) != 1 || len(fw.synced[0]) != 1 {
 		t.Fatalf("sweep: %v %v", err, fw.synced)

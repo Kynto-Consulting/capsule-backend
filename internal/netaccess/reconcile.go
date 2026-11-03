@@ -20,7 +20,9 @@ var ErrRuleLimit = errors.New("the host security group has reached its AWS rule 
 
 // Rule is a minimal view of an ingress rule of the managed security group.
 type Rule struct {
-	RuleID      string
+	RuleID string
+	// Protocol is "tcp" or "udp"; "" (a rule built without it) is tcp.
+	Protocol    string
 	Port        int
 	CIDR        string
 	Description string
@@ -28,10 +30,14 @@ type Rule struct {
 
 // EC2API is the minimal EC2 surface the reconciler needs (injectable for tests).
 type EC2API interface {
-	// ListIngressRules returns every single-port TCP ingress rule of the security
-	// group, IPv4 and IPv6 (Rule.CIDR holds either family).
+	// ListIngressRules returns every single-port TCP and UDP ingress rule of the
+	// security group, IPv4 and IPv6 (Rule.CIDR holds either family). Other
+	// protocols and port ranges are not listed, so they are never touched.
 	ListIngressRules(ctx context.Context, sgID string) ([]Rule, error)
+	// AuthorizeIngress opens one TCP port for one CIDR.
 	AuthorizeIngress(ctx context.Context, sgID string, port int, cidr, description string) error
+	// AuthorizeIngressProto opens one port on protocol "tcp" or "udp" for one CIDR.
+	AuthorizeIngressProto(ctx context.Context, sgID, protocol string, port int, cidr, description string) error
 	// RevokeIngressByID revokes exactly the given rules (by security-group-rule id).
 	RevokeIngressByID(ctx context.Context, sgID string, ruleIDs []string) error
 }
@@ -88,7 +94,7 @@ func Diff(desired []Desired, current []Rule, scope *uuid.UUID) Plan {
 	var plan Plan
 	for _, r := range current {
 		id, cidr, ok := parseOwned(r.Description)
-		if !ok {
+		if !ok || r.RuleProtocol() != "tcp" { // databases are TCP: a UDP rule is never ours
 			continue // not ours: never touch
 		}
 		if scope != nil && id != *scope {

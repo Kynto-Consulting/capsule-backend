@@ -3,6 +3,7 @@ package netaccess
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -36,11 +37,13 @@ func (a AWSAdapter) ListIngressRules(ctx context.Context, sgID string) ([]Rule, 
 			if aws.ToBool(r.IsEgress) || (r.CidrIpv4 == nil && r.CidrIpv6 == nil) {
 				continue
 			}
-			if aws.ToString(r.IpProtocol) != "tcp" || aws.ToInt32(r.FromPort) != aws.ToInt32(r.ToPort) {
+			proto := aws.ToString(r.IpProtocol)
+			if (proto != "tcp" && proto != "udp") || aws.ToInt32(r.FromPort) != aws.ToInt32(r.ToPort) {
 				continue
 			}
 			out = append(out, Rule{
 				RuleID:      aws.ToString(r.SecurityGroupRuleId),
+				Protocol:    proto,
 				Port:        int(aws.ToInt32(r.FromPort)),
 				CIDR:        ruleCIDR(r),
 				Description: aws.ToString(r.Description),
@@ -54,10 +57,18 @@ func (a AWSAdapter) ListIngressRules(ctx context.Context, sgID string) ([]Rule, 
 }
 
 func (a AWSAdapter) AuthorizeIngress(ctx context.Context, sgID string, port int, cidr, description string) error {
+	return a.AuthorizeIngressProto(ctx, sgID, "tcp", port, cidr, description)
+}
+
+func (a AWSAdapter) AuthorizeIngressProto(ctx context.Context, sgID, protocol string, port int, cidr, description string) error {
+	protocol = normProto(protocol)
+	if protocol != "tcp" && protocol != "udp" {
+		return fmt.Errorf("protocolo %q no soportado (solo tcp o udp)", protocol)
+	}
 	// EC2 rule descriptions: <=255 chars, charset a-zA-Z0-9 space and ._-:/()#,@[]+=&;{}!$*
-	// (":" is allowed); "capsule:port:<uuid>:<port>:<ipv6>/128" is <=100 chars.
+	// (":" is allowed); "capsule:port:udp:<uuid>:<port>:<ipv6>/128" is <=105 chars.
 	perm := ec2types.IpPermission{
-		IpProtocol: aws.String("tcp"),
+		IpProtocol: aws.String(protocol),
 		FromPort:   aws.Int32(int32(port)),
 		ToPort:     aws.Int32(int32(port)),
 	}

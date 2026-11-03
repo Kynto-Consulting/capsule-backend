@@ -19,16 +19,16 @@ func scanProjectPort(row interface{ Scan(...any) error }, p *domain.ProjectPort)
 	return row.Scan(&p.ID, &p.ProjectID, &p.Name, &p.ContainerPort, &p.Protocol, &p.HostPort, &p.CreatedAt)
 }
 
-const portRuleCols = `id, port_id, cidr, description, created_by, created_at`
+const portRuleCols = `id, port_id, protocol, cidr, description, created_by, created_at`
 
 func scanPortRule(row interface{ Scan(...any) error }, r *domain.PortRule) error {
-	return row.Scan(&r.ID, &r.PortID, &r.CIDR, &r.Description, &r.CreatedBy, &r.CreatedAt)
+	return row.Scan(&r.ID, &r.PortID, &r.Protocol, &r.CIDR, &r.Description, &r.CreatedBy, &r.CreatedAt)
 }
 
-const desiredPortRuleCols = `p.project_id, p.host_port, r.cidr`
+const desiredPortRuleCols = `p.project_id, p.protocol, p.host_port, r.cidr`
 
 func scanDesiredPortRule(row interface{ Scan(...any) error }, d *domain.DesiredPortRule) error {
-	return row.Scan(&d.ProjectID, &d.HostPort, &d.CIDR)
+	return row.Scan(&d.ProjectID, &d.Protocol, &d.HostPort, &d.CIDR)
 }
 
 const usedPortCols = `host_port`
@@ -49,7 +49,7 @@ func NewProjectPortRepository(pool *pgxpool.Pool) *ProjectPortRepository {
 
 func listProjectPorts(ctx context.Context, q queryer, projectID uuid.UUID) ([]*domain.ProjectPort, error) {
 	rows, err := q.Query(ctx,
-		`SELECT `+projectPortCols+` FROM project_ports WHERE project_id = $1 ORDER BY container_port`, projectID)
+		`SELECT `+projectPortCols+` FROM project_ports WHERE project_id = $1 ORDER BY container_port, protocol`, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("listing project ports: %w", err)
 	}
@@ -95,11 +95,19 @@ func (r *ProjectPortRepository) List(ctx context.Context, projectID uuid.UUID) (
 	return listProjectPorts(ctx, r.pool, projectID)
 }
 
-func (r *ProjectPortRepository) UsedHostPorts(ctx context.Context, from, to int) (map[int]bool, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+usedPortCols+` FROM project_ports WHERE host_port BETWEEN $1 AND $2
-		UNION SELECT port FROM databases WHERE deleted_at IS NULL AND port BETWEEN $1 AND $2
-		UNION SELECT host_port FROM deployments WHERE host_port BETWEEN $1 AND $2`, from, to)
+func (r *ProjectPortRepository) UsedHostPorts(ctx context.Context, protocol string, from, to int) (map[int]bool, error) {
+	var rows pgx.Rows
+	var err error
+	if protocol == domain.ProtoUDP {
+		// Databases and deployments are TCP: they never take a UDP slot.
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+usedPortCols+` FROM project_ports WHERE protocol = 'udp' AND host_port BETWEEN $1 AND $2`, from, to)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+usedPortCols+` FROM project_ports WHERE protocol = 'tcp' AND host_port BETWEEN $1 AND $2
+			UNION SELECT port FROM databases WHERE deleted_at IS NULL AND port BETWEEN $1 AND $2
+			UNION SELECT host_port FROM deployments WHERE host_port BETWEEN $1 AND $2`, from, to)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("listing used ports: %w", err)
 	}
@@ -126,21 +134,26 @@ func (r *ProjectPortRepository) Replace(ctx context.Context, projectID uuid.UUID
 		return nil, fmt.Errorf("locking ports: %w", err)
 	}
 	keep := make([]int32, 0, len(ports))
+	keepProto := make([]string, 0, len(ports))
 	for _, p := range ports {
 		keep = append(keep, int32(p.ContainerPort))
+		keepProto = append(keepProto, protoOrTCP(p.Protocol))
 	}
 	// Delete first so freed host ports are reusable by the inserts below.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM project_ports WHERE project_id = $1 AND NOT (container_port = ANY($2))`, projectID, keep); err != nil {
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM project_ports WHERE project_id = $1 AND NOT EXISTS (
+			SELECT 1 FROM unnest($2::int[], $3::text[]) AS k(port, proto)
+			WHERE k.port = project_ports.container_port AND k.proto = project_ports.protocol)`,
+		projectID, keep, keepProto); err != nil {
 		return nil, fmt.Errorf("pruning project ports: %w", err)
 	}
 	for _, p := range ports {
 		// A kept port keeps its stored host_port (the DO UPDATE does not touch it).
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO project_ports (project_id, name, container_port, protocol, host_port)
-			VALUES ($1, $2, $3, 'tcp', $4)
-			ON CONFLICT (project_id, container_port) DO UPDATE SET name = EXCLUDED.name`,
-			projectID, p.Name, p.ContainerPort, p.HostPort); err != nil {
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (project_id, container_port, protocol) DO UPDATE SET name = EXCLUDED.name`,
+			projectID, p.Name, p.ContainerPort, protoOrTCP(p.Protocol), p.HostPort); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				return nil, domain.ErrConflict
@@ -158,7 +171,7 @@ func (r *ProjectPortRepository) Replace(ctx context.Context, projectID uuid.UUID
 	return out, nil
 }
 
-func (r *ProjectPortRepository) AddRule(ctx context.Context, projectID uuid.UUID, containerPort int, rule *domain.PortRule, max int) (*domain.PortRule, error) {
+func (r *ProjectPortRepository) AddRule(ctx context.Context, projectID uuid.UUID, containerPort int, protocol string, rule *domain.PortRule, max int) (*domain.PortRule, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
@@ -168,8 +181,8 @@ func (r *ProjectPortRepository) AddRule(ctx context.Context, projectID uuid.UUID
 	// Lock the port row so concurrent adds keep the limit exact.
 	var portID uuid.UUID
 	err = tx.QueryRow(ctx,
-		`SELECT id FROM project_ports WHERE project_id = $1 AND container_port = $2 FOR UPDATE`,
-		projectID, containerPort).Scan(&portID)
+		`SELECT id FROM project_ports WHERE project_id = $1 AND container_port = $2 AND protocol = $3 FOR UPDATE`,
+		projectID, containerPort, protoOrTCP(protocol)).Scan(&portID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -185,9 +198,9 @@ func (r *ProjectPortRepository) AddRule(ctx context.Context, projectID uuid.UUID
 	}
 	var out domain.PortRule
 	err = scanPortRule(tx.QueryRow(ctx, `
-		INSERT INTO project_port_rules (port_id, cidr, description, created_by)
-		VALUES ($1, $2, $3, $4)
-		RETURNING `+portRuleCols, portID, rule.CIDR, rule.Description, rule.CreatedBy), &out)
+		INSERT INTO project_port_rules (port_id, protocol, cidr, description, created_by)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING `+portRuleCols, portID, protoOrTCP(protocol), rule.CIDR, rule.Description, rule.CreatedBy), &out)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -240,4 +253,11 @@ func (r *ProjectPortRepository) DeleteAll(ctx context.Context, projectID uuid.UU
 		return fmt.Errorf("deleting project ports: %w", err)
 	}
 	return nil
+}
+
+func protoOrTCP(p string) string {
+	if p == "" {
+		return domain.ProtoTCP
+	}
+	return p
 }

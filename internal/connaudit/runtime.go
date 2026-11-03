@@ -16,7 +16,18 @@ import (
 type Conn struct {
 	Local, Remote         netip.Addr
 	LocalPort, RemotePort int
-	State                 string // hex state: 01 ESTABLISHED, 0A LISTEN
+	State                 string // hex state: 01 ESTABLISHED, 0A LISTEN (tcp); 01 connected, 07 bound (udp)
+	UDP                   bool   // read from /proc/net/udp or udp6
+}
+
+// ParseProcNetUDP parses /proc/net/udp (v6=false) or /proc/net/udp6 (v6=true):
+// same layout as the tcp files, sockets are flagged UDP.
+func ParseProcNetUDP(r io.Reader, v6 bool) []Conn {
+	conns := ParseProcNet(r, v6)
+	for i := range conns {
+		conns[i].UDP = true
+	}
+	return conns
 }
 
 // ParseProcNet parses /proc/net/tcp (v6=false) or /proc/net/tcp6 (v6=true).
@@ -71,18 +82,23 @@ func parseProcAddr(s string, v6 bool) (netip.Addr, int, bool) {
 }
 
 // Outbound returns the established connections that the container opened:
-// inbound ones (local port is a listening port) are dropped, as are sockets to
-// the unspecified address.
+// inbound ones (local port is a listening or bound port of the same protocol)
+// are dropped, as are sockets to the unspecified address. A UDP socket counts
+// only when it is connected (state 01).
 func Outbound(conns []Conn) []Conn {
-	listen := map[int]bool{}
+	type pk struct {
+		udp  bool
+		port int
+	}
+	listen := map[pk]bool{}
 	for _, c := range conns {
-		if c.State == "0A" {
-			listen[c.LocalPort] = true
+		if (!c.UDP && c.State == "0A") || (c.UDP && c.State == "07") {
+			listen[pk{c.UDP, c.LocalPort}] = true
 		}
 	}
 	var out []Conn
 	for _, c := range conns {
-		if c.State != "01" || listen[c.LocalPort] || c.Remote.IsUnspecified() {
+		if c.State != "01" || listen[pk{c.UDP, c.LocalPort}] || c.Remote.IsUnspecified() {
 			continue
 		}
 		out = append(out, c)
@@ -98,7 +114,7 @@ var ErrRuntimeUnavailable = errors.New("connection observation unavailable for t
 // reading a /proc file on the host). It is injected so the observer is testable.
 type RunFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
 
-// Observe lists the container's established outbound TCP connections and
+// Observe lists the container's established outbound TCP connections (and connected UDP sockets toward published ports) and
 // classifies the destinations. Nothing is installed in the user's image: it
 // uses the image's own cat when present and otherwise the host's /proc view of
 // the container's init process.
@@ -106,29 +122,36 @@ func Observe(ctx context.Context, run RunFunc, readHostFile func(string) ([]byte
 	if c == nil {
 		c = &Classifier{}
 	}
-	var conns []Conn
-	got := false
-	for _, f := range []struct {
-		file string
+	type procFile struct {
+		name string
 		v6   bool
-	}{{"/proc/net/tcp", false}, {"/proc/net/tcp6", true}} {
-		out, err := run(ctx, "docker", "exec", container, "cat", f.file)
+		udp  bool
+	}
+	files := []procFile{{"tcp", false, false}, {"tcp6", true, false}, {"udp", false, true}, {"udp6", true, true}}
+	parse := func(f procFile, data []byte) []Conn {
+		if f.udp {
+			return ParseProcNetUDP(strings.NewReader(string(data)), f.v6)
+		}
+		return ParseProcNet(strings.NewReader(string(data)), f.v6)
+	}
+	var conns []Conn
+	got := false // a TCP file was read: the container can be observed at all
+	for _, f := range files {
+		out, err := run(ctx, "docker", "exec", container, "cat", "/proc/net/"+f.name)
 		if err == nil {
-			got = true
-			conns = append(conns, ParseProcNet(strings.NewReader(string(out)), f.v6)...)
+			got = got || !f.udp
+			conns = append(conns, parse(f, out)...)
 		}
 	}
 	if !got && readHostFile != nil { // image without shell: use the host's view of the container's netns
 		pidOut, err := run(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", container)
 		pid := strings.TrimSpace(string(pidOut))
 		if n, perr := strconv.Atoi(pid); err == nil && perr == nil && n > 0 {
-			for _, f := range []struct {
-				file string
-				v6   bool
-			}{{"tcp", false}, {"tcp6", true}} {
-				if data, err := readHostFile(fmt.Sprintf("/proc/%d/net/%s", n, f.file)); err == nil {
-					got = true
-					conns = append(conns, ParseProcNet(strings.NewReader(string(data)), f.v6)...)
+			conns = conns[:0]
+			for _, f := range files {
+				if data, err := readHostFile(fmt.Sprintf("/proc/%d/net/%s", n, f.name)); err == nil {
+					got = got || !f.udp
+					conns = append(conns, parse(f, data)...)
 				}
 			}
 		}
@@ -140,6 +163,14 @@ func Observe(ctx context.Context, run RunFunc, readHostFile func(string) ([]byte
 	seen := map[string]bool{}
 	for _, cn := range Outbound(conns) {
 		ep := Endpoint{Host: cn.Remote.String(), Port: cn.RemotePort}
+		if cn.UDP {
+			// Connected UDP sockets are mostly resolvers and time servers (127.0.0.11:53 in
+			// docker): only a destination in the published range or the metadata service is reported.
+			ep.Scheme = "udp"
+			if k, _ := c.Classify(ep.Host, ep.Port); k != KindDirectPort && k != KindMetadata {
+				continue
+			}
+		}
 		f, ok := newFinding(c, ep, "runtime")
 		if ok && !seen[f.ID] {
 			seen[f.ID] = true

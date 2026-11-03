@@ -245,6 +245,11 @@ func main() {
 	recovery.WireRecovery(workerCtx, logger, repository.NewRecoveryRepository(pool), cfg.SecretKey, awsClients) // C3: total recovery (plan/apply/verify), enabled with CAPSULE_RECOVERY_ENABLED
 	// git-capsule:wiring end
 
+	// gateway:wiring begin
+	// Universal gateway control plane (docs/gateway/PLAN.md 5): one line per gateway package.
+	wireGateway(workerCtx, logger, pool, cfg.TCPHost, orgRepo, projRepo, userRepo, apiTokenRepo, dbRepo, accessRepo, networkRepo, authzSvc) // G3: /internal/gateway/*, user API, port pool and sweeper
+	// gateway:wiring end
+
 	backupsSvc := wireBackups(workerCtx, cfg, logger, pool, awsClients, projRepo, dbRepo)
 
 	srv := server.New(cfg, logger, version, server.Deps{

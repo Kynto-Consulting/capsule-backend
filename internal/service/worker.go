@@ -451,7 +451,7 @@ func (w *DeployWorker) runDockerDeploy(ctx context.Context, id, projectID uuid.U
 			return
 		}
 		for _, m := range extraPorts {
-			w.appendLog(ctx, id, fmt.Sprintf("Publishing extra TCP port %d -> %d", m.HostPort, m.ContainerPort))
+			w.appendLog(ctx, id, fmt.Sprintf("Publishing extra %s port %d -> %d", strings.ToUpper(portProtoName(m.Protocol)), m.HostPort, m.ContainerPort))
 		}
 	}
 	res := w.rollout(ctx, rolloutSpec{
