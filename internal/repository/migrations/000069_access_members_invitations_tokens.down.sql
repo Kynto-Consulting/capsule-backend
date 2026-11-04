@@ -1,0 +1,15 @@
+DROP INDEX IF EXISTS idx_api_tokens_org;
+ALTER TABLE api_tokens DROP CONSTRAINT IF EXISTS chk_api_tokens_permissions;
+ALTER TABLE api_tokens DROP COLUMN IF EXISTS org_id;
+ALTER TABLE api_tokens DROP COLUMN IF EXISTS permissions;
+DROP TABLE IF EXISTS ownership_transfers;
+DROP TABLE IF EXISTS invitations;
+DROP INDEX IF EXISTS idx_org_members_template;
+ALTER TABLE org_members DROP CONSTRAINT IF EXISTS chk_org_members_tver;
+ALTER TABLE org_members DROP CONSTRAINT IF EXISTS chk_org_members_status;
+ALTER TABLE org_members DROP COLUMN IF EXISTS invited_by;
+ALTER TABLE org_members DROP COLUMN IF EXISTS suspended_by;
+ALTER TABLE org_members DROP COLUMN IF EXISTS suspended_at;
+ALTER TABLE org_members DROP COLUMN IF EXISTS template_version;
+ALTER TABLE org_members DROP COLUMN IF EXISTS template_id;
+ALTER TABLE org_members DROP COLUMN IF EXISTS status;

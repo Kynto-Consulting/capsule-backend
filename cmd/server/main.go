@@ -12,6 +12,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/kynto/capsule/backend/internal/authz"
+	authzwire "github.com/kynto/capsule/backend/internal/authz/wire"
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/gitcore"
@@ -27,6 +28,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/security"
 	"github.com/kynto/capsule/backend/internal/server"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
+	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/internal/service"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
@@ -215,6 +217,17 @@ func main() {
 
 	projectMemberRepo := repository.NewProjectMemberRepository(pool)
 	authzSvc := authz.New(projectMemberRepo)
+	// authz-engine:wiring begin
+	// New permission engine (docs/permissions): CAPSULE_AUTHZ_MODE v1 (default) | shadow | v2. v1 does not consult it.
+	// Seeds the system templates (the migrations already ran in NewPool).
+	if authzRT, err := authzwire.Start(workerCtx, logger, pool); err != nil {
+		logger.Error("permission engine unavailable; decisions stay on the legacy path", "error", err)
+	} else {
+		authzRT.Attach(authzSvc)
+		middleware.SetTokenGate(authzRT.Gate(server.RouteTable()))
+		logger.Info("permission engine ready", "mode", string(authzRT.Global))
+	}
+	// authz-engine:wiring end
 	if oidcSvc != nil {
 		// Project roles travel as "project:<org>/<project>:<role>" group claims.
 		oidcSvc.ExtraGroups = authzSvc.ProjectGroups

@@ -1,0 +1,2229 @@
+{
+  "catalog_version": 1,
+  "count": 99,
+  "permissions": [
+    {
+      "id": "org:read",
+      "bit": 0,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "organization",
+      "label": {
+        "es": "Ver la organización",
+        "en": "View the organization"
+      }
+    },
+    {
+      "id": "org:update",
+      "bit": 1,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "organization",
+      "label": {
+        "es": "Renombrar la organización",
+        "en": "Rename the organization"
+      }
+    },
+    {
+      "id": "org:delete",
+      "bit": 2,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "org:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "organization",
+      "label": {
+        "es": "Borrar la organización",
+        "en": "Delete the organization"
+      }
+    },
+    {
+      "id": "org:access-policy",
+      "bit": 3,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "organization",
+      "label": {
+        "es": "Cambiar el modo de acceso a proyectos",
+        "en": "Change the project access policy"
+      }
+    },
+    {
+      "id": "org:transfer",
+      "bit": 4,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "organization",
+      "label": {
+        "es": "Transferir la propiedad",
+        "en": "Transfer ownership"
+      }
+    },
+    {
+      "id": "member:read",
+      "bit": 5,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Ver miembros",
+        "en": "View members"
+      }
+    },
+    {
+      "id": "member:invite",
+      "bit": 6,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "member:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Invitar miembros",
+        "en": "Invite members"
+      }
+    },
+    {
+      "id": "member:update",
+      "bit": 7,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "member:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Cambiar el rol de un miembro",
+        "en": "Change a member role"
+      }
+    },
+    {
+      "id": "member:remove",
+      "bit": 8,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "member:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Quitar miembros",
+        "en": "Remove members"
+      }
+    },
+    {
+      "id": "member:leave",
+      "bit": 9,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "member:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Salir de la organización",
+        "en": "Leave the organization"
+      }
+    },
+    {
+      "id": "member:suspend",
+      "bit": 10,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "member:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "members",
+      "label": {
+        "es": "Suspender miembros en la organización",
+        "en": "Suspend members in the organization"
+      }
+    },
+    {
+      "id": "group:read",
+      "bit": 11,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "groups",
+      "label": {
+        "es": "Ver grupos",
+        "en": "View groups"
+      }
+    },
+    {
+      "id": "group:manage",
+      "bit": 12,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "group:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "groups",
+      "label": {
+        "es": "Gestionar grupos y su membresía",
+        "en": "Manage groups and their membership"
+      }
+    },
+    {
+      "id": "template:read",
+      "bit": 13,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "templates",
+      "label": {
+        "es": "Ver plantillas de roles",
+        "en": "View role templates"
+      }
+    },
+    {
+      "id": "template:manage",
+      "bit": 14,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "template:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "templates",
+      "label": {
+        "es": "Gestionar plantillas personalizadas",
+        "en": "Manage custom templates"
+      }
+    },
+    {
+      "id": "audit:read",
+      "bit": 15,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "audit",
+      "label": {
+        "es": "Ver la auditoría",
+        "en": "View the audit log"
+      }
+    },
+    {
+      "id": "audit:export",
+      "bit": 16,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "audit",
+      "label": {
+        "es": "Exportar la auditoría",
+        "en": "Export the audit log"
+      }
+    },
+    {
+      "id": "orgvar:read",
+      "bit": 17,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Ver variables de la cuenta (enmascaradas)",
+        "en": "View account variables (masked)"
+      }
+    },
+    {
+      "id": "orgvar:write",
+      "bit": 18,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "orgvar:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Crear y borrar variables de la cuenta",
+        "en": "Create and delete account variables"
+      }
+    },
+    {
+      "id": "orgvar:reveal",
+      "bit": 19,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Ver valores de variables de la cuenta",
+        "en": "Reveal account variable values"
+      }
+    },
+    {
+      "id": "billing:read",
+      "bit": 20,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "billing",
+      "label": {
+        "es": "Ver facturación",
+        "en": "View billing"
+      }
+    },
+    {
+      "id": "billing:manage",
+      "bit": 21,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "billing:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "billing",
+      "label": {
+        "es": "Gestionar facturación",
+        "en": "Manage billing"
+      }
+    },
+    {
+      "id": "token:read-all",
+      "bit": 22,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "tokens",
+      "label": {
+        "es": "Ver tokens de otros miembros",
+        "en": "View tokens of other members"
+      }
+    },
+    {
+      "id": "token:revoke-any",
+      "bit": 23,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "tokens",
+      "label": {
+        "es": "Revocar tokens de otros miembros",
+        "en": "Revoke tokens of other members"
+      }
+    },
+    {
+      "id": "oauthclient:manage",
+      "bit": 24,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "integrations",
+      "label": {
+        "es": "Gestionar clientes OAuth",
+        "en": "Manage OAuth clients"
+      }
+    },
+    {
+      "id": "project:create",
+      "bit": 25,
+      "scopes": [
+        "org"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": true,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Crear proyectos",
+        "en": "Create projects"
+      }
+    },
+    {
+      "id": "project:view",
+      "bit": 26,
+      "scopes": [
+        "project",
+        "repo",
+        "env"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Saber que el proyecto existe",
+        "en": "See that the project exists"
+      }
+    },
+    {
+      "id": "project:read",
+      "bit": 27,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Ver el detalle del proyecto",
+        "en": "View project details"
+      }
+    },
+    {
+      "id": "project:update",
+      "bit": 28,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Editar ajustes del proyecto",
+        "en": "Edit project settings"
+      }
+    },
+    {
+      "id": "project:delete",
+      "bit": 29,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.delete"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Borrar el proyecto",
+        "en": "Delete the project"
+      }
+    },
+    {
+      "id": "project:restore",
+      "bit": 30,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.delete"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "project",
+      "label": {
+        "es": "Recuperar un proyecto borrado",
+        "en": "Restore a deleted project"
+      }
+    },
+    {
+      "id": "deployment:read",
+      "bit": 31,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Ver despliegues",
+        "en": "View deployments"
+      }
+    },
+    {
+      "id": "deployment:create",
+      "bit": 32,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "deployment:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.deploy"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Crear despliegues",
+        "en": "Create deployments"
+      }
+    },
+    {
+      "id": "deployment:cancel",
+      "bit": 33,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.deploy"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Cancelar despliegues",
+        "en": "Cancel deployments"
+      }
+    },
+    {
+      "id": "deployment:rollback",
+      "bit": 34,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.deploy"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Revertir despliegues",
+        "en": "Roll back deployments"
+      }
+    },
+    {
+      "id": "preview:read",
+      "bit": 35,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Ver previews",
+        "en": "View previews"
+      }
+    },
+    {
+      "id": "preview:manage",
+      "bit": 36,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "preview:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.deploy"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "deployments",
+      "label": {
+        "es": "Crear y borrar previews",
+        "en": "Create and delete previews"
+      }
+    },
+    {
+      "id": "log:read",
+      "bit": 37,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "observability",
+      "label": {
+        "es": "Leer logs",
+        "en": "Read logs"
+      }
+    },
+    {
+      "id": "envvar:read",
+      "bit": 38,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Ver variables (enmascaradas)",
+        "en": "View variables (masked)"
+      }
+    },
+    {
+      "id": "envvar:write",
+      "bit": 39,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "envvar:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.env_write"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Crear y borrar variables",
+        "en": "Create and delete variables"
+      }
+    },
+    {
+      "id": "envvar:reveal",
+      "bit": 40,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "envvar:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.env_reveal"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "variables",
+      "label": {
+        "es": "Ver valores secretos",
+        "en": "Reveal secret values"
+      }
+    },
+    {
+      "id": "environment:read",
+      "bit": 41,
+      "scopes": [
+        "project",
+        "env"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "env.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "environments",
+      "label": {
+        "es": "Ver entornos y promociones",
+        "en": "View environments and promotions"
+      }
+    },
+    {
+      "id": "environment:manage",
+      "bit": 42,
+      "scopes": [
+        "project",
+        "env"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "environment:read",
+        "project:view"
+      ],
+      "legacy": [
+        "env.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "environments",
+      "label": {
+        "es": "Configurar entornos y aprobadores",
+        "en": "Configure environments and approvers"
+      }
+    },
+    {
+      "id": "promotion:request",
+      "bit": 43,
+      "scopes": [
+        "project",
+        "env"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "env.request"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "environments",
+      "label": {
+        "es": "Solicitar una promoción",
+        "en": "Request a promotion"
+      }
+    },
+    {
+      "id": "promotion:approve",
+      "bit": 44,
+      "scopes": [
+        "project",
+        "env"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "environment:read",
+        "project:view"
+      ],
+      "legacy": [
+        "env.approve"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "environments",
+      "label": {
+        "es": "Aprobar una promoción",
+        "en": "Approve a promotion"
+      }
+    },
+    {
+      "id": "worker:read",
+      "bit": 45,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "runtime",
+      "label": {
+        "es": "Ver workers",
+        "en": "View workers"
+      }
+    },
+    {
+      "id": "worker:manage",
+      "bit": 46,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view",
+        "worker:read"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "runtime",
+      "label": {
+        "es": "Gestionar workers",
+        "en": "Manage workers"
+      }
+    },
+    {
+      "id": "cron:read",
+      "bit": 47,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "runtime",
+      "label": {
+        "es": "Ver cron jobs",
+        "en": "View cron jobs"
+      }
+    },
+    {
+      "id": "cron:manage",
+      "bit": 48,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "cron:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "runtime",
+      "label": {
+        "es": "Crear y borrar cron jobs",
+        "en": "Create and delete cron jobs"
+      }
+    },
+    {
+      "id": "cron:trigger",
+      "bit": 49,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "cron:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "runtime",
+      "label": {
+        "es": "Lanzar un cron job",
+        "en": "Trigger a cron job"
+      }
+    },
+    {
+      "id": "domain:read",
+      "bit": 50,
+      "scopes": [
+        "org",
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Ver dominios",
+        "en": "View domains"
+      }
+    },
+    {
+      "id": "domain:manage",
+      "bit": 51,
+      "scopes": [
+        "org",
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": true,
+      "requires": [
+        "domain:read"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Gestionar dominios",
+        "en": "Manage domains"
+      }
+    },
+    {
+      "id": "email:read",
+      "bit": 52,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Ver correo (estado, estadísticas, DNS, logs)",
+        "en": "View email (status, stats, DNS, logs)"
+      }
+    },
+    {
+      "id": "email:manage",
+      "bit": 53,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "email:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Configurar y enviar correo",
+        "en": "Configure and send email"
+      }
+    },
+    {
+      "id": "storage:read",
+      "bit": 54,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Ver buckets",
+        "en": "View buckets"
+      }
+    },
+    {
+      "id": "storage:manage",
+      "bit": 55,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view",
+        "storage:read"
+      ],
+      "legacy": [
+        "project.databases"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Crear y borrar buckets",
+        "en": "Create and delete buckets"
+      }
+    },
+    {
+      "id": "storage:presign",
+      "bit": 56,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Firmar URLs de buckets",
+        "en": "Presign bucket URLs"
+      }
+    },
+    {
+      "id": "database:read",
+      "bit": 57,
+      "scopes": [
+        "org",
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Ver bases de datos",
+        "en": "View databases"
+      }
+    },
+    {
+      "id": "database:create",
+      "bit": 58,
+      "scopes": [
+        "org",
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": true,
+      "requires": [
+        "database:read"
+      ],
+      "legacy": [
+        "project.databases"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Crear bases de datos",
+        "en": "Create databases"
+      }
+    },
+    {
+      "id": "database:delete",
+      "bit": 59,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "database:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.databases"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Borrar bases de datos",
+        "en": "Delete databases"
+      }
+    },
+    {
+      "id": "database:query",
+      "bit": 60,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "database:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Usar el explorador SQL",
+        "en": "Use the SQL explorer"
+      }
+    },
+    {
+      "id": "backup:read",
+      "bit": 61,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Ver respaldos",
+        "en": "View backups"
+      }
+    },
+    {
+      "id": "backup:manage",
+      "bit": 62,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "backup:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Gestionar respaldos",
+        "en": "Manage backups"
+      }
+    },
+    {
+      "id": "backup:restore",
+      "bit": 63,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "backup:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.databases"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Restaurar respaldos",
+        "en": "Restore backups"
+      }
+    },
+    {
+      "id": "connaudit:read",
+      "bit": 64,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Ver auditoría de conexiones",
+        "en": "View connection audit"
+      }
+    },
+    {
+      "id": "connaudit:manage",
+      "bit": 65,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "connaudit:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "data",
+      "label": {
+        "es": "Gestionar la auditoría de conexiones",
+        "en": "Manage connection audit"
+      }
+    },
+    {
+      "id": "network:read",
+      "bit": 66,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Ver reglas de red",
+        "en": "View network rules"
+      }
+    },
+    {
+      "id": "network:manage",
+      "bit": 67,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "network:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.network"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Gestionar reglas de red",
+        "en": "Manage network rules"
+      }
+    },
+    {
+      "id": "gateway:connect",
+      "bit": 68,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.connect"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Conectarse por el gateway",
+        "en": "Connect through the gateway"
+      }
+    },
+    {
+      "id": "gateway:manage",
+      "bit": 69,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.network"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Exponer o cerrar servicios del gateway",
+        "en": "Expose or close gateway services"
+      }
+    },
+    {
+      "id": "gateway:token",
+      "bit": 70,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "project.network"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "networking",
+      "label": {
+        "es": "Gestionar tokens de servicio del gateway",
+        "en": "Manage gateway service tokens"
+      }
+    },
+    {
+      "id": "git:read",
+      "bit": 71,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "git.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Leer código, ramas, commits y PR",
+        "en": "Read code, branches, commits and PRs"
+      }
+    },
+    {
+      "id": "git:write",
+      "bit": 72,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.write"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Crear ramas, abrir PR y comentar",
+        "en": "Create branches, open PRs and comment"
+      }
+    },
+    {
+      "id": "git:review",
+      "bit": 73,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.review"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Revisar pull requests",
+        "en": "Review pull requests"
+      }
+    },
+    {
+      "id": "git:merge",
+      "bit": 74,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.merge"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Fusionar pull requests",
+        "en": "Merge pull requests"
+      }
+    },
+    {
+      "id": "git:link",
+      "bit": 75,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "project.ops"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Enlazar o crear el repositorio",
+        "en": "Link or create the repository"
+      }
+    },
+    {
+      "id": "git:protect",
+      "bit": 76,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Proteger ramas",
+        "en": "Protect branches"
+      }
+    },
+    {
+      "id": "git:settings",
+      "bit": 77,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Ajustes del repositorio",
+        "en": "Repository settings"
+      }
+    },
+    {
+      "id": "git:mirror",
+      "bit": 78,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Gestionar espejos",
+        "en": "Manage mirrors"
+      }
+    },
+    {
+      "id": "git:review-dismiss",
+      "bit": 79,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Descartar revisiones",
+        "en": "Dismiss reviews"
+      }
+    },
+    {
+      "id": "git:token-service",
+      "bit": 80,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "git:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Tokens de servicio Git",
+        "en": "Git service tokens"
+      }
+    },
+    {
+      "id": "ci:read",
+      "bit": 81,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "git.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Ver workflows, runs y logs de CI",
+        "en": "View CI workflows, runs and logs"
+      }
+    },
+    {
+      "id": "ci:run",
+      "bit": 82,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "ci:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.write"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Lanzar, relanzar y cancelar CI",
+        "en": "Run, re-run and cancel CI"
+      }
+    },
+    {
+      "id": "ci:variable",
+      "bit": 83,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "ci:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Variables de CI",
+        "en": "CI variables"
+      }
+    },
+    {
+      "id": "ci:secret",
+      "bit": 84,
+      "scopes": [
+        "project",
+        "repo"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "ci:read",
+        "project:view"
+      ],
+      "legacy": [
+        "git.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "git",
+      "label": {
+        "es": "Secretos de CI",
+        "en": "CI secrets"
+      }
+    },
+    {
+      "id": "security:read",
+      "bit": 85,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "security.read"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "security",
+      "label": {
+        "es": "Ver alertas de seguridad",
+        "en": "View security alerts"
+      }
+    },
+    {
+      "id": "security:triage",
+      "bit": 86,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view",
+        "security:read"
+      ],
+      "legacy": [
+        "security.triage"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "security",
+      "label": {
+        "es": "Descartar alertas bajas y medias",
+        "en": "Dismiss low and medium alerts"
+      }
+    },
+    {
+      "id": "security:upload",
+      "bit": 87,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view",
+        "security:read"
+      ],
+      "legacy": [
+        "security.triage"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "security",
+      "label": {
+        "es": "Subir resultados SARIF",
+        "en": "Upload SARIF results"
+      }
+    },
+    {
+      "id": "security:admin",
+      "bit": 88,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": true,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view",
+        "security:read"
+      ],
+      "legacy": [
+        "security.admin"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "security",
+      "label": {
+        "es": "Alertas críticas y altas, políticas",
+        "en": "Critical and high alerts, policies"
+      }
+    },
+    {
+      "id": "webhook:manage",
+      "bit": 89,
+      "scopes": [
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": true,
+      "legacy_gap": false,
+      "requires": [
+        "project:view"
+      ],
+      "legacy": [
+        "webhooks.manage"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "integrations",
+      "label": {
+        "es": "Gestionar webhooks salientes",
+        "en": "Manage outbound webhooks"
+      }
+    },
+    {
+      "id": "assignment:read",
+      "bit": 90,
+      "scopes": [
+        "org",
+        "project"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [
+        "project.members"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "access",
+      "label": {
+        "es": "Ver quién tiene acceso",
+        "en": "View who has access"
+      }
+    },
+    {
+      "id": "assignment:grant",
+      "bit": 91,
+      "scopes": [
+        "org",
+        "project",
+        "repo",
+        "env"
+      ],
+      "sensitive": true,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "assignment:read"
+      ],
+      "legacy": [
+        "project.members"
+      ],
+      "since": 1,
+      "deprecated": false,
+      "group": "access",
+      "label": {
+        "es": "Asignar plantillas de acceso",
+        "en": "Grant access templates"
+      }
+    },
+    {
+      "id": "platform-user:read",
+      "bit": 92,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Ver usuarios de la plataforma",
+        "en": "View platform users"
+      }
+    },
+    {
+      "id": "platform-user:create",
+      "bit": 93,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "platform-user:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Crear usuarios de la plataforma",
+        "en": "Create platform users"
+      }
+    },
+    {
+      "id": "platform-user:suspend",
+      "bit": 94,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Suspender usuarios de la plataforma",
+        "en": "Suspend platform users"
+      }
+    },
+    {
+      "id": "platform-user:delete",
+      "bit": 95,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "platform-user:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Borrar usuarios de la plataforma",
+        "en": "Delete platform users"
+      }
+    },
+    {
+      "id": "platform-user:set-role",
+      "bit": 96,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Cambiar el rol de plataforma",
+        "en": "Change the platform role"
+      }
+    },
+    {
+      "id": "platform-backup:read",
+      "bit": 97,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Ver respaldos de la plataforma",
+        "en": "View platform backups"
+      }
+    },
+    {
+      "id": "platform-backup:run",
+      "bit": 98,
+      "scopes": [
+        "platform"
+      ],
+      "sensitive": false,
+      "tokenable": false,
+      "legacy_gap": false,
+      "requires": [
+        "platform-backup:read"
+      ],
+      "legacy": [],
+      "since": 1,
+      "deprecated": false,
+      "group": "platform",
+      "label": {
+        "es": "Ejecutar respaldos de la plataforma",
+        "en": "Run platform backups"
+      }
+    }
+  ]
+}

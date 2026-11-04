@@ -1,0 +1,10 @@
+ALTER TABLE projects DROP CONSTRAINT IF EXISTS chk_projects_access_override;
+ALTER TABLE projects DROP COLUMN IF EXISTS access_override;
+ALTER TABLE organizations DROP COLUMN IF EXISTS access_settings;
+ALTER TABLE organizations DROP COLUMN IF EXISTS access_epoch;
+DROP TABLE IF EXISTS access_anomalies;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_platform_role;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_status;
+ALTER TABLE users DROP COLUMN IF EXISTS access_epoch;
+ALTER TABLE users DROP COLUMN IF EXISTS platform_role;
+ALTER TABLE users DROP COLUMN IF EXISTS status;

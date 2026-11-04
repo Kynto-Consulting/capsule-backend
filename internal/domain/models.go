@@ -240,6 +240,8 @@ type APIToken struct {
 	Prefix          string     `json:"prefix"`
 	Scopes          string     `json:"scopes"`
 	ProjectID       *uuid.UUID `json:"project_id,omitempty"`
+	Permissions     []string   `json:"permissions,omitempty"` // atomic permissions; nil = legacy token (Scopes decide)
+	OrgID           *uuid.UUID `json:"org_id,omitempty"`
 	RateLimitRPM    int        `json:"rate_limit_rpm"`
 	IPAllowlist     string     `json:"ip_allowlist"`
 	RequestCount    int64      `json:"request_count"`

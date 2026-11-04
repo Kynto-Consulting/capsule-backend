@@ -84,7 +84,7 @@ func newSecRig(t *testing.T) *secRig {
 	store := security.NewMemStore()
 	store.AddProject(security.Target{ProjectID: proj.ID, OrgID: org.ID, OrgSlug: org.Slug, ProjectSlug: proj.Slug})
 	svc := security.New(store, nil, security.Config{FingerprintKey: "handler-test-key", UploadsPerMinute: 1000}, nil)
-	rig := &secRig{t: t, svc: svc, store: store, org: org.ID, project: proj.ID, users: users, clock: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	rig := &secRig{t: t, svc: svc, store: store, org: org.ID, project: proj.ID, users: users, clock: time.Now().UTC().Truncate(time.Hour)}
 	svc.SetClock(func() time.Time { return rig.clock })
 
 	h := NewSecurityHandler(svc, az, secOrgs{org: org}, secProjects{p: proj})

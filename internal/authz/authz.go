@@ -158,13 +158,24 @@ type Store interface {
 }
 
 // Service evaluates permissions.
-type Service struct{ store Store }
+type Service struct {
+	store Store
+	x     *engineWiring // nil: always the legacy decision (shadow.go)
+}
 
 // New returns a Service backed by store.
-func New(store Store) *Service { return &Service{store: store} }
+func New(store Store) *Service {
+	s := &Service{store: store}
+	if f := legacyFactory; f != nil {
+		if m := envMode(); m != ModeV1 {
+			s.EnableEngine(EngineConfig{V2: f(store), Global: m})
+		}
+	}
+	return s
+}
 
 // Access resolves userID against a project of orgID.
-func (s *Service) Access(ctx context.Context, userID, orgID, projectID uuid.UUID) (Access, error) {
+func (s *Service) accessV1(ctx context.Context, userID, orgID, projectID uuid.UUID) (Access, error) {
 	oa, err := s.store.LoadOrgAccess(ctx, orgID, userID)
 	if err != nil {
 		return Access{}, err
@@ -183,15 +194,12 @@ func (s *Service) EffectiveRole(ctx context.Context, userID, orgID, projectID uu
 
 // Can reports whether the user may perform a on the project.
 func (s *Service) Can(ctx context.Context, userID, orgID, projectID uuid.UUID, a Action) (bool, error) {
-	acc, err := s.Access(ctx, userID, orgID, projectID)
-	if err != nil {
-		return false, err
-	}
-	return RoleAllows(acc.Role, a), nil
+	o, err := s.Check(ctx, userID, orgID, projectID, a)
+	return o.Allowed, err
 }
 
 // FilterProjects drops the projects the user cannot see (restricted mode).
-func (s *Service) FilterProjects(ctx context.Context, userID, orgID uuid.UUID, projects []*domain.Project) ([]*domain.Project, error) {
+func (s *Service) filterProjectsV1(ctx context.Context, userID, orgID uuid.UUID, projects []*domain.Project) ([]*domain.Project, error) {
 	oa, err := s.store.LoadOrgAccess(ctx, orgID, userID)
 	if err != nil {
 		return nil, err
@@ -210,7 +218,7 @@ func (s *Service) FilterProjects(ctx context.Context, userID, orgID uuid.UUID, p
 
 // Visibility returns a predicate telling which projects of orgID the user can
 // see (any effective role). Used to filter org-level listings.
-func (s *Service) Visibility(ctx context.Context, userID, orgID uuid.UUID) (func(projectID uuid.UUID) bool, error) {
+func (s *Service) visibilityV1(ctx context.Context, userID, orgID uuid.UUID) (func(projectID uuid.UUID) bool, error) {
 	oa, err := s.store.LoadOrgAccess(ctx, orgID, userID)
 	if err != nil {
 		return nil, err

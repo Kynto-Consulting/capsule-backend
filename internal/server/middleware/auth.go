@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/kynto/capsule/backend/internal/domain"
 )
@@ -48,12 +49,15 @@ func Auth(authSvc domain.AuthService, tokenRepo domain.APITokenRepository, userR
 				return
 			}
 
-			if apiToken != nil && !TokenAllows(apiToken, r.Method, r.URL.Path) {
+			if apiToken != nil && !allowToken(apiToken, r) {
 				http.Error(w, `{"error":{"code":"FORBIDDEN","message":"token scope does not permit this request"}}`, http.StatusForbidden)
 				return
 			}
 
 			ctx := context.WithValue(r.Context(), userKey, user)
+			if apiToken != nil {
+				ctx = WithTokenInfo(ctx, TokenInfoFor(apiToken))
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -94,4 +98,16 @@ func GetUser(ctx context.Context) *domain.User {
 // WithUser returns a context carrying the authenticated user (used by tests).
 func WithUser(ctx context.Context, u *domain.User) context.Context {
 	return context.WithValue(ctx, userKey, u)
+}
+
+var gate atomic.Pointer[TokenGate]
+
+// SetTokenGate installs the gate that decides API tokens (authz-engine wiring). Without it the legacy TokenAllows decides.
+func SetTokenGate(g *TokenGate) { gate.Store(g) }
+
+func allowToken(t *domain.APIToken, r *http.Request) bool {
+	if g := gate.Load(); g != nil {
+		return g.Allow(r, t)
+	}
+	return TokenAllows(t, r.Method, r.URL.Path)
 }

@@ -1,0 +1,17 @@
+DROP TRIGGER IF EXISTS access_assignments_sync ON access_assignments;
+DROP TRIGGER IF EXISTS project_members_access_sync ON project_members;
+DROP TRIGGER IF EXISTS org_members_access_bump ON org_members;
+DROP TRIGGER IF EXISTS org_members_access_sync ON org_members;
+DROP TRIGGER IF EXISTS users_access_notify ON users;
+DROP TRIGGER IF EXISTS users_access_sync ON users;
+DROP FUNCTION IF EXISTS access_trg_assign_to_pm();
+DROP FUNCTION IF EXISTS access_assignment_mirrored(access_assignments);
+DROP FUNCTION IF EXISTS access_trg_pm_to_assign();
+DROP FUNCTION IF EXISTS access_mirror_to_project_member(uuid, uuid);
+DROP FUNCTION IF EXISTS access_mirror_to_assignment(uuid, uuid);
+DROP FUNCTION IF EXISTS access_trg_org_members_bump();
+DROP FUNCTION IF EXISTS access_trg_org_members_sync();
+DROP FUNCTION IF EXISTS access_trg_users_notify();
+DROP FUNCTION IF EXISTS access_trg_users_sync();
+DROP FUNCTION IF EXISTS access_sync_busy();
+DROP FUNCTION IF EXISTS access_bump_org(uuid);

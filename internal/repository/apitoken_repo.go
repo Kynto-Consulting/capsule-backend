@@ -22,13 +22,13 @@ func NewAPITokenRepository(pool *pgxpool.Pool) *APITokenRepository {
 
 const tokenCols = `id, user_id, name, token_hash, prefix, scopes,
 	rate_limit_rpm, ip_allowlist, request_count, last_count_reset,
-	last_used_at, expires_at, created_at, revoked_at, project_id`
+	last_used_at, expires_at, created_at, revoked_at, project_id, permissions, org_id`
 
 func scanToken(row interface{ Scan(...any) error }, t *domain.APIToken) error {
 	return row.Scan(
 		&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Prefix, &t.Scopes,
 		&t.RateLimitRPM, &t.IPAllowlist, &t.RequestCount, &t.LastCountReset,
-		&t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt, &t.RevokedAt, &t.ProjectID,
+		&t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt, &t.RevokedAt, &t.ProjectID, &t.Permissions, &t.OrgID,
 	)
 }
 
