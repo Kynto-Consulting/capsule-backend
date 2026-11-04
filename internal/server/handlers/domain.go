@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/kynto/capsule/backend/internal/authz"
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/ingress"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
@@ -29,6 +29,8 @@ type DomainHandler struct {
 	projects   domain.ProjectRepository
 	aws        *awsclient.Clients
 	albDNSName string
+	ingress    ingress.Config   // zero value = ALB mode
+	resolver   ingress.Resolver // DNS resolver used by the no-ALB verification
 	logger     *slog.Logger
 }
 
@@ -134,34 +136,24 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.domains.Create(r.Context(), &domain.Domain{
-		OrgID:       orgID,
-		ProjectID:   &projectID,
-		DomainName:  req.DomainName,
-		RecordType:  "CNAME",
-		RecordValue: h.albDNSName,
-		Status:      "pending",
-		DNSProvider: req.DNSProvider,
-	})
+	newD, vmsg := h.newDomain(orgID, &projectID, req.DomainName, req.DNSProvider)
+	if vmsg != "" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", vmsg)
+		return
+	}
+	d, err := h.domains.Create(r.Context(), newD)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create domain")
+		h.respondCreateError(w, err)
 		return
 	}
 
-	// If Route53, create the CNAME record automatically in the background.
+	// If Route53, create the DNS record automatically in the background.
 	if req.DNSProvider == "route53" && h.aws != nil {
 		go h.createRoute53Record(d)
 	}
 
-	type domainResponse struct {
-		*domain.Domain
-		Instructions string `json:"instructions"`
-	}
-
-	respondJSON(w, http.StatusCreated, domainResponse{
-		Domain:       d,
-		Instructions: fmt.Sprintf("Point CNAME %s → %s", req.DomainName, h.albDNSName),
-	})
+	instr, recs := h.instructionsFor(d)
+	respondJSON(w, http.StatusCreated, domainResponse{Domain: d, Instructions: instr, DNSRecords: recs})
 }
 
 // ListByOrg returns all domains for an org regardless of project.
@@ -227,31 +219,22 @@ func (h *DomainHandler) CreateOrgLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := h.domains.Create(r.Context(), &domain.Domain{
-		OrgID:       orgID,
-		ProjectID:   nil,
-		DomainName:  req.DomainName,
-		RecordType:  "CNAME",
-		RecordValue: h.albDNSName,
-		Status:      "pending",
-		DNSProvider: req.DNSProvider,
-	})
+	newD, vmsg := h.newDomain(orgID, nil, req.DomainName, req.DNSProvider)
+	if vmsg != "" {
+		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", vmsg)
+		return
+	}
+	d, err := h.domains.Create(r.Context(), newD)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create domain")
+		h.respondCreateError(w, err)
 		return
 	}
 	if req.DNSProvider == "route53" && h.aws != nil {
 		go h.createRoute53Record(d)
 	}
 
-	type domainResponse struct {
-		*domain.Domain
-		Instructions string `json:"instructions"`
-	}
-	respondJSON(w, http.StatusCreated, domainResponse{
-		Domain:       d,
-		Instructions: fmt.Sprintf("Point CNAME %s → %s", req.DomainName, h.albDNSName),
-	})
+	instr, recs := h.instructionsFor(d)
+	respondJSON(w, http.StatusCreated, domainResponse{Domain: d, Instructions: instr, DNSRecords: recs})
 }
 
 // Verify checks DNS propagation and marks the domain active or failed.
@@ -283,6 +266,17 @@ func (h *DomainHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.authorizeResourceProject(w, r, h.orgs, orgID, urlProject, d.ProjectID, authz.ProjectOps) {
+		return
+	}
+
+	if h.ingress.Caddy() {
+		// No ALB: DNS ownership only; Caddy issues the certificate on demand.
+		resp, err := h.verifyCaddy(r.Context(), d)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update domain status")
+			return
+		}
+		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -377,23 +371,17 @@ func (h *DomainHandler) createRoute53Record(d *domain.Domain) {
 
 	zoneID := aws.ToString(zones.HostedZones[0].Id)
 
+	var changes []r53types.Change
+	for _, rs := range h.route53Records(d.DomainName) {
+		changes = append(changes, r53types.Change{Action: r53types.ChangeActionCreate, ResourceRecordSet: rs})
+	}
+	if len(changes) == 0 {
+		h.logger.Warn("no DNS target configured for Route53 record", "domain", d.DomainName)
+		return
+	}
 	_, err = h.aws.Route53.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
-		ChangeBatch: &r53types.ChangeBatch{
-			Changes: []r53types.Change{
-				{
-					Action: r53types.ChangeActionCreate,
-					ResourceRecordSet: &r53types.ResourceRecordSet{
-						Name: aws.String(d.DomainName),
-						Type: r53types.RRTypeCname,
-						TTL:  aws.Int64(300),
-						ResourceRecords: []r53types.ResourceRecord{
-							{Value: aws.String(h.albDNSName)},
-						},
-					},
-				},
-			},
-		},
+		ChangeBatch:  &r53types.ChangeBatch{Changes: changes},
 	})
 	if err != nil {
 		h.logger.Error("failed to create Route53 CNAME record", "domain", d.DomainName, "error", err)
@@ -415,23 +403,16 @@ func (h *DomainHandler) deleteRoute53Record(d *domain.Domain) {
 
 	zoneID := aws.ToString(zones.HostedZones[0].Id)
 
+	var changes []r53types.Change
+	for _, rs := range h.route53Records(d.DomainName) {
+		changes = append(changes, r53types.Change{Action: r53types.ChangeActionDelete, ResourceRecordSet: rs})
+	}
+	if len(changes) == 0 {
+		return
+	}
 	_, err = h.aws.Route53.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
-		ChangeBatch: &r53types.ChangeBatch{
-			Changes: []r53types.Change{
-				{
-					Action: r53types.ChangeActionDelete,
-					ResourceRecordSet: &r53types.ResourceRecordSet{
-						Name: aws.String(d.DomainName),
-						Type: r53types.RRTypeCname,
-						TTL:  aws.Int64(300),
-						ResourceRecords: []r53types.ResourceRecord{
-							{Value: aws.String(h.albDNSName)},
-						},
-					},
-				},
-			},
-		},
+		ChangeBatch:  &r53types.ChangeBatch{Changes: changes},
 	})
 	if err != nil {
 		h.logger.Error("failed to delete Route53 CNAME record", "domain", d.DomainName, "error", err)

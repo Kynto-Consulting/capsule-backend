@@ -11,6 +11,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/kynto/capsule/backend/internal/access"
 	"github.com/kynto/capsule/backend/internal/authz"
 	authzwire "github.com/kynto/capsule/backend/internal/authz/wire"
 	"github.com/kynto/capsule/backend/internal/config"
@@ -225,6 +226,7 @@ func main() {
 	} else {
 		authzRT.Attach(authzSvc)
 		middleware.SetTokenGate(authzRT.Gate(server.RouteTable()))
+		handlers.WireAccess(access.New(authzRT.Store, authzRT.Engine, logger), logger) // P4: templates, groups, assignments, /me/permissions, simulator
 		logger.Info("permission engine ready", "mode", string(authzRT.Global))
 	}
 	// authz-engine:wiring end
@@ -273,6 +275,7 @@ func main() {
 
 	backupsSvc := wireBackups(workerCtx, cfg, logger, pool, awsClients, projRepo, dbRepo)
 
+	ingressCfg := wireIngress(cfg, logger)
 	srv := server.New(cfg, logger, version, server.Deps{
 		Authz:              authzSvc,
 		ProjectMembers:     projectMemberRepo,
@@ -290,6 +293,7 @@ func main() {
 		APITokenRepo:       apiTokenRepo,
 		AWSClients:         awsClients,
 		ALBDNSName:         cfg.ALBDNSName,
+		Ingress:            ingressCfg,
 		DBSubnetGroup:      cfg.DBSubnetGroup,
 		RDSSecurityGroupID: cfg.RDSSecurityGroupID,
 		PublicHost:         cfg.PublicHost,

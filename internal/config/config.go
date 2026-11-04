@@ -53,6 +53,12 @@ type Config struct {
 	ALBListenerARN      string // ARN of the ALB HTTPS/HTTP listener for dynamic rules
 	VpcID               string // VPC ID used when creating ALB target groups
 
+	// Ingress without ALB (see internal/ingress). CAPSULE_INGRESS=alb|caddy (default: caddy when ALB_LISTENER_ARN is empty).
+	Ingress     string // CAPSULE_INGRESS
+	IngressHost string // CAPSULE_INGRESS_HOST: name customers CNAME to (e.g. ingress.apps.example.com)
+	IngressIPv4 string // CAPSULE_INGRESS_IPV4: server public IPv4 for A records
+	IngressIPv6 string // CAPSULE_INGRESS_IPV6: server public IPv6 for AAAA records
+
 	// Observability
 	SentryDSN string
 
@@ -129,6 +135,11 @@ func Load() (*Config, error) {
 		ECSExecutionRoleARN: os.Getenv("ECS_EXECUTION_ROLE_ARN"),
 		ALBListenerARN:      os.Getenv("ALB_LISTENER_ARN"),
 		VpcID:               os.Getenv("VPC_ID"),
+
+		Ingress:     os.Getenv("CAPSULE_INGRESS"),
+		IngressHost: os.Getenv("CAPSULE_INGRESS_HOST"),
+		IngressIPv4: os.Getenv("CAPSULE_INGRESS_IPV4"),
+		IngressIPv6: os.Getenv("CAPSULE_INGRESS_IPV6"),
 
 		SentryDSN: os.Getenv("SENTRY_DSN"),
 

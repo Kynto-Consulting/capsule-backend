@@ -89,7 +89,7 @@ func (a AppRemover) Remove(ctx context.Context, projectID uuid.UUID) error {
 				errs = append(errs, "ecs delete service: "+err.Error())
 			}
 		}
-		if a.AWS.ELBV2 != nil {
+		if a.AWS.ELBV2 != nil && a.Fargate.ALBListenerARN != "" {
 			host := short + "." + a.Fargate.AppsDomain
 			if rules, err := a.AWS.ELBV2.DescribeRules(ctx, &elbv2.DescribeRulesInput{ListenerArn: aws.String(a.Fargate.ALBListenerARN)}); err == nil {
 			rules:

@@ -59,3 +59,59 @@ func TestClientIPv6(t *testing.T) {
 		}
 	}
 }
+
+// Caddy (no ALB) appends the address of the connecting peer to X-Forwarded-For (reverse_proxy default
+// without trusted_proxies): the real client is the LAST element, anything to the left is client-controlled.
+func TestClientIPBehindCaddy(t *testing.T) {
+	cases := []struct {
+		name, remote, xff, want string
+	}{
+		{"direct client", "172.18.0.2:4444", "198.51.100.7", "198.51.100.7"},
+		{"forged left elements", "172.18.0.2:4444", "1.2.3.4, 8.8.8.8, 198.51.100.7", "198.51.100.7"},
+		{"forged private left", "172.18.0.2:4444", "127.0.0.1, 10.0.0.9, 198.51.100.7", "198.51.100.7"},
+		{"ipv6 client", "172.18.0.2:4444", "9.9.9.9, 2001:db8::77", "2001:db8::77"},
+		{"ipv6 bracketed with port", "172.18.0.2:4444", "9.9.9.9, [2001:db8::77]:5555", "2001:db8::77"},
+		{"extra private hop after client", "172.18.0.2:4444", "1.2.3.4, 198.51.100.7, 172.18.0.3", "198.51.100.7"},
+		{"garbage entries skipped", "172.18.0.2:4444", "unknown, 198.51.100.7, ", "198.51.100.7"},
+		{"no header: socket peer", "172.18.0.2:4444", "", "172.18.0.2"},
+		{"internal call, private only", "172.18.0.2:4444", "172.18.0.9", "172.18.0.9"},
+	}
+	for _, c := range cases {
+		if got := ClientIP(c.remote, c.xff); got != c.want {
+			t.Errorf("%s: ClientIP(%q, %q) = %q, want %q", c.name, c.remote, c.xff, got, c.want)
+		}
+	}
+	for xff, want := range map[string]bool{"": false, "172.18.0.9": false, "127.0.0.1, 10.1.1.1": false, "1.2.3.4, 10.1.1.1": true, "garbage": false, "[2001:db8::1]:443": true, "fe80::1, fd00::2": false} {
+		if got := HasPublicForwarded(xff); got != want {
+			t.Errorf("HasPublicForwarded(%q) = %v, want %v", xff, got, want)
+		}
+	}
+}
+
+// Caddy -> backend chain (no ALB): Caddy appends the peer address it saw as the LAST element; anything to
+// the left was sent by the client and may be forged.
+func TestClientIPCaddyChain(t *testing.T) {
+	cases := []struct{ name, remote, xff, want string }{
+		{"single", "172.18.0.2:40000", "198.51.100.7", "198.51.100.7"},
+		{"forged left", "172.18.0.2:40000", "1.2.3.4, 10.0.0.1, 198.51.100.7", "198.51.100.7"},
+		{"forged public left only trusted last", "172.18.0.2:40000", "8.8.8.8, 198.51.100.7", "198.51.100.7"},
+		{"ipv6 client", "172.18.0.2:40000", "9.9.9.9, 2001:db8::5", "2001:db8::5"},
+		{"no xff", "172.18.0.2:40000", "", "172.18.0.2"},
+	}
+	for _, c := range cases {
+		if got := ClientIP(c.remote, c.xff); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestHasPublicForwarded(t *testing.T) {
+	for xff, want := range map[string]bool{
+		"": false, "10.0.0.1": false, "172.18.0.2, fd00::1": false, "198.51.100.7": true,
+		"10.0.0.1, 2001:db8::5": true, "garbage": false, "[2001:db8::1]:443": true,
+	} {
+		if got := HasPublicForwarded(xff); got != want {
+			t.Errorf("%q: %v want %v", xff, got, want)
+		}
+	}
+}

@@ -55,6 +55,7 @@ var rules = []rule{
 	{handler: "handlers.GitHandler.Webhook", class: "public-secret", note: "HMAC signature"},
 	{handler: "api.Service.handleRoutes", class: "public-secret", note: "gateway data plane: CAPSULE_GW_SECRET"},
 	{handler: "api.Service.handleKeys", class: "public-secret", note: "gateway data plane: CAPSULE_GW_SECRET"},
+	{handler: "handlers.TLSAskHandler.ServeHTTP", class: "public-dataplane", note: "Caddy on_demand_tls ask: host-only answer, closed by Caddy blocking /internal/*"},
 	{handler: "handlers.ProxyHandler.ProxyBySlug", class: "public-dataplane"},
 	{handler: "handlers.ProxyHandler.Proxy", class: "public-dataplane"},
 	{handler: "handlers.AuthHandler.Register", class: "public"},
@@ -178,6 +179,10 @@ func applyClasses(rows []Row) ([]Row, error) {
 			if len(ru.actions) > 0 {
 				r.Actions = append([]string(nil), ru.actions...)
 			}
+		case r.Class == "" && strings.HasPrefix(r.Handler, "handlers.accessAPI."):
+			// Routes of the atomic permissions API (P4): they have no legacy action; routePermissions in
+			// internal/server/routeperms.go holds the atom each one requires.
+			r.Class = "access-api"
 		case r.Class == "":
 			problems = append(problems, fmt.Sprintf("%s %s [%s]: no old action found and no class in classes.go", r.Method, r.Path, r.Handler))
 		}

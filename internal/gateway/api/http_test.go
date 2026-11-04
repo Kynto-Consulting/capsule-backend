@@ -669,3 +669,35 @@ func TestErrorsNeverLeakInternals(t *testing.T) {
 	}
 	_ = h
 }
+
+// Without the ALB (Caddy in front) the public marker is a public client address in X-Forwarded-For.
+func TestInternalRefusesPublicForwardedForWithoutALBHeader(t *testing.T) {
+	e := newEnv(t)
+	h := e.router()
+	hdr := func(xff string) map[string]string {
+		return map[string]string{SecretHeader: testSecret, "X-Forwarded-For": xff}
+	}
+	if r := e.do(h, "GET", "/internal/gateway/routes?wait=0", "", nil, hdr("203.0.113.9")); r.Code != 403 {
+		t.Errorf("through Caddy from a public client: %d, want 403", r.Code)
+	}
+	if r := e.do(h, "GET", "/internal/gateway/routes?wait=0", "", nil, hdr("10.0.0.5")); r.Code != 200 {
+		t.Errorf("private forwarded address: %d, want 200", r.Code)
+	}
+	if r := e.do(h, "GET", "/internal/gateway/routes?wait=0", "", nil, secretHdr); r.Code != 200 {
+		t.Errorf("direct internal call: %d, want 200", r.Code)
+	}
+}
+
+// Without the ALB (Caddy edge) there is no X-Amzn-Trace-Id: a public client address in X-Forwarded-For still closes the API.
+func TestInternalRefusesPublicForwardedForWithoutALB(t *testing.T) {
+	e := newEnv(t)
+	h := e.router()
+	pub := map[string]string{SecretHeader: testSecret, "X-Forwarded-For": "198.51.100.7"}
+	if r := e.do(h, "GET", "/internal/gateway/routes?wait=0", "", nil, pub); r.Code != 403 {
+		t.Errorf("public XFF: %d, want 403", r.Code)
+	}
+	priv := map[string]string{SecretHeader: testSecret, "X-Forwarded-For": "10.0.0.5"}
+	if r := e.do(h, "GET", "/internal/gateway/routes?wait=0", "", nil, priv); r.Code != 200 {
+		t.Errorf("private XFF: %d, want 200", r.Code)
+	}
+}

@@ -66,3 +66,17 @@ func isInfra(a netip.Addr) bool {
 	return a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() ||
 		a.IsMulticast() || a.IsUnspecified()
 }
+
+// HasPublicForwarded reports whether an X-Forwarded-For value carries at least
+// one public address. Requests that reached the backend through a public edge
+// (ALB or Caddy) always carry the client's public address there, while internal
+// callers (gateway, Caddy's own subrequests to /internal/tls/ask) carry none or
+// only private ones. Used as defence in depth to refuse /internal/* from outside.
+func HasPublicForwarded(xff string) bool {
+	for _, p := range strings.Split(xff, ",") {
+		if a, ok := parseHostAddr(p); ok && !isInfra(a) {
+			return true
+		}
+	}
+	return false
+}

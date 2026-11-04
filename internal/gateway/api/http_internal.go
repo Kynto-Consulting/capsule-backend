@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/kynto/capsule/backend/internal/netaccess"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 )
 
@@ -32,12 +33,17 @@ func (s *Service) MountInternal(root chi.Router) {
 }
 
 // internalCaller reports whether the call may use the internal API, writing the refusal when not.
-//   - came through the public ALB (it always adds X-Amzn-Trace-Id): 403
+//   - came through the public ALB (it always adds X-Amzn-Trace-Id), or through Caddy with a
+//     public client address in X-Forwarded-For: 403
 //   - no secret configured: 503 (closed by default, like /internal/git-auth)
 //   - wrong or missing secret: 401; repeated failures from one address are blocked (429)
 func (s *Service) internalCaller(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Cache-Control", "no-store")
-	if r.Header.Get("X-Amzn-Trace-Id") != "" {
+	// Behind the ALB the trace header marks public traffic; behind Caddy (no ALB) the
+	// proxy appends the client's public address to X-Forwarded-For instead. The data
+	// plane reaches this API directly over the private network, so a public address
+	// there means the request came from outside: refuse it in both modes.
+	if r.Header.Get("X-Amzn-Trace-Id") != "" || netaccess.HasPublicForwarded(r.Header.Get("X-Forwarded-For")) {
 		writeErr(w, s.log, &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "forbidden"})
 		return false
 	}

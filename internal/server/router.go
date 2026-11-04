@@ -20,6 +20,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/connaudit"
 	"github.com/kynto/capsule/backend/internal/domain"
 	gwapi "github.com/kynto/capsule/backend/internal/gateway/api"
+	"github.com/kynto/capsule/backend/internal/ingress"
 	"github.com/kynto/capsule/backend/internal/gitsync"
 	"github.com/kynto/capsule/backend/internal/oidc"
 	"github.com/kynto/capsule/backend/internal/server/handlers"
@@ -48,6 +49,7 @@ type Deps struct {
 	EmailLogRepo       domain.EmailLogRepository
 	AWSClients         *awsclient.Clients
 	ALBDNSName         string
+	Ingress            ingress.Config // zero value = ALB mode; ModeCaddy = no ALB (see internal/ingress)
 	DBSubnetGroup      string
 	RDSSecurityGroupID string
 	PublicHost         string
@@ -109,6 +111,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		deps.DomainRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.ALBDNSName, logger,
 	)
+	domainHandler.SetIngress(deps.Ingress, nil)
 	storageHandler := handlers.NewStorageHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey, logger,
@@ -148,6 +151,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	}
 	orgHandler.SetAccessModes(deps.ProjectMembers)
 	deploymentHandler.SetConnAudit(deps.ConnAudit)
+	deploymentHandler.SetECSUnavailable(deps.Ingress.Caddy() && !deps.FargateConfigured)
 	connAuditHandler := handlers.NewConnAuditHandler(deps.OrgRepo, deps.ProjRepo, deps.ConnAudit)
 	connAuditHandler.SetAuthz(az)
 	var backupsHandler *handlers.BackupHandler
@@ -172,6 +176,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	r.Use(middleware.RequestID)
 	r.Use(middleware.CaptureRemoteAddr) // must run before RealIP (which trusts client headers)
 	r.Use(chiMiddleware.RealIP)
+	r.Use(middleware.InternalEdgeGuard) // /internal/* never carries a public client address (see its doc)
 	r.Use(middleware.Logger(logger))
 	r.Use(middleware.Recovery(logger))
 	r.Use(middleware.Timeout(30 * time.Second))
@@ -243,6 +248,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	}
 	// Internal edge auth for git-over-HTTP (Caddy forward_auth); protected by a shared secret, never public.
 	handlers.MountGitAuthInternal(r)
+	// Caddy on-demand TLS gate (GET /internal/tls/ask): host-only answer, no secret; Caddy MUST block /internal/* on its public sites.
+	handlers.NewTLSAskHandler(deps.DomainRepo, deps.Ingress.OwnSet(), logger).Mount(r)
 	// gateway:mounts-internal begin
 	// Data-plane endpoints of the gateway (/internal/gateway/*): shared secret, closed while CAPSULE_GW_SECRET is empty, never behind the user middleware.
 	gwapi.MountInternal(r) // G3
@@ -367,6 +374,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			handlers.MountA5(r, handlers.A5Deps{Authz: az, Orgs: deps.OrgRepo, Audit: deps.ProjectMembers, Logger: logger}) // A5: outbound webhooks (/webhooks), notifications (/user/notifications, /user/notification-settings)
 			handlers.MountEnvironments(r, az, deps.OrgRepo, deps.ProjRepo) // A6: environments, promotions, approvals (/environments, /promotions, /orgs/{orgID}/approvals)
 			handlers.MountGitTokens(r) // A7:/user/git-credentials, /user/git-tokens, /user/git-ssh-keys, .../git/service-tokens
+			handlers.MountAccess(r) // P4: /permissions/catalog, /me/permissions, templates, groups, assignments, access simulator and audit (docs/permissions)
 			handlers.MountGitAPI(r, handlers.GitAPIDeps{Authz: az, Orgs: deps.OrgRepo, Projects: deps.ProjRepo, Git: deps.Git, Legacy: deps.GitCore, Deployments: deps.DeploymentRepo, Cache: deps.CacheStore}) // B1: repo, tree/blob/compare, branches, tags, commits, pulls, runs, CI vars/secrets, activity
 			handlers.MountSecurity(r, az, deps.OrgRepo, deps.ProjRepo) // B7: /security (overview, alerts, sarif, policy, suppressions, scans, renovate)
 			handlers.MountGitReview(r, handlers.GitReviewDeps{Authz: az, Orgs: deps.OrgRepo, Projects: deps.ProjRepo}) // B8: /git/codeowners, pulls/{n}/auto-merge|ready|reviewers|reviews/{id}/dismiss (pullUpdateBranch stays in B1)

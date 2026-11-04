@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -299,6 +300,9 @@ func (w *DeployWorker) runDeployment(ctx context.Context, id, projectID uuid.UUI
 		// "fargate" or empty — use ECS Fargate when configured, else fall back to local Docker.
 		if w.aws != nil && w.fargate.IsConfigured() {
 			w.runFargateDeploy(ctx, id, projectID, buildDir, imageName)
+		} else if buildStrategy == "fargate" && w.fargate.ALBListenerARN == "" {
+			// Ingress without ALB (Caddy): ECS/Fargate needs the ALB for its target groups and host rules.
+			w.failDeployment(ctx, id, ErrECSNeedsALB.Error(), nil)
 		} else {
 			w.runDockerDeploy(ctx, id, projectID, buildDir, imageName, hostPort)
 		}
@@ -755,6 +759,9 @@ func (w *DeployWorker) registerECSTaskDef(ctx context.Context, family, imageURI 
 
 // ensureTargetGroup creates (or reuses) an ALB IP-type target group for the Fargate task.
 func (w *DeployWorker) ensureTargetGroup(ctx context.Context, name string, port int) (string, error) {
+	if w.aws == nil || w.aws.ELBV2 == nil {
+		return "", ErrECSNeedsALB
+	}
 	fc := w.fargate
 
 	// Check if TG already exists by name
@@ -833,6 +840,9 @@ func (w *DeployWorker) upsertECSService(ctx context.Context, serviceName, taskDe
 // upsertALBListenerRule creates or updates an ALB listener host-header rule
 // that forwards <subdomain>.<domain> traffic to the given target group.
 func (w *DeployWorker) upsertALBListenerRule(ctx context.Context, tgARN, hostHeader, priority string) error {
+	if w.aws == nil || w.aws.ELBV2 == nil || w.fargate.ALBListenerARN == "" {
+		return ErrECSNeedsALB
+	}
 	// Convert shortID (hex) to a numeric priority in 1-50000.
 	// Use sum of bytes mod 49000 + 1000 to avoid collisions with the default rule (priority 50000).
 	var prioVal int32 = 1000
@@ -1371,3 +1381,7 @@ EXPOSE 3000
 CMD ["sh", "-c", "echo 'No start command configured'; sleep infinity"]
 `
 }
+
+// ErrECSNeedsALB is returned when ECS/Fargate is requested but Capsule runs without an
+// ALB (ingress through Caddy): target groups and host rules cannot be created.
+var ErrECSNeedsALB = errors.New("el despliegue en ECS/Fargate no está disponible: Capsule funciona sin balanceador (ALB); usa la estrategia docker")

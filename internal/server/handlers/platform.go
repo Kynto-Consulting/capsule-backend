@@ -49,6 +49,7 @@ func capabilityDefaults() map[string]any {
 		"git":     map[string]any{"enabled": false, "url": "", "ssh_host": ""},
 		"ports":   map[string]any{"enabled": false, "range": "41000-41999", "host": ""},
 		"oidc":    map[string]any{"enabled": false, "issuer": ""},
+		"ingress": map[string]any{"mode": "alb", "host": "", "ipv4": "", "ipv6": ""},
 	}
 }
 

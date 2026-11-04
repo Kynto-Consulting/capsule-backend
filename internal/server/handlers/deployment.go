@@ -31,7 +31,11 @@ type DeploymentHandler struct {
 	awsClients      *awsclient.Clients
 	artifactsBucket string
 	logger          *slog.Logger
+	ecsUnavailable  bool // ingress without ALB: explicit ECS/Fargate deployments answer 501
 }
+
+// SetECSUnavailable makes explicit build_strategy=fargate requests answer 501 (no ALB for ECS target groups).
+func (h *DeploymentHandler) SetECSUnavailable(v bool) { h.ecsUnavailable = v }
 
 // NewDeploymentHandler creates a DeploymentHandler.
 // logger is optional; pass nil (or omit) to use a no-op logger.
@@ -152,6 +156,11 @@ func (h *DeploymentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		} else {
 			req.BuildStrategy = project.BuildStrategy
 		}
+	}
+
+	if h.ecsUnavailable && req.BuildStrategy == "fargate" {
+		respondError(w, http.StatusNotImplemented, "ECS_UNAVAILABLE", "el despliegue en ECS/Fargate no está disponible: Capsule funciona sin balanceador (ALB). Usa la estrategia docker.")
+		return
 	}
 
 	uid := user.ID

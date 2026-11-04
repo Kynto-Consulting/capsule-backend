@@ -559,7 +559,7 @@ func TestCapabilitiesDefaultsRegistrationAndMerge(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	PlatformCapabilities(rec, httptest.NewRequest("GET", "/api/v1/platform/capabilities", nil))
-	want := `{"backups":{"default_schedule":"daily","enabled":false},"git":{"enabled":false,"ssh_host":"","url":""},"oidc":{"enabled":false,"issuer":""},"ports":{"enabled":false,"host":"","range":"41000-41999"}}`
+	want := `{"backups":{"default_schedule":"daily","enabled":false},"git":{"enabled":false,"ssh_host":"","url":""},"ingress":{"host":"","ipv4":"","ipv6":"","mode":"alb"},"oidc":{"enabled":false,"issuer":""},"ports":{"enabled":false,"host":"","range":"41000-41999"}}`
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != want {
 		t.Fatalf("defaults: %d %s", rec.Code, rec.Body)
 	}
