@@ -112,7 +112,7 @@ func (s *Server) serveTLSAfter(ctx context.Context, c *Conn) {
 		return
 	}
 	t0 := time.Now()
-	if s.draining.Load() {
+	if s.refusing.Load() {
 		c.Ev.Result = "draining"
 		c.Conn.Close()
 		return
@@ -360,7 +360,7 @@ func (s *Server) serveHTTP(ctx context.Context, c *Conn) {
 		}
 	}
 	c.Ev.SNI = host
-	if s.draining.Load() {
+	if s.refusing.Load() {
 		c.Ev.Result = "draining"
 		c.Conn.Close()
 		return

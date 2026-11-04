@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -97,6 +98,7 @@ type listener struct {
 	spec  ListenerSpec
 	ln    net.Listener
 	allow map[Kind]bool
+	done  chan struct{} // closed when the accept loop ends
 }
 
 func (l *listener) allows(k Kind) bool { return len(l.allow) == 0 || l.allow[k] }
@@ -132,7 +134,9 @@ type Server struct {
 	bg       sync.WaitGroup // background goroutines
 	active   atomic.Int64
 	draining atomic.Bool
-	conns    sync.Map // *Conn -> struct{}
+	refusing atomic.Bool // set once listeners are closed: stragglers get 6/0x0601 (tunnel) or a close
+	stopAcc  atomic.Bool // accept loops end at the next accept timeout (queue drained)
+	conns    sync.Map    // *Conn -> struct{}
 }
 
 // New builds a Server. Start binds the listeners.
@@ -313,7 +317,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 			return fmt.Errorf("listen %s: %w", sp.Addr, err)
 		}
-		l := &listener{spec: sp, ln: ln}
+		l := &listener{spec: sp, ln: ln, done: make(chan struct{})}
 		if len(sp.Allow) > 0 {
 			l.allow = map[Kind]bool{}
 			for _, k := range sp.Allow {
@@ -372,11 +376,12 @@ func (s *Server) sweeper() {
 }
 
 func (s *Server) acceptLoop(l *listener) {
+	defer close(l.done)
 	var delay time.Duration
 	for {
 		raw, err := l.ln.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
+			if errors.Is(err, net.ErrClosed) || (s.stopAcc.Load() && errors.Is(err, os.ErrDeadlineExceeded)) {
 				return
 			}
 			// e.g. EMFILE: back off instead of spinning
@@ -390,6 +395,11 @@ func (s *Server) acceptLoop(l *listener) {
 			continue
 		}
 		delay = 0
+		if s.stopAcc.Load() { // draining the queue: keep going while connections keep arriving
+			if d, ok := l.ln.(interface{ SetDeadline(time.Time) error }); ok {
+				d.SetDeadline(time.Now().Add(50 * time.Millisecond))
+			}
+		}
 		if s.active.Load() >= int64(s.cfg.MaxConns) {
 			s.metrics.Dropped.WithLabelValues(LimitProcess).Inc()
 			raw.Close()
@@ -589,8 +599,8 @@ func (s *Server) idleFor(d Decision) time.Duration {
 	return s.cfg.IdleTimeout
 }
 
-// Drain stops accepting new connections after a grace period (during which new tunnel clients get 6/0x0601 and
-// other connections are closed, so clients retry on the new process that already listens thanks to SO_REUSEPORT)
+// Drain keeps serving normally during the grace period (the kernel may still hand it connections under SO_REUSEPORT),
+// drains its accept queue and only then closes the listeners
 // and waits for open connections to end, at most until ctx is done; then it closes what is left.
 func (s *Server) Drain(ctx context.Context, grace time.Duration) error {
 	s.draining.Store(true)
@@ -602,7 +612,26 @@ func (s *Server) Drain(ctx context.Context, grace time.Duration) error {
 		case <-ctx.Done():
 		}
 	}
+	// Keep serving normally whatever the kernel still hands us, then drain the accept queue: connections already
+	// queued are accepted (and served) until nothing arrives for a short window, and only then are listeners closed.
+	s.stopAcc.Store(true)
+	s.mu.Lock()
+	ls := append([]*listener(nil), s.listeners...)
+	s.mu.Unlock()
+	for _, l := range ls {
+		if d, ok := l.ln.(interface{ SetDeadline(time.Time) error }); ok {
+			d.SetDeadline(time.Now().Add(50 * time.Millisecond))
+		}
+	}
+	limit := time.After(3 * time.Second) // never wait forever if connections keep arriving
+	for _, l := range ls {
+		select {
+		case <-l.done:
+		case <-limit:
+		}
+	}
 	s.closeListeners()
+	s.refusing.Store(true)
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()
 	select {

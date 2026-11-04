@@ -111,7 +111,7 @@ func (s *Server) serveTunnel(ctx context.Context, c *Conn, raw []byte, hello *He
 	c.Ev.ClientID = req.ClientID
 	c.Ev.ReqHash = reqHash(req.Project, req.Service)
 
-	if s.draining.Load() {
+	if s.refusing.Load() {
 		c.Ev.Result = "draining"
 		s.reply(tc, c, tunnel.StatusBusy, tunnel.CodeDraining, "gateway draining", u16(1), tunnel.Version)
 		return

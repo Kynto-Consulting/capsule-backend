@@ -34,7 +34,8 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 		plain := make([]byte, n)
 		_, _ = rand.Read(plain)
 		ct := encrypt(t, dek, plain)
-		if n > 0 && bytes.Contains(ct, plain[:min(n, 64)]) {
+		// A few random bytes can appear in the ciphertext by chance; only a 16-byte prefix is a meaningful leak check.
+		if n >= 16 && bytes.Contains(ct, plain[:min(n, 64)]) {
 			t.Fatalf("n=%d: ciphertext contains plaintext", n)
 		}
 		got, err := io.ReadAll(NewDecryptReader(bytes.NewReader(ct), dek))

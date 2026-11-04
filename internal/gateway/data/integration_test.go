@@ -603,7 +603,7 @@ func TestTunnelRejectsTLS12AndWrongALPN(t *testing.T) {
 
 func TestTunnelDrainingReturns0601(t *testing.T) {
 	g, _ := tunnelGW(t, nil)
-	g.draining.Store(true)
+	g.refusing.Store(true)
 	tc, resp := dialTunnel(t, g.addr, capReq("mi-proyecto", "db"), nil)
 	tc.Close()
 	if resp.Status != 6 || resp.Code != 0x0601 {

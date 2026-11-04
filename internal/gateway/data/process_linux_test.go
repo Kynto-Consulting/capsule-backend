@@ -357,8 +357,11 @@ func TestProcessUpdateWithoutCuttingConnections(t *testing.T) {
 		t.Fatal("the old process did not exit after its last connection ended")
 	}
 	record(t, "update with SO_REUSEPORT: %d connection attempts during the swap, %d answered 6/0x0601 (client retries), %d hard failures; the long connection survived", attempts, busy, hard)
-	if hard > 0 {
-		t.Logf("hard failures during the swap: %d (listener closed with a connection in its accept queue)", hard)
+	if hard > 0 || busy > 0 {
+		t.Fatalf("connections during the swap must all be served first time: %d hard failures, %d refused with 6/0x0601", hard, busy)
+	}
+	if attempts < 40 {
+		t.Fatalf("only %d attempts during the swap", attempts)
 	}
 	nw.cmd.Process.Signal(syscall.SIGTERM)
 	select {

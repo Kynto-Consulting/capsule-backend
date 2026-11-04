@@ -134,7 +134,7 @@ func (s *Service) Authorize(ctx context.Context, req AuthorizeRequest) (*Authori
 
 	if ctype == CredNone {
 		// "none" is valid ONLY for a random port (UDP and credential-less TCP): anything else is plain unauthorized.
-		return s.authorizeRandomPort(ctx, req, src, rv, ix), nil
+		return s.authorizeAnonymous(ctx, req, src, rv, ix), nil
 	}
 	pr := s.authenticate(ctx, ctype, req.Credential, rv, routeName)
 	authorised := pr != nil && rv != nil && proj != nil
@@ -281,7 +281,9 @@ func (s *Service) recordDeny(ctx context.Context, rv *store.RouteView, pr *princ
 		ResourceID: &rv.ServiceID, IP: src, Metadata: meta})
 }
 
-// authorizeRandomPort decides a connection to a leased random port that carries no credential (credential_type "none",
+// authorizeAnonymous decides a connection that carries no credential (credential_type "none") by name (access "sni_name": the
+// route must exist with its gateway access on; the name is protected by the IP list plus the database/SSH login behind it)
+// or to a leased random port (access "random_port",
 // access "random_port"). Only these hold, all of them:
 //  1. the route exists and the port has an active lease for THAT route's service;
 //  2. the port is inside the pool range;
@@ -289,22 +291,24 @@ func (s *Service) recordDeny(ctx context.Context, rv *store.RouteView, pr *princ
 //     everybody here: a random port is never open to the world, even if the project's list is empty ("public").
 //
 // Every failure is the same uniform denial (and feeds the failed-attempt limiter). The allow is cacheable for at most 30 s.
-func (s *Service) authorizeRandomPort(ctx context.Context, req AuthorizeRequest, src string, rv *store.RouteView, ix *routeIndex) *AuthorizeResponse {
+func (s *Service) authorizeAnonymous(ctx context.Context, req AuthorizeRequest, src string, rv *store.RouteView, ix *routeIndex) *AuthorizeResponse {
 	deny := func() *AuthorizeResponse {
 		blocked := s.lim.Fail(src)
 		s.recordDeny(ctx, rv, nil, CredNone, req.Access, src, DenyUnauthorized, blocked)
 		return &AuthorizeResponse{Allow: false, DenyReason: DenyUnauthorized}
 	}
-	if req.Access != "random_port" || rv == nil || req.Port < 1 {
+	random := req.Access == "random_port"
+	if rv == nil || (!random && req.Access != "sni_name") || (random && req.Port < 1) {
 		return deny()
 	}
-	l, leased := ix.leases[rv.ServiceID]
-	if !leased || l.Port != req.Port {
-		return deny()
-	}
-	cfg := s.cfg
-	if cfg.PoolOff || req.Port < cfg.PoolLo || req.Port > cfg.PoolHi {
-		return deny()
+	if random {
+		l, leased := ix.leases[rv.ServiceID]
+		if !leased || l.Port != req.Port {
+			return deny()
+		}
+		if s.cfg.PoolOff || req.Port < s.cfg.PoolLo || req.Port > s.cfg.PoolHi {
+			return deny()
+		}
 	}
 	svc, err := s.d.Store.GetService(ctx, rv.ServiceID)
 	if err != nil {
@@ -314,8 +318,13 @@ func (s *Service) authorizeRandomPort(ctx context.Context, req AuthorizeRequest,
 	if err != nil || !restricted || len(cidrs) == 0 || !netaccess.ContainsIP(cidrs, src) {
 		return deny()
 	}
-	_ = s.d.Store.TouchLease(ctx, req.Port)
-	pid := "port:" + strconv.Itoa(req.Port)
+	if random {
+		_ = s.d.Store.TouchLease(ctx, req.Port)
+	}
+	pid := "sni:" + rv.ServiceName
+	if random {
+		pid = "port:" + strconv.Itoa(req.Port)
+	}
 	s.auditEvent(ctx, gitaudit.Entry{OrgID: rv.OrgID, ProjectID: &rv.ProjectID, Action: "gateway.connect.allow", ResourceType: "gateway_service",
 		ResourceID: &rv.ServiceID, IP: src, Metadata: map[string]any{"service": rv.ServiceName, "access": req.Access, "credential_type": CredNone, "principal": pid}})
 	return &AuthorizeResponse{Allow: true, PrincipalID: pid, MaxConns: s.cfg.MaxConns, MaxConnsPerIP: s.cfg.MaxConnsPerIP,

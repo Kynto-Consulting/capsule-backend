@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/kynto/capsule/backend/internal/gateway/data"
@@ -129,7 +131,6 @@ func TestRoundTripRandomPortWithoutCredential(t *testing.T) {
 		"port out of range":    ask("203.0.113.9", 40001, "random_port", data.CredNone),
 		"port 0":               ask("203.0.113.9", 0, "random_port", data.CredNone),
 		"none on capsule_uri":  ask("203.0.113.9", lease.Port, "capsule_uri", data.CredNone),
-		"none on sni_name":     ask("203.0.113.9", lease.Port, "sni_name", data.CredNone),
 	} {
 		if r.Allow || r.DenyReason != "unauthorized" {
 			t.Errorf("%s: %+v", name, r)
@@ -156,5 +157,68 @@ func TestRoundTripRandomPortWithoutCredential(t *testing.T) {
 	}
 	if allow != 3 || deny < 8 {
 		t.Fatalf("audit rows allow=%d deny=%d", allow, deny)
+	}
+}
+
+func TestRoundTripSNINameWithoutCredential(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.expose("db", "postgres", 5432)
+	srv := httptest.NewServer(e.router())
+	defer srv.Close()
+	cp, _ := data.NewHTTPControl(srv.URL, testSecret)
+	route := e.routeID("db").String()
+	ask := func(routeID, ip, access string) *data.AuthorizeResponse {
+		res, err := cp.Authorize(ctx, data.AuthorizeRequest{RouteID: routeID, SrcIP: ip, CredentialType: data.CredNone, Access: access})
+		if err != nil {
+			t.Fatalf("authorize %s: %v", ip, err)
+		}
+		return res
+	}
+	e.ips.restricted, e.ips.cidrs = true, nil
+	if ask(route, "203.0.113.9", data.AccessSNI).Allow {
+		t.Fatal("an empty list must deny access by name without credential")
+	}
+	e.ips.restricted = false
+	if ask(route, "203.0.113.9", data.AccessSNI).Allow {
+		t.Fatal("no list must deny too")
+	}
+	e.ips.restricted, e.ips.cidrs = true, []string{"203.0.113.0/24", "2001:db8::/32"}
+	ok := ask(route, "203.0.113.9", data.AccessSNI)
+	if !ok.Allow || ok.PrincipalID != "sni:db" || ok.CacheTTLSeconds != 30 || ok.MaxConns == 0 {
+		t.Fatalf("allowed ip: %+v", ok)
+	}
+	if !ask(route, "2001:db8::5", data.AccessSNI).Allow || !ask(route, "::ffff:203.0.113.9", data.AccessSNI).Allow {
+		t.Fatal("IPv6 and mapped IPv4 must follow the list")
+	}
+	for name, r := range map[string]*data.AuthorizeResponse{
+		"ip outside the list": ask(route, "198.51.100.1", data.AccessSNI),
+		"unknown route":       ask(uuid.NewString(), "203.0.113.9", data.AccessSNI),
+		"capsule_uri":         ask(route, "203.0.113.9", data.AccessCapsuleURI),
+		"no access":           ask(route, "203.0.113.9", ""),
+	} {
+		if r.Allow || r.DenyReason != "unauthorized" {
+			t.Errorf("%s: %+v", name, r)
+		}
+	}
+	// a route whose gateway access is off is not in the table: denied
+	off := false
+	if _, err := e.svc.UpdateService(ctx, e.project, Actor{UserID: e.admin}, "db", UpdateInput{GatewayEnabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if ask(route, "203.0.113.9", data.AccessSNI).Allow {
+		t.Fatal("a disabled route must deny")
+	}
+	allow, deny := 0, 0
+	for _, a := range e.audit.actions() {
+		switch a {
+		case "gateway.connect.allow":
+			allow++
+		case "gateway.connect.deny":
+			deny++
+		}
+	}
+	if allow != 3 || deny < 5 {
+		t.Fatalf("audit allow=%d deny=%d", allow, deny)
 	}
 }

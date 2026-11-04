@@ -241,7 +241,7 @@ func TestSweeperRunsPeriodicallyAndStopsOnCancel(t *testing.T) {
 		close(done)
 	}()
 	deadline := time.Now().Add(2 * time.Second)
-	for st.count("SweepPool") < 3 && time.Now().Before(deadline) {
+	for (st.count("SweepPool") < 3 || st.count("ReleaseIdle") < 3) && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if st.count("SweepPool") < 3 || st.count("ReleaseIdle") < 3 {
