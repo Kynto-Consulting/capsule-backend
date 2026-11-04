@@ -118,11 +118,17 @@ func (s *Server) serveTLSAfter(ctx context.Context, c *Conn) {
 		return
 	}
 	if hello.SNI == "" {
+		if s.serveDefaultUpstream(ctx, c, hello, raw) {
+			return
+		}
 		s.silentDeny(ctx, c, t0, "no_sni")
 		return
 	}
 	route := s.routes.Table().LookupHost(hello.SNI)
 	if route == nil {
+		if s.serveDefaultUpstream(ctx, c, hello, raw) {
+			return
+		}
 		s.failedAttempt(c)
 		s.silentDeny(ctx, c, t0, "no_route")
 		return

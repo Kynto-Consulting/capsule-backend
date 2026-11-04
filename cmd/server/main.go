@@ -15,6 +15,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/gitcore"
+	"github.com/kynto/capsule/backend/internal/ciwake"
 	eventswire "github.com/kynto/capsule/backend/internal/gitevents/wire"
 	"github.com/kynto/capsule/backend/internal/environments"
 	"github.com/kynto/capsule/backend/internal/gitprotect"
@@ -244,6 +245,13 @@ func main() {
 	wireGitC2(workerCtx, logger, pool, cfg.FrontendURL, awsClients) // C2: audit read/retention, activity, insights, digest, expiry notices (after A5; A7 Notifier: gitinsights.SharedTokenNotifier())
 	recovery.WireRecovery(workerCtx, logger, repository.NewRecoveryRepository(pool), cfg.SecretKey, awsClients) // C3: total recovery (plan/apply/verify), enabled with CAPSULE_RECOVERY_ENABLED
 	// git-capsule:wiring end
+
+	// ciwake:wiring begin
+	// CI runner scale-to-zero: starts the stopped runner EC2 on push/PR (after A5: needs the event bus). Off without CAPSULE_CI_RUNNER_INSTANCE_ID.
+	if _, err := ciwake.Wire(logger, awsClients); err != nil {
+		logger.Warn("ciwake not wired", "error", err)
+	}
+	// ciwake:wiring end
 
 	// gateway:wiring begin
 	// Universal gateway control plane (docs/gateway/PLAN.md 5): one line per gateway package.

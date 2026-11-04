@@ -59,6 +59,10 @@ type Config struct {
 	UDP  UDPConfig  // UDP over the capsule/1 tunnel (transport 2)
 	Pool PoolConfig // random-port listeners
 
+	ProtoMaxConns map[string]int // concurrent proxied connections per database protocol (mysql, redis, mongo; default 1500, 0 = none)
+
+	Take443 Take443Config // shared 443: tunnel / routes / passthrough to Caddy (take443.go)
+
 	AllowLoopbackDest bool // allow routes whose destination is a loopback address (tests, host-network setups)
 	LogLevel          string
 }
@@ -255,6 +259,8 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		}
 	}
 	errs = append(errs, applyUDPEnv(&c, getenv)...)
+	errs = append(errs, applyProtoEnv(&c, getenv)...)
+	errs = append(errs, applyTake443Env(&c, getenv)...)
 	if len(errs) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(errs, "; "))
 	}

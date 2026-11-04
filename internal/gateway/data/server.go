@@ -161,6 +161,7 @@ func New(cfg Config, d Deps) (*Server, error) {
 	fill(&cfg.HalfCloseIdle, def.HalfCloseIdle)
 	fill(&cfg.AuthTimeout, def.AuthTimeout)
 	fill(&cfg.DrainGrace, def.DrainGrace)
+	cfg.Listeners = take443Listeners(cfg)
 	cfg.UDP.fill()
 	cfg.Pool.fill()
 	if cfg.MaxHelloBytes <= 0 {
@@ -204,6 +205,7 @@ func New(cfg Config, d Deps) (*Server, error) {
 		c.Conn.Close() // SSH goes through TLS (ProxyCommand) or the tunnel; port 22 stays with Forgejo
 	})
 	reg := s.metrics.Reg
+	s.registerDBProtocols(reg) // MySQL, Redis, MongoDB (proto_*.go)
 	reg.MustRegister(
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "gw_routes_age_seconds", Help: "Seconds since the control plane was last reached."}, func() float64 { return s.routes.Age().Seconds() }),
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "gw_control_up", Help: "1 if the last control plane request succeeded."}, func() float64 {
@@ -309,8 +311,13 @@ func (s *Server) Start(ctx context.Context) error {
 		return errors.New("already started")
 	}
 	var ls []*listener
+	var pending []ListenerSpec // the shared 443 while Caddy still holds it (take443.go)
 	for _, sp := range s.cfg.Listeners {
 		ln, err := listenTCP(ctx, sp.Addr, s.cfg.ReusePort)
+		if err != nil && s.take443Pending(sp, err) {
+			pending = append(pending, sp)
+			continue
+		}
 		if err != nil {
 			for _, l := range ls {
 				l.ln.Close()
@@ -339,6 +346,11 @@ func (s *Server) Start(ctx context.Context) error {
 		s.bg.Add(1)
 		go func(l *listener) { defer s.bg.Done(); s.acceptLoop(l) }(l)
 		s.log.Info("listening", "addr", l.ln.Addr().String(), "kinds", kindNames(l.spec.Allow))
+	}
+	s.registerTake443Gauge(len(pending) == 0)
+	for _, sp := range pending {
+		s.bg.Add(1)
+		go func(sp ListenerSpec) { defer s.bg.Done(); s.bindTake443Late(sp) }(sp)
 	}
 	return nil
 }
@@ -449,6 +461,11 @@ func (s *Server) serveConn(raw net.Conn, l *listener) {
 		return
 	}
 	c.preauth = true
+	if k, h, ok := s.serverFirstFor(l); ok { // listener dedicated to a server-first protocol (MySQL): nothing to sniff
+		c.Ev.Kind = k
+		h.Serve(s.ctx, c)
+		return
+	}
 	raw.SetReadDeadline(time.Now().Add(s.cfg.HelloTimeout))
 	kind, head, err := s.readFirst(c)
 	if err != nil {
