@@ -1,0 +1,10 @@
+DROP TRIGGER IF EXISTS gateway_project_port_delete ON project_ports;
+DROP TRIGGER IF EXISTS gateway_database_delete ON databases;
+DROP TRIGGER IF EXISTS gateway_database_soft_delete ON databases;
+DROP TRIGGER IF EXISTS gateway_project_delete ON projects;
+DROP TRIGGER IF EXISTS gateway_project_soft_delete ON projects;
+DROP FUNCTION IF EXISTS gateway_trg_project_port();
+DROP FUNCTION IF EXISTS gateway_trg_database();
+DROP FUNCTION IF EXISTS gateway_trg_project();
+DROP FUNCTION IF EXISTS gateway_purge_orphans();
+DROP FUNCTION IF EXISTS gateway_purge_services(uuid, uuid, uuid);

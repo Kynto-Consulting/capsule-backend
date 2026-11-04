@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -447,5 +449,28 @@ func TestMultiTenantRouteIsolation(t *testing.T) {
 	b, _ := json.Marshal(ghost)
 	if res.Allow || string(a) != string(b) {
 		t.Fatalf("cross-project: %s vs not-exists: %s", a, b)
+	}
+}
+
+func TestSweeperPurgesOrphansAndWakesLongPolls(t *testing.T) {
+	st := newFakeStore()
+	st.orphans = 2
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	var woke int32
+	done := make(chan struct{})
+	go func() {
+		RunSweeper(ctx, st, Config{SweepInterval: 10 * time.Millisecond}, logger, func() { atomic.AddInt32(&woke, 1) })
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for st.count("PurgeOrphans") < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if st.count("PurgeOrphans") < 2 || atomic.LoadInt32(&woke) < 1 || !strings.Contains(logs.String(), "removed orphan services") {
+		t.Fatalf("purge=%d woke=%d logs=%q", st.count("PurgeOrphans"), woke, logs.String())
 	}
 }

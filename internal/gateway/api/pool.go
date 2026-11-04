@@ -37,6 +37,19 @@ func RunSweeper(ctx context.Context, st store.RouteStore, cfg Config, logger *sl
 		if err2 != nil {
 			logger.Warn("gateway: idle lease release failed", "error", err2.Error())
 		}
+		if p, ok := st.(interface {
+			PurgeOrphans(context.Context) (int, error)
+		}); ok {
+			n, err := p.PurgeOrphans(sctx)
+			if err != nil {
+				logger.Warn("gateway: orphan purge failed", "error", err.Error())
+			} else if n > 0 {
+				logger.Warn("gateway: removed orphan services (their project, database or port no longer exists)", "services", n)
+				if wake != nil {
+					wake()
+				}
+			}
+		}
 		if released > 0 && wake != nil {
 			wake()
 		}

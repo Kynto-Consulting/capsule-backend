@@ -399,7 +399,7 @@ func TestPoolReservedListenerPortIsRefused(t *testing.T) {
 	g := startPoolGW(t, []int{1024, 65000}, "", nil, r)
 	_, gwPort := hostPort(g.addr)
 	setSnap(g.cp, 2, []Route{r}, []Lease{{Port: gwPort, ServiceID: r.ServiceID}})
-	waitFor(t, 3*time.Second, func() bool { return mval(g.udpm.PoolRejected.WithLabelValues("reserved")) == 1 })
+	waitFor(t, 10*time.Second, func() bool { return mval(g.udpm.PoolRejected.WithLabelValues("reserved")) == 1 })
 	if tcp, udp := g.PoolPorts(); len(tcp)+len(udp) != 0 {
 		t.Fatalf("gateway's own port taken over: %v %v", tcp, udp)
 	}

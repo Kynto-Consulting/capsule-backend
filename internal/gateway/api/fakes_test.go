@@ -31,6 +31,7 @@ type fakeStore struct {
 	policy   map[uuid.UUID]string
 	calls    map[string]int
 	sweepErr error
+	orphans  int
 }
 
 func newFakeStore() *fakeStore {
@@ -660,4 +661,11 @@ func (e *env) routeServiceID(name string) uuid.UUID {
 	}
 	e.t.Fatalf("no service %s", name)
 	return uuid.Nil
+}
+
+func (f *fakeStore) PurgeOrphans(context.Context) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls["PurgeOrphans"]++
+	return f.orphans, nil
 }

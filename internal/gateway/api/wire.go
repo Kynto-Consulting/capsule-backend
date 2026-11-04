@@ -57,10 +57,11 @@ func Wire(ctx context.Context, logger *slog.Logger, d Deps) *Service {
 		} else {
 			logger.Info("gateway port pool ready", "range", poolRange(cfg), "added", n)
 		}
-		go RunSweeper(ctx, d.Store, cfg, logger, svc.notify)
 	} else {
 		logger.Info("gateway random-port pool disabled")
 	}
+	// Sweeper always runs: besides the pool it removes services whose project/database/port is gone.
+	go RunSweeper(ctx, d.Store, cfg, logger, svc.notify)
 	SetShared(svc)
 	return svc
 }
