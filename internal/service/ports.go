@@ -584,7 +584,10 @@ func publishFlag(m domain.PortMapping) (string, bool) {
 // UDP ports are never probed (a TCP connect against a UDP port always fails),
 // so a UDP-only service cannot turn a healthy rollout into a false failure.
 func dockerRunArgs(name, volume, image string, env []string, injectPort bool, containerPort, hostPort int, extra []domain.PortMapping) []string {
-	args := []string{"run", "-d", "--name", name, "--restart", "unless-stopped"}
+	args := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
+		// Databases of the same server: the public name (EIP) does not answer from inside the instance, so apps reach them
+		// through the docker host, host.docker.internal:<published port>, with no firewall rule involved.
+		"--add-host", "host.docker.internal:host-gateway"}
 	for _, kv := range env {
 		args = append(args, "-e", kv)
 	}

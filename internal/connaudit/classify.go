@@ -206,6 +206,10 @@ func (c *Classifier) Classify(host string, port int) (Kind, Severity) {
 		}
 		return KindLoopback, SevWarning
 	case h == "host.docker.internal" || h == "gateway.docker.internal" || h == "host.containers.internal":
+		if h == "host.docker.internal" && c.inRange(port) {
+			// The recommended way for an app to reach a database of the same server (Capsule maps this name to the docker host).
+			return KindOK, SevInfo
+		}
 		return KindDockerBridge, SevWarning
 	case strings.HasPrefix(h, "capsule-") || strings.HasPrefix(h, "capsule_"):
 		first := h

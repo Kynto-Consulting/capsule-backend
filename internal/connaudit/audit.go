@@ -24,9 +24,9 @@ type Finding struct {
 
 // Recommendations (Spanish, shown as-is in CLI and dashboard) by kind.
 var recommendations = map[Kind]string{
-	KindDirectPort:   "Conecta por el nombre del gateway (por ejemplo <base>.db.tumi-ai.com) en vez del puerto directo del host: los puertos directos son el método secundario y no pasan por la autorización ni la auditoría del gateway.",
+	KindDirectPort:   "Si la app corre en el MISMO servidor de Capsule que la base, conecta por host.docker.internal:<puerto> (ruta interna: no pasa por el firewall ni por la IP pública; desde dentro del servidor el nombre público db.tumi-ai.com no responde). Si corre fuera, usa el nombre del gateway (por ejemplo <base>.db.tumi-ai.com): los puertos directos son el método secundario y no pasan por la autorización ni la auditoría del gateway.",
 	KindLoopback:     "localhost solo alcanza al propio contenedor. Si apunta a una base o servicio de Capsule, usa su nombre de gateway; si es un proceso propio dentro del contenedor, suprime este aviso con una justificación.",
-	KindDockerBridge: "El puente de Docker depende del host y cambia entre despliegues. Usa el nombre de gateway del servicio en lugar de host.docker.internal o una IP 172.16.0.0/12.",
+	KindDockerBridge: "Una IP 172.16.0.0/12 del puente de Docker cambia entre despliegues y host.docker.internal solo es la ruta correcta hacia el puerto publicado de una base de Capsule del mismo servidor. Para otros destinos usa el nombre de gateway del servicio.",
 	KindContainer:    "No uses nombres de contenedores de Capsule (capsule-*): son internos, cambian en cada despliegue y saltan la autorización. Usa el nombre de gateway del servicio.",
 	KindPrivate:      "Es una dirección de red privada: solo funciona si el contenedor llega a esa red. Si es un servicio de Capsule, usa su nombre de gateway; si es tu propia red, suprime el aviso.",
 	KindMetadata:     "El servicio de metadatos de la nube entrega credenciales del host. Una app de cliente no debe consultarlo: elimina esta conexión.",

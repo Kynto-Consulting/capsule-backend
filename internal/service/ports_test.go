@@ -556,6 +556,14 @@ func TestSupportsPorts(t *testing.T) {
 
 // ---- docker side ------------------------------------------------------------
 
+// Apps reach databases of the same server through the docker host: the public address does not answer from inside the instance.
+func TestDockerRunArgsMapsHostDockerInternal(t *testing.T) {
+	joined := strings.Join(dockerRunArgs("n", "v", "i", nil, false, 3000, 20001, nil), " ")
+	if !strings.Contains(joined, "--add-host host.docker.internal:host-gateway") {
+		t.Fatalf("missing host.docker.internal mapping: %s", joined)
+	}
+}
+
 func TestDockerRunArgsPublishesExtraPorts(t *testing.T) {
 	args := dockerRunArgs("capsule-app-x", "vol", "capsule-app-x", []string{"A=1"}, true, 3000, 20001,
 		[]domain.PortMapping{{ContainerPort: 5432, HostPort: 41001}, {ContainerPort: 6379, HostPort: 41002}})

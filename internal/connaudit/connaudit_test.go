@@ -39,7 +39,9 @@ func TestClassifyTable(t *testing.T) {
 		{"::ffff:127.0.0.1", 80, KindLoopback, SevWarning},
 		{"0.0.0.0", 3000, KindOK, SevInfo},
 		{"172.17.0.2", 5432, KindDockerBridge, SevWarning},
-		{"host.docker.internal", 5432, KindDockerBridge, SevWarning},
+		{"host.docker.internal", 5432, KindDockerBridge, SevWarning}, // not a published database port: still a warning
+		{"host.docker.internal", 40010, KindOK, SevInfo},             // published database port of the same server: the right path
+		{"host.docker.internal", 41001, KindOK, SevInfo},
 		{"gateway.docker.internal", 0, KindDockerBridge, SevWarning},
 		{"capsule-app-abcdef123456", 3000, KindContainer, SevWarning},
 		{"capsule-app-111111111111", 3000, KindContainer, SevCritical},
