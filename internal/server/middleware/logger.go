@@ -23,6 +23,11 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap lets http.NewResponseController (used by httputil.ReverseProxy) reach Hijack and Flush of the
+// real writer. Without it no WebSocket upgrade could pass through the app proxy, and streamed
+// responses were not flushed.
+func (rr *responseRecorder) Unwrap() http.ResponseWriter { return rr.ResponseWriter }
+
 func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

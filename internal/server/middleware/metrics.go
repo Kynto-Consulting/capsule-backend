@@ -67,3 +67,6 @@ func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap exposes the real writer (Hijack, Flush) to http.NewResponseController; see responseRecorder.
+func (sr *statusRecorder) Unwrap() http.ResponseWriter { return sr.ResponseWriter }
