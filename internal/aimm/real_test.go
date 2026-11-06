@@ -8,6 +8,9 @@ package aimm
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"strings"
 	"sync"
@@ -114,6 +117,22 @@ func TestRealImagesAndVision(t *testing.T) {
 	out, err := ops.ImageOp(ctx, rm, ImageRequest{Image: imgs[0].Data, Format: "png"})
 	if err != nil || len(out[0].Data) == 0 {
 		t.Fatalf("remove background: %v", err)
+	}
+	// inpaint: white pixels of the mask are the ones that change
+	ip := must(t, cat, ctx, "stability-image-inpaint")
+	mask := image.NewGray(image.Rect(0, 0, 512, 512))
+	for y := 128; y < 384; y++ {
+		for x := 128; x < 384; x++ {
+			mask.SetGray(x, y, color.Gray{255})
+		}
+	}
+	var mb bytes.Buffer
+	if err := png.Encode(&mb, mask); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := ops.ImageOp(ctx, ip, ImageRequest{Image: imgs[0].Data, Mask: mb.Bytes(), Prompt: "a blue vase", Format: "png"})
+	if err != nil || len(edited[0].Data) < 1000 {
+		t.Fatalf("inpaint: %v", err)
 	}
 	vm := must(t, cat, ctx, "nova-2-lite")
 	a, err := ops.Analyze(ctx, vm, "", "What fruit is in the picture? One word.", []Attachment{{Kind: "image", Format: "jpeg", Data: imgs[0].Data}}, 30)

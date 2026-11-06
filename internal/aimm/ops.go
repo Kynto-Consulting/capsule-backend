@@ -473,7 +473,7 @@ func (o *Ops) ImageOp(ctx context.Context, m Model, req ImageRequest) ([]Image, 
 		return nil, BadInput("%s needs a prompt", m.ID)
 	}
 	if spec.needsMask && len(req.Mask) == 0 {
-		return nil, BadInput("%s needs a mask (white = keep, black = change)", m.ID)
+		return nil, BadInput("%s needs a mask (white = change, black = keep)", m.ID)
 	}
 	img := req.Image
 	if len(img) == 0 {
