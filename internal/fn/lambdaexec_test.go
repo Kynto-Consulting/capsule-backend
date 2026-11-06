@@ -19,6 +19,7 @@ type fakeLambda struct {
 	payloads []InvokePayload
 	replies  []string
 	fnErr    bool
+	deleted  []string
 }
 
 func (f *fakeLambda) CreateFunction(_ context.Context, in *lambda.CreateFunctionInput, _ ...func(*lambda.Options)) (*lambda.CreateFunctionOutput, error) {
@@ -34,6 +35,10 @@ func (f *fakeLambda) UpdateFunctionCode(_ context.Context, _ *lambda.UpdateFunct
 func (f *fakeLambda) UpdateFunctionConfiguration(_ context.Context, in *lambda.UpdateFunctionConfigurationInput, _ ...func(*lambda.Options)) (*lambda.UpdateFunctionConfigurationOutput, error) {
 	f.cfg = append(f.cfg, in)
 	return &lambda.UpdateFunctionConfigurationOutput{}, nil
+}
+func (f *fakeLambda) DeleteFunction(_ context.Context, in *lambda.DeleteFunctionInput, _ ...func(*lambda.Options)) (*lambda.DeleteFunctionOutput, error) {
+	f.deleted = append(f.deleted, *in.FunctionName)
+	return &lambda.DeleteFunctionOutput{}, nil
 }
 func (f *fakeLambda) Invoke(_ context.Context, in *lambda.InvokeInput, _ ...func(*lambda.Options)) (*lambda.InvokeOutput, error) {
 	var p InvokePayload

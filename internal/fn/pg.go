@@ -14,12 +14,12 @@ import (
 // PGStore is the PostgreSQL Store.
 type PGStore struct{ Pool *pgxpool.Pool }
 
-const fnCols = `id, org_id, project_id, name, image, entry, vpn_id, cron, memory_mb, cpus, timeout_seconds, max_concurrency, scopes, enabled, last_cron_at, created_by, created_at`
+const fnCols = `id, org_id, project_id, name, image, entry, runtime, vpn_id, cron, memory_mb, cpus, timeout_seconds, max_concurrency, scopes, enabled, last_cron_at, created_by, created_at`
 
 func scanFn(row pgx.Row) (*Function, error) {
 	var f Function
 	var cpus float32
-	err := row.Scan(&f.ID, &f.OrgID, &f.ProjectID, &f.Name, &f.Image, &f.Entry, &f.VPNID, &f.Cron, &f.MemoryMB, &cpus, &f.TimeoutSeconds,
+	err := row.Scan(&f.ID, &f.OrgID, &f.ProjectID, &f.Name, &f.Image, &f.Entry, &f.Runtime, &f.VPNID, &f.Cron, &f.MemoryMB, &cpus, &f.TimeoutSeconds,
 		&f.MaxConcurrency, &f.Scopes, &f.Enabled, &f.LastCronAt, &f.CreatedBy, &f.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -29,9 +29,9 @@ func scanFn(row pgx.Row) (*Function, error) {
 }
 
 func (s *PGStore) CreateFunction(ctx context.Context, f *Function) error {
-	_, err := s.Pool.Exec(ctx, `INSERT INTO fn_functions (id, org_id, project_id, name, image, entry, vpn_id, cron, memory_mb, cpus, timeout_seconds,
-		max_concurrency, scopes, enabled, last_cron_at, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-		f.ID, f.OrgID, f.ProjectID, f.Name, f.Image, f.Entry, f.VPNID, f.Cron, f.MemoryMB, f.CPUs, f.TimeoutSeconds, f.MaxConcurrency, f.Scopes, f.Enabled, f.LastCronAt, f.CreatedBy, f.CreatedAt)
+	_, err := s.Pool.Exec(ctx, `INSERT INTO fn_functions (id, org_id, project_id, name, image, entry, runtime, vpn_id, cron, memory_mb, cpus, timeout_seconds,
+		max_concurrency, scopes, enabled, last_cron_at, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		f.ID, f.OrgID, f.ProjectID, f.Name, f.Image, f.Entry, f.Runtime, f.VPNID, f.Cron, f.MemoryMB, f.CPUs, f.TimeoutSeconds, f.MaxConcurrency, f.Scopes, f.Enabled, f.LastCronAt, f.CreatedBy, f.CreatedAt)
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23505" {
 		return ErrConflict
@@ -195,6 +195,16 @@ func (s *PGStore) GetToken(ctx context.Context, hash string) (*RunToken, error) 
 func (s *PGStore) RevokeRunTokens(ctx context.Context, run uuid.UUID, now time.Time) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE fn_run_tokens SET revoked_at=$2 WHERE run_id=$1 AND revoked_at IS NULL`, run, now)
 	return err
+}
+
+// LiveNode returns the node that reported since the given time (the most recent one), or ErrNotFound.
+func (s *PGStore) LiveNode(ctx context.Context, since time.Time) (string, error) {
+	var name string
+	err := s.Pool.QueryRow(ctx, `SELECT name FROM fn_nodes WHERE last_seen_at > $1 ORDER BY last_seen_at DESC LIMIT 1`, since).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return name, err
 }
 
 func (s *PGStore) NodeByHash(ctx context.Context, hash string) (string, error) {

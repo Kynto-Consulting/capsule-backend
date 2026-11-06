@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +67,7 @@ type Agent struct {
 
 	mu      sync.Mutex
 	running map[uuid.UUID]context.CancelFunc
+	rl      relays
 }
 
 func (a *Agent) log() *slog.Logger {
@@ -119,6 +119,7 @@ func (a *Agent) Tick(ctx context.Context, wg *sync.WaitGroup) {
 		for _, id := range rep.StopTunnels {
 			a.Mgr.Stop(id)
 		}
+		a.syncRelays(ctx, rep.Relay) // tunnels of Lambda runs: keep them up and attached to the relay
 	} else if ctx.Err() == nil {
 		a.log().Warn("sync failed", "error", err)
 	}
@@ -163,21 +164,7 @@ func (a *Agent) Execute(ctx context.Context, asg *fn.Assignment) {
 	if asg.Tunnel != nil {
 		red.AddJSONValues(asg.Tunnel.Secret)
 	}
-	for k, v := range asg.Env { // database URLs granted by a db:<name> scope are secrets too
-		if strings.HasPrefix(k, "CAPSULE_DB_") {
-			red.Add(v)
-			if u, err := url.Parse(v); err == nil && u.User != nil {
-				if pw, ok := u.User.Password(); ok {
-					red.Add(pw)
-				}
-			}
-		}
-	}
-	for k, v := range asg.Env {
-		if strings.HasPrefix(k, "CAPSULE_STORAGE_") && (strings.HasSuffix(k, "SECRET_ACCESS_KEY") || strings.HasSuffix(k, "ACCESS_KEY_ID")) {
-			red.Add(v)
-		}
-	}
+	fn.RedactEnv(red, asg.Env) // database URLs and bucket keys granted by scopes are secrets too
 	logs := &tailWriter{red: red}
 	finish := func(status string, exit *int, in, out int64, msg string) {
 		if msg != "" {

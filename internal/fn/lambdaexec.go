@@ -2,7 +2,9 @@ package fn
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -24,6 +26,7 @@ type LambdaAPI interface {
 	UpdateFunctionCode(ctx context.Context, in *lambda.UpdateFunctionCodeInput, opts ...func(*lambda.Options)) (*lambda.UpdateFunctionCodeOutput, error)
 	UpdateFunctionConfiguration(ctx context.Context, in *lambda.UpdateFunctionConfigurationInput, opts ...func(*lambda.Options)) (*lambda.UpdateFunctionConfigurationOutput, error)
 	Invoke(ctx context.Context, in *lambda.InvokeInput, opts ...func(*lambda.Options)) (*lambda.InvokeOutput, error)
+	DeleteFunction(ctx context.Context, in *lambda.DeleteFunctionInput, opts ...func(*lambda.Options)) (*lambda.DeleteFunctionOutput, error)
 }
 
 // LambdaExecutor runs functions as their own Lambda (`capsule-fn-<12 hex of the function id>`), with the role of the deploy worker.
@@ -62,6 +65,16 @@ func (e *LambdaExecutor) Ensure(ctx context.Context, f *Function, imageURI strin
 		Tags:         map[string]string{"capsule-fn": f.ID.String(), "capsule-project": f.ProjectID.String()},
 	})
 	return err
+}
+
+// Remove deletes the Lambda of f (no cost remains). A Lambda that does not exist is not an error.
+func (e *LambdaExecutor) Remove(ctx context.Context, f *Function) error {
+	_, err := e.API.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(LambdaName(f))})
+	var nf *lambdatypes.ResourceNotFoundException
+	if err != nil && !errors.As(err, &nf) {
+		return err
+	}
+	return nil
 }
 
 // InvokePayload is what a function receives per batch. The token is minted by the backend per batch and dies with it.
@@ -117,9 +130,14 @@ func (e *LambdaExecutor) Run(ctx context.Context, f *Function, run *Run, deadlin
 		}
 		body, _ := json.Marshal(InvokePayload{RunID: run.ID.String(), Function: f.Name, Attempt: attempt, Cursor: cursor, Payload: run.Payload, Env: env, BudgetMS: budget.Milliseconds()})
 		ictx, cancel := context.WithTimeout(ctx, MaxInvoke+30*time.Second)
-		res, err := e.API.Invoke(ictx, &lambda.InvokeInput{FunctionName: aws.String(LambdaName(f)), Payload: body, InvocationType: lambdatypes.InvocationTypeRequestResponse})
+		res, err := e.API.Invoke(ictx, &lambda.InvokeInput{FunctionName: aws.String(LambdaName(f)), Payload: body, InvocationType: lambdatypes.InvocationTypeRequestResponse, LogType: lambdatypes.LogTypeTail})
 		cancel()
 		out.Batches++
+		if err == nil && res.LogResult != nil { // the last 4 KB of the function's own log, for the run's log tail
+			if b, derr := base64.StdEncoding.DecodeString(*res.LogResult); derr == nil {
+				out.Log += string(b)
+			}
+		}
 		if err != nil {
 			return out, fmt.Errorf("invoke batch %d: %w", attempt, err)
 		}

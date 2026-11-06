@@ -43,6 +43,8 @@ var routePermissions = map[string]routePerm{
 	"POST /api/v1/fn/agent/sync": {Kind: middleware.KindPublic},
 	"POST /api/v1/fn/agent/runs/{runID}/finish": {Kind: middleware.KindPublic},
 	"POST /api/v1/fn/agent/tunnels/{tunnelID}/status": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/relay/node/{tunnelID}": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/relay/connect": {Kind: middleware.KindPublic},
 	// Capsule object storage (docs/OBJECT_STORAGE.md): same atoms as the existing storage rows.
 	"PATCH /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},
 	"POST /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/rotate": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},

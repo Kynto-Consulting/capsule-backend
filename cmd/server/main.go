@@ -19,6 +19,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/domain"
 	"github.com/kynto/capsule/backend/internal/fn"
 	"github.com/kynto/capsule/backend/internal/vpn"
+	"github.com/kynto/capsule/backend/internal/vpn/gateway"
 	"github.com/kynto/capsule/backend/internal/gitcore"
 	"github.com/kynto/capsule/backend/internal/ciwake"
 	eventswire "github.com/kynto/capsule/backend/internal/gitevents/wire"
@@ -301,6 +302,28 @@ func main() {
 	if objstoreDeps != nil {
 		fnSvc.Storage = fnStorageResolver(objstoreDeps, dbRepo) // ctx.storage on Capsule's own object store
 	}
+	// Relay for functions that run as Lambda (docs/vpn-connector.md, section 7): the tunnel's node connects out, the Lambda comes in with its token.
+	fnRelay := gateway.NewRelay()
+	fnSvc.Relay = fnRelay
+	// The lambda runtime is opt-in: the first run of a function creates an AWS Lambda (capsule-fn-<id>), which costs money only while it runs.
+	if os.Getenv("CAPSULE_FN_LAMBDA") == "true" && awsClients != nil && awsClients.Lambda != nil {
+		fnSvc.Lambda = &fn.LambdaExecutor{API: awsClients.Lambda, Account: cfg.AWSAccountID}
+		logger.Info("functions: lambda runtime enabled")
+	}
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-t.C:
+				if err := fnSvc.DispatchLambda(workerCtx); err != nil {
+					logger.Error("fn lambda dispatch failed", "error", err)
+				}
+			}
+		}
+	}()
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
@@ -357,6 +380,7 @@ func main() {
 		OIDC:               oidcSvc,
 		VPN:                vpnSvc,
 		Fn:                 fnSvc,
+		FnRelay:            fnRelay,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

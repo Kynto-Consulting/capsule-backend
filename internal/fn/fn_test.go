@@ -174,7 +174,7 @@ func TestKillSwitchCancelsRunsAndBlocksClaims(t *testing.T) {
 	if _, err := e.svc.Enqueue(ctx, f, TriggerAPI, "u", nil); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("enqueue on disabled tunnel: %v", err)
 	}
-	rep, _ := e.svc.Sync(ctx, []uuid.UUID{r1.ID}, []uuid.UUID{e.tunnel.ID})
+	rep, _ := e.svc.Sync(ctx, "nodo-1", []uuid.UUID{r1.ID}, []uuid.UUID{e.tunnel.ID})
 	if len(rep.CancelRuns) != 1 || len(rep.StopTunnels) != 1 {
 		t.Fatalf("sync %+v", rep)
 	}

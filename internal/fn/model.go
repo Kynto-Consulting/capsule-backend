@@ -28,6 +28,12 @@ const (
 	RunTimeout   = "timeout"
 )
 
+// Runtimes: where a function executes.
+const (
+	RuntimeContainer = "container" // on the work node, in a limited container (hybrid default; no 15-minute cap)
+	RuntimeLambda    = "lambda"    // as its own AWS Lambda, in resumable batches of at most 13 minutes
+)
+
 // Triggers.
 const (
 	TriggerCron  = "cron"
@@ -63,6 +69,7 @@ type Function struct {
 	Name           string     `json:"name"`
 	Image          string     `json:"image"`
 	Entry          string     `json:"entry"`
+	Runtime        string     `json:"runtime"`
 	VPNID          *uuid.UUID `json:"vpn_id,omitempty"`
 	Cron           string     `json:"cron,omitempty"`
 	MemoryMB       int        `json:"memory_mb"`
@@ -101,6 +108,7 @@ type Spec struct {
 	Name           string   `json:"name"`
 	Image          string   `json:"image"`
 	Entry          string   `json:"entry"`
+	Runtime        string   `json:"runtime"`
 	VPN            string   `json:"vpn"`
 	Cron           string   `json:"cron"`
 	Memory         string   `json:"memory"`
@@ -121,6 +129,13 @@ func (s Spec) Normalize() (Spec, error) {
 	}
 	if strings.ContainsAny(s.Image, " \t\n;&|$`") {
 		return s, invalid("image has invalid characters")
+	}
+	switch s.Runtime = strings.ToLower(strings.TrimSpace(s.Runtime)); s.Runtime {
+	case "":
+		s.Runtime = RuntimeContainer
+	case RuntimeContainer, RuntimeLambda:
+	default:
+		return s, invalid("runtime must be %q or %q", RuntimeContainer, RuntimeLambda)
 	}
 	if s.Memory == "" {
 		s.Memory = "512m"

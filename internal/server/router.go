@@ -28,6 +28,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/internal/service"
 	"github.com/kynto/capsule/backend/internal/fn"
+	"github.com/kynto/capsule/backend/internal/vpn/gateway"
 	"github.com/kynto/capsule/backend/internal/vpn"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
@@ -91,6 +92,8 @@ type Deps struct {
 	// VPN Connector + functions inside the tunnel (nil: the routes answer 501). docs/vpn-connector.md
 	VPN *vpn.Service
 	Fn  *fn.Service
+	// FnRelay lets Lambda functions reach a tunnel through the work node (docs/vpn-connector.md, section 7). Optional.
+	FnRelay *gateway.Relay
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
@@ -172,6 +175,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	deploymentHandler.SetECSUnavailable(deps.Ingress.Caddy() && !deps.FargateConfigured)
 	vpnFnHandler := handlers.NewVPNFnHandler(deps.OrgRepo, deps.ProjRepo, deps.VPN, deps.Fn)
 	vpnFnHandler.SetAuthz(az)
+	vpnFnHandler.SetRelay(deps.FnRelay)
 	connAuditHandler := handlers.NewConnAuditHandler(deps.OrgRepo, deps.ProjRepo, deps.ConnAudit)
 	connAuditHandler.SetAuthz(az)
 	var backupsHandler *handlers.BackupHandler
@@ -309,6 +313,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		r.Post("/fn/agent/sync", vpnFnHandler.AgentSync)
 		r.Post("/fn/agent/runs/{runID}/finish", vpnFnHandler.AgentFinish)
 		r.Post("/fn/agent/tunnels/{tunnelID}/status", vpnFnHandler.AgentTunnelStatus)
+		// Relay for Lambda functions: the node offers idle connections (capnode_), the Lambda asks for one (capfn_ run token).
+		r.Post("/fn/relay/node/{tunnelID}", vpnFnHandler.RelayNode)
+		r.Post("/fn/relay/connect", vpnFnHandler.RelayConnect)
 		r.Get("/auth/onboarding/status", authHandler.GetOnboardingStatus)
 		r.Post("/auth/onboarding/verify", authHandler.VerifyOnboarding)
 

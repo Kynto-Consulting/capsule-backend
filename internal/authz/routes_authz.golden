@@ -38,6 +38,8 @@ POST	/api/v1/fn/agent/claim	handlers.VPNFnHandler.AgentClaim	secret	public-secre
 POST	/api/v1/fn/agent/runs/{runID}/finish	handlers.VPNFnHandler.AgentFinish	secret	public-secret	-
 POST	/api/v1/fn/agent/sync	handlers.VPNFnHandler.AgentSync	secret	public-secret	-
 POST	/api/v1/fn/agent/tunnels/{tunnelID}/status	handlers.VPNFnHandler.AgentTunnelStatus	secret	public-secret	-
+POST	/api/v1/fn/relay/connect	handlers.VPNFnHandler.RelayConnect	secret	public-secret	-
+POST	/api/v1/fn/relay/node/{tunnelID}	handlers.VPNFnHandler.RelayNode	secret	public-secret	-
 POST	/api/v1/fn/tokens/introspect	handlers.VPNFnHandler.Introspect	secret	public-secret	-
 POST	/api/v1/git/admin/reconcile	gitsync.MountGitsync.func1	session	platform-admin	-
 POST	/api/v1/git/admin/recover	handlers.RecoverHandler.Platform	session	platform-admin	-

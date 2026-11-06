@@ -183,6 +183,9 @@ func (g *gw) OpenRun(root, runID string) (*RunProxy, error) {
 	return &RunProxy{Dir: dir, srv: srv, l: l}, nil
 }
 
+// relayServer serves the relay's idle connections of this tunnel: same policy and shared ceilings as the per-run SOCKS endpoints.
+func (g *gw) relayServer() *gateway.Server { return gateway.NewServerWith(g.t, g.policy, g.limits) }
+
 // Bytes returns bytes received from (in) and sent to (out) the customer network by this run.
 func (p *RunProxy) Bytes() (in, out int64) { return p.srv.Bytes() }
 

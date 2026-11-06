@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,8 @@ type Store interface {
 	RevokeRunTokens(ctx context.Context, runID uuid.UUID, now time.Time) error
 
 	NodeByHash(ctx context.Context, hash string) (string, error)
+	// LiveNode is the node that reported most recently since the given time (ErrNotFound when none did).
+	LiveNode(ctx context.Context, since time.Time) (string, error)
 }
 
 // Service is the planner/claim logic.
@@ -58,6 +61,29 @@ type Service struct {
 	// Storage resolves a `storage:<name>` scope to the S3 access of that bucket (endpoint, bucket, access_key_id, secret_access_key, region)
 	// on the internal route. It is backed by the object store of Capsule; nil until that store is wired (the SDK then reports the scope as unavailable).
 	Storage StorageResolver
+
+	// Lambda runs functions deployed with --runtime lambda as their own AWS Lambda, in resumable batches. Nil disables the runtime
+	// (Deploy rejects it): it is switched on explicitly because the first run of a function creates AWS resources.
+	Lambda *LambdaExecutor
+	// Relay is the API-side rendezvous that lets a Lambda reach the tunnel without NAT (see gateway.Relay). Nil: Lambda
+	// functions cannot use a tunnel.
+	Relay RelayHub
+	// RelayWait is how long a Lambda run waits for its tunnel's node to attach before the first batch (default 90 s).
+	RelayWait time.Duration
+	// LiveWindow is how recently a node must have reported to be given a Lambda run's tunnel (default 2 min).
+	LiveWindow time.Duration
+
+	lmu     sync.Mutex
+	lcancel map[uuid.UUID]context.CancelFunc
+}
+
+// RelayHub is what the service needs from the relay (implemented by *gateway.Relay).
+type RelayHub interface {
+	Idle(tunnel string) int
+	Bytes(run string) (in, out int64)
+	CloseRun(run string)
+	Forget(run string)
+	DropTunnel(tunnel string)
 }
 
 // StorageResolver returns the S3 access of the project's bucket `name`.
@@ -79,6 +105,12 @@ func (s *Service) Deploy(ctx context.Context, orgID, projectID uuid.UUID, by *uu
 	if err != nil {
 		return nil, err
 	}
+	if spec.Runtime == RuntimeLambda && s.Lambda == nil {
+		return nil, invalid("the lambda runtime is not enabled on this Capsule; use --runtime container")
+	}
+	if spec.Runtime == RuntimeLambda && spec.VPN != "" && s.Relay == nil {
+		return nil, invalid("the lambda runtime cannot reach tunnels on this Capsule (no relay); use --runtime container")
+	}
 	var vpnID *uuid.UUID
 	if spec.VPN != "" {
 		t, err := s.VPN.Store.GetByName(ctx, projectID, spec.VPN)
@@ -90,7 +122,7 @@ func (s *Service) Deploy(ctx context.Context, orgID, projectID uuid.UUID, by *uu
 	mem, _ := ParseMemoryMB(spec.Memory)
 	to, _ := ParseTimeout(spec.Timeout)
 	f := &Function{
-		ID: uuid.New(), OrgID: orgID, ProjectID: projectID, Name: spec.Name, Image: spec.Image, Entry: spec.Entry, VPNID: vpnID,
+		ID: uuid.New(), OrgID: orgID, ProjectID: projectID, Name: spec.Name, Image: spec.Image, Entry: spec.Entry, Runtime: spec.Runtime, VPNID: vpnID,
 		Cron: spec.Cron, MemoryMB: mem, CPUs: spec.CPUs, TimeoutSeconds: int(to.Seconds()), MaxConcurrency: spec.MaxConcurrency,
 		Scopes: append([]string{}, spec.Scopes...), Enabled: true, CreatedBy: by, CreatedAt: s.now(),
 	}
@@ -213,8 +245,8 @@ func (s *Service) Claim(ctx context.Context, node string) (*Assignment, error) {
 	}
 	for _, r := range queued {
 		f, err := s.Store.GetFunctionByID(ctx, r.FunctionID)
-		if err != nil || !f.Enabled {
-			continue
+		if err != nil || !f.Enabled || f.Runtime == RuntimeLambda {
+			continue // lambda runs are executed by the backend (DispatchLambda), never by a node
 		}
 		var ta *TunnelAssignment
 		if f.VPNID != nil {
@@ -245,43 +277,51 @@ func (s *Service) Claim(ctx context.Context, node string) (*Assignment, error) {
 				s.VPN.Audit(ctx, t, vpn.EventRunStarted, fmt.Sprintf("function %s run %s started (%s by %s); scopes %s", f.Name, r.ID, r.Trigger, r.TriggeredBy, strings.Join(r.Scopes, ",")), "node:"+node)
 			}
 		}
-		env := map[string]string{
-			"CAPSULE_RUN_ID": r.ID.String(), "CAPSULE_FN": f.Name, "CAPSULE_API": s.APIBase, "CAPSULE_TOKEN": plain,
-			"CAPSULE_SCOPES": strings.Join(r.Scopes, ","),
-		}
-		if r.Payload != nil {
-			env["CAPSULE_PAYLOAD"] = string(r.Payload)
-		}
-		for _, sc := range r.Scopes { // only databases named in the function's scopes
-			if name, ok := strings.CutPrefix(sc, "db:"); ok && s.DBs != nil {
-				if u, err := s.DBs(ctx, r.ProjectID, name); err == nil {
-					env["CAPSULE_DB_"+strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))] = u
-				}
-			}
-		}
-		for _, sc := range r.Scopes {
-			if name, ok := strings.CutPrefix(sc, "storage:"); ok && s.Storage != nil {
-				if kv, err := s.Storage(ctx, r.ProjectID, name); err == nil {
-					p := "CAPSULE_STORAGE_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name)) + "_"
-					for k, v := range kv {
-						env[p+strings.ToUpper(k)] = v
-					}
-				}
-			}
-		}
+		env := s.runEnv(ctx, f, r, plain)
 		return &Assignment{Run: run, Function: f, Tunnel: ta, Token: plain, APIBase: s.APIBase, Env: env}, nil
 	}
 	return nil, nil
+}
+
+// runEnv is the environment of a run: the token, its scopes, the payload and the resources (databases, buckets) its scopes name.
+func (s *Service) runEnv(ctx context.Context, f *Function, r *Run, plain string) map[string]string {
+	env := map[string]string{
+		"CAPSULE_RUN_ID": r.ID.String(), "CAPSULE_FN": f.Name, "CAPSULE_API": s.APIBase, "CAPSULE_TOKEN": plain,
+		"CAPSULE_SCOPES": strings.Join(r.Scopes, ","),
+	}
+	if r.Payload != nil {
+		env["CAPSULE_PAYLOAD"] = string(r.Payload)
+	}
+	for _, sc := range r.Scopes { // only databases named in the function's scopes
+		if name, ok := strings.CutPrefix(sc, "db:"); ok && s.DBs != nil {
+			if u, err := s.DBs(ctx, r.ProjectID, name); err == nil {
+				env["CAPSULE_DB_"+strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))] = u
+			}
+		}
+	}
+	for _, sc := range r.Scopes {
+		if name, ok := strings.CutPrefix(sc, "storage:"); ok && s.Storage != nil {
+			if kv, err := s.Storage(ctx, r.ProjectID, name); err == nil {
+				p := "CAPSULE_STORAGE_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name)) + "_"
+				for k, v := range kv {
+					env[p+strings.ToUpper(k)] = v
+				}
+			}
+		}
+	}
+	return env
 }
 
 // SyncReply tells the node what to stop.
 type SyncReply struct {
 	CancelRuns  []uuid.UUID `json:"cancel_runs"`
 	StopTunnels []uuid.UUID `json:"stop_tunnels"`
+	// Relay lists the tunnels this node must keep up and attach to the relay because a Lambda run of this node uses them.
+	Relay []TunnelAssignment `json:"relay,omitempty"`
 }
 
 // Sync is the node's heartbeat: it lists the runs it executes and the tunnels it keeps up, and learns what to kill.
-func (s *Service) Sync(ctx context.Context, running []uuid.UUID, tunnels []uuid.UUID) (SyncReply, error) {
+func (s *Service) Sync(ctx context.Context, node string, running []uuid.UUID, tunnels []uuid.UUID) (SyncReply, error) {
 	rep := SyncReply{CancelRuns: []uuid.UUID{}, StopTunnels: []uuid.UUID{}}
 	for _, id := range running {
 		r, err := s.Store.GetRun(ctx, id)
@@ -295,6 +335,11 @@ func (s *Service) Sync(ctx context.Context, running []uuid.UUID, tunnels []uuid.
 			rep.StopTunnels = append(rep.StopTunnels, id)
 		}
 	}
+	relay, err := s.RelayTunnels(ctx, node)
+	if err != nil {
+		return rep, err
+	}
+	rep.Relay = relay
 	return rep, nil
 }
 
@@ -315,6 +360,7 @@ func (s *Service) finish(ctx context.Context, r *Run, status string, exit *int, 
 		return err
 	}
 	_ = s.Store.RevokeRunTokens(ctx, r.ID, s.now())
+	s.stopLambda(r.ID) // a Lambda run in flight: stop invoking, cut its relay connections
 	if f, err := s.Store.GetFunctionByID(ctx, r.FunctionID); err == nil && f.VPNID != nil {
 		if t, err := s.VPN.Store.GetByID(ctx, *f.VPNID); err == nil {
 			s.VPN.Audit(ctx, t, vpn.EventRunFinished, fmt.Sprintf("function %s run %s %s; bytes in %d out %d; scopes %s", f.Name, r.ID, status, in, out, strings.Join(r.Scopes, ",")), "node:"+r.NodeID)
@@ -335,6 +381,9 @@ func (s *Service) Cancel(ctx context.Context, r *Run) error {
 func (s *Service) DisableTunnel(ctx context.Context, t *vpn.Tunnel, actor string) error {
 	if err := s.VPN.SetEnabled(ctx, t, false, actor); err != nil {
 		return err
+	}
+	if s.Relay != nil {
+		s.Relay.DropTunnel(t.ID.String()) // idle node connections of the relay go too
 	}
 	for _, list := range []func(context.Context) ([]*Run, error){s.Store.RunningRuns, func(c context.Context) ([]*Run, error) { return s.Store.QueuedRuns(c, 1000) }} {
 		runs, err := list(ctx)

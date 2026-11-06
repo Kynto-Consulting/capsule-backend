@@ -17,6 +17,7 @@ import (
 	"github.com/kynto/capsule/backend/internal/fn"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/internal/vpn"
+	"github.com/kynto/capsule/backend/internal/vpn/gateway"
 )
 
 // VPNFnHandler serves the VPN Connector and project functions (docs/vpn-connector.md).
@@ -28,6 +29,7 @@ type VPNFnHandler struct {
 	projects domain.ProjectRepository
 	vpn      *vpn.Service
 	fn       *fn.Service
+	relay    *gateway.Relay
 }
 
 // NewVPNFnHandler builds the handler.
@@ -300,7 +302,7 @@ func (h *VPNFnHandler) DeleteFn(w http.ResponseWriter, r *http.Request) {
 	if f == nil {
 		return
 	}
-	if err := h.fn.Store.DeleteFunction(r.Context(), f.ID); err != nil {
+	if err := h.fn.Delete(r.Context(), f); err != nil {
 		h.fail(w, err)
 		return
 	}
@@ -464,7 +466,8 @@ func (h *VPNFnHandler) AgentClaim(w http.ResponseWriter, r *http.Request) {
 
 // AgentSync POST /internal/fn/agent/sync  {"running":[run ids],"tunnels":[tunnel ids]}
 func (h *VPNFnHandler) AgentSync(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.node(w, r); !ok {
+	node, ok := h.node(w, r)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -475,7 +478,7 @@ func (h *VPNFnHandler) AgentSync(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
 		return
 	}
-	rep, err := h.fn.Sync(r.Context(), req.Running, req.Tunnels)
+	rep, err := h.fn.Sync(r.Context(), node, req.Running, req.Tunnels)
 	if err != nil {
 		h.fail(w, err)
 		return

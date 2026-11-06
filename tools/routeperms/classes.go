@@ -71,6 +71,8 @@ var rules = []rule{
 	{handler: "handlers.VPNFnHandler.AgentSync", class: "public-secret", note: "work node: capnode_ token (hash in fn_nodes), outbound only"},
 	{handler: "handlers.VPNFnHandler.AgentFinish", class: "public-secret", note: "work node: capnode_ token (hash in fn_nodes), outbound only"},
 	{handler: "handlers.VPNFnHandler.AgentTunnelStatus", class: "public-secret", note: "work node: capnode_ token (hash in fn_nodes), outbound only"},
+	{handler: "handlers.VPNFnHandler.RelayNode", class: "public-secret", note: "work node: capnode_ token; only for tunnels of the Lambda runs assigned to it"},
+	{handler: "handlers.VPNFnHandler.RelayConnect", class: "public-secret", note: "Lambda: capfn_ run token of a function with a tunnel; destinations outside the declared CIDRs are denied and audited"},
 	{handler: "server.newRouter.func1", class: "public-secret", note: "/metrics: METRICS_TOKEN when set"},
 	{handler: "handlers.GitHandler.Webhook", class: "public-secret", note: "HMAC signature"},
 	{handler: "api.Service.handleRoutes", class: "public-secret", note: "gateway data plane: CAPSULE_GW_SECRET"},

@@ -16,11 +16,12 @@ type MemStore struct {
 	runs   map[uuid.UUID]*Run
 	tokens map[string]*RunToken
 	Nodes  map[string]string // hash -> node name
+	seen   map[string]time.Time
 }
 
 // NewMemStore creates an empty store.
 func NewMemStore() *MemStore {
-	return &MemStore{fns: map[uuid.UUID]*Function{}, runs: map[uuid.UUID]*Run{}, tokens: map[string]*RunToken{}, Nodes: map[string]string{}}
+	return &MemStore{fns: map[uuid.UUID]*Function{}, runs: map[uuid.UUID]*Run{}, tokens: map[string]*RunToken{}, Nodes: map[string]string{}, seen: map[string]time.Time{}}
 }
 
 func (m *MemStore) CreateFunction(_ context.Context, f *Function) error {
@@ -215,7 +216,24 @@ func (m *MemStore) NodeByHash(_ context.Context, h string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if n, ok := m.Nodes[h]; ok {
+		m.seen[n] = time.Now()
 		return n, nil
 	}
 	return "", ErrNotFound
+}
+
+// LiveNode returns the node seen since the given time.
+func (m *MemStore) LiveNode(_ context.Context, since time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	best, bt := "", since
+	for n, t := range m.seen {
+		if t.After(bt) {
+			best, bt = n, t
+		}
+	}
+	if best == "" {
+		return "", ErrNotFound
+	}
+	return best, nil
 }
