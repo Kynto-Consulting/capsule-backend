@@ -362,6 +362,7 @@ func (s *Server) session(ch ssh.Channel, reqs <-chan *ssh.Request, fs *fsys) {
 			rs := sftp.NewRequestServer(ch, sftp.Handlers{FileGet: fs, FilePut: fs, FileCmd: fs, FileList: fs}, sftp.WithRSMaxTxPacket(256<<10))
 			go func() {
 				_ = rs.Serve()
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0})) // OpenSSH clients (scp) wait for it
 				_ = rs.Close()
 				_ = ch.Close()
 			}()
