@@ -139,6 +139,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo, deps.DeploymentRepo,
 		deps.AWSClients, logger, deps.AuthSvc, deps.CacheStore,
 	)
+	aimmHandler := newAIMMHandler(deps, logger)
+	aimmHandler.SetAuthz(deps.Authz)
 	pricingHandler := handlers.NewPricingHandler()
 	billingHandler := handlers.NewBillingHandler(deps.DatabaseRepo, deps.AWSClients)
 	proxyHandler := handlers.NewProxyHandler(deps.OrgRepo, deps.ProjRepo, deps.DomainRepo, deps.DeploymentRepo, deps.ExecLogRepo, deps.AWSClients)
@@ -317,8 +319,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		r.Post("/ai/chat/completions", aiHandler.Chat) // OpenAI SDK compat
 
 		// Public AI metadata — model catalog + integration skill doc (no auth)
-		r.Get("/ai/models", aiHandler.ListModels)
-		r.Get("/models", aiHandler.ListModels) // top-level alias
+		// /ai/models answers the live capability catalog when called with ?capability= or ?catalog=1 (docs/AI_MULTIMODAL.md); otherwise the legacy list
+		aimmHandler.SetLegacyModels(aiHandler.ListModels)
+		r.Get("/ai/models", aimmHandler.ModelsRoute)
+		r.Get("/models", aimmHandler.ModelsRoute) // top-level alias
+		r.Get("/ai/talk/ws", aimmHandler.TalkWS) // the single-use ticket is the credential (browsers cannot set headers on a WebSocket)
 		r.Get("/ai/skill.md", aiHandler.SkillDoc)
 		r.Get("/ai/skill", aiHandler.SkillDoc)
 
@@ -562,6 +567,20 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/ai/dockerfile", aiHandler.Dockerfile)
 			r.Post("/ai/explain-failure", aiHandler.ExplainFailure)
 			r.Post("/ai/optimize-costs", aiHandler.OptimizeCosts)
+
+			// Multimodal AI of a project (docs/AI_MULTIMODAL.md)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/chat", aimmHandler.Chat)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/embeddings", aimmHandler.Embeddings)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/embeddings/search", aimmHandler.SearchEmbeddings)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/rerank", aimmHandler.Rerank)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/transcribe", aimmHandler.Transcribe)
+			r.Get("/orgs/{orgID}/projects/{projectID}/ai/jobs/{jobID}", aimmHandler.Job)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/speech", aimmHandler.Speech)
+			r.Get("/orgs/{orgID}/projects/{projectID}/ai/voices", aimmHandler.Voices)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/images", aimmHandler.Images)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/talk", aimmHandler.Talk)
+			r.Post("/orgs/{orgID}/projects/{projectID}/ai/talk/ticket", aimmHandler.TalkTicket)
+			r.Get("/orgs/{orgID}/projects/{projectID}/ai/usage", aimmHandler.Usage)
 
 			// Pricing estimate
 			r.Post("/pricing/estimate", pricingHandler.Estimate)
