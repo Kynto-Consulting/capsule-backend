@@ -27,6 +27,7 @@ type LambdaAPI interface {
 	UpdateFunctionConfiguration(ctx context.Context, in *lambda.UpdateFunctionConfigurationInput, opts ...func(*lambda.Options)) (*lambda.UpdateFunctionConfigurationOutput, error)
 	Invoke(ctx context.Context, in *lambda.InvokeInput, opts ...func(*lambda.Options)) (*lambda.InvokeOutput, error)
 	DeleteFunction(ctx context.Context, in *lambda.DeleteFunctionInput, opts ...func(*lambda.Options)) (*lambda.DeleteFunctionOutput, error)
+	GetFunction(ctx context.Context, in *lambda.GetFunctionInput, opts ...func(*lambda.Options)) (*lambda.GetFunctionOutput, error)
 }
 
 // LambdaExecutor runs functions as their own Lambda (`capsule-fn-<12 hex of the function id>`), with the role of the deploy worker.
@@ -34,6 +35,9 @@ type LambdaExecutor struct {
 	API     LambdaAPI
 	Account string
 	Now     func() time.Time
+	// Poll is how often Ensure checks that a created or updated Lambda is ready (default 2 s); ReadyWait caps it (default 5 min).
+	Poll      time.Duration
+	ReadyWait time.Duration
 }
 
 // LambdaName is the AWS function name of f.
@@ -41,30 +45,97 @@ func LambdaName(f *Function) string {
 	return "capsule-fn-" + strings.ReplaceAll(f.ID.String(), "-", "")[:12]
 }
 
-// Ensure creates or updates the Lambda of f with its memory and a per-invocation timeout capped at 15 minutes.
+// Ensure creates or updates the Lambda of f with its image, its memory and a per-invocation timeout capped at 15 minutes,
+// and returns only when the Lambda can be invoked. AWS applies a create or an update asynchronously: invoking a Lambda in
+// state Pending, or updating its configuration while its code update is InProgress, fails (ResourceConflictException), so
+// every change is followed by a wait. Nothing is changed when the image and the limits are already the wanted ones.
 // Secrets never go in Environment (visible in the AWS console): they travel in the Invoke payload.
 func (e *LambdaExecutor) Ensure(ctx context.Context, f *Function, imageURI string) error {
+	if imageURI == "" {
+		return errors.New("the function has no image yet (its build has not finished)")
+	}
 	timeout := int32(f.TimeoutSeconds)
 	if timeout > int32(MaxInvoke.Seconds()) {
 		timeout = int32(MaxInvoke.Seconds())
 	}
 	name := LambdaName(f)
-	_, err := e.API.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{FunctionName: aws.String(name), ImageUri: aws.String(imageURI)})
-	if err == nil {
-		_, err = e.API.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
-			FunctionName: aws.String(name), MemorySize: aws.Int32(int32(f.MemoryMB)), Timeout: aws.Int32(timeout)})
+	cur, err := e.API.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(name)})
+	var nf *lambdatypes.ResourceNotFoundException
+	if err != nil && !errors.As(err, &nf) {
 		return err
 	}
-	_, err = e.API.CreateFunction(ctx, &lambda.CreateFunctionInput{
-		FunctionName: aws.String(name),
-		Role:         aws.String("arn:aws:iam::" + e.Account + ":role/capsule-lambda-role"),
-		PackageType:  lambdatypes.PackageTypeImage,
-		Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(imageURI)},
-		MemorySize:   aws.Int32(int32(f.MemoryMB)),
-		Timeout:      aws.Int32(timeout),
-		Tags:         map[string]string{"capsule-fn": f.ID.String(), "capsule-project": f.ProjectID.String()},
-	})
-	return err
+	if err != nil { // does not exist yet
+		_, err = e.API.CreateFunction(ctx, &lambda.CreateFunctionInput{
+			FunctionName: aws.String(name),
+			Role:         aws.String("arn:aws:iam::" + e.Account + ":role/capsule-lambda-role"),
+			PackageType:  lambdatypes.PackageTypeImage,
+			Code:         &lambdatypes.FunctionCode{ImageUri: aws.String(imageURI)},
+			MemorySize:   aws.Int32(int32(f.MemoryMB)),
+			Timeout:      aws.Int32(timeout),
+			Tags:         map[string]string{"capsule-fn": f.ID.String(), "capsule-project": f.ProjectID.String()},
+		})
+		if err != nil {
+			return err
+		}
+		return e.waitReady(ctx, name)
+	}
+	if err := e.waitReady(ctx, name); err != nil { // a previous update may still be in progress
+		return err
+	}
+	if cur.Code == nil || aws.ToString(cur.Code.ImageUri) != imageURI {
+		if _, err := e.API.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{FunctionName: aws.String(name), ImageUri: aws.String(imageURI)}); err != nil {
+			return err
+		}
+		if err := e.waitReady(ctx, name); err != nil {
+			return err
+		}
+	}
+	c := cur.Configuration
+	if c == nil || aws.ToInt32(c.MemorySize) != int32(f.MemoryMB) || aws.ToInt32(c.Timeout) != timeout {
+		if _, err := e.API.UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
+			FunctionName: aws.String(name), MemorySize: aws.Int32(int32(f.MemoryMB)), Timeout: aws.Int32(timeout)}); err != nil {
+			return err
+		}
+		return e.waitReady(ctx, name)
+	}
+	return nil
+}
+
+// waitReady polls until the Lambda is Active and no update is in progress; Failed states end the wait with AWS's reason.
+func (e *LambdaExecutor) waitReady(ctx context.Context, name string) error {
+	poll, limit := e.Poll, e.ReadyWait
+	if poll <= 0 {
+		poll = 2 * time.Second
+	}
+	if limit <= 0 {
+		limit = 5 * time.Minute
+	}
+	for waited := time.Duration(0); ; waited += poll {
+		out, err := e.API.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(name)})
+		if err != nil {
+			return err
+		}
+		c := out.Configuration
+		if c == nil {
+			return nil
+		}
+		switch {
+		case c.State == lambdatypes.StateFailed:
+			return fmt.Errorf("lambda %s failed: %s", name, aws.ToString(c.StateReason))
+		case c.LastUpdateStatus == lambdatypes.LastUpdateStatusFailed:
+			return fmt.Errorf("lambda %s update failed: %s", name, aws.ToString(c.LastUpdateStatusReason))
+		case (c.State == "" || c.State == lambdatypes.StateActive) && c.LastUpdateStatus != lambdatypes.LastUpdateStatusInProgress:
+			return nil
+		}
+		if waited >= limit {
+			return fmt.Errorf("lambda %s is not ready after %s (state %s, update %s)", name, limit, c.State, c.LastUpdateStatus)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(poll):
+		}
+	}
 }
 
 // Remove deletes the Lambda of f (no cost remains). A Lambda that does not exist is not an error.

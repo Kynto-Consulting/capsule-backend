@@ -8,13 +8,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/google/uuid"
 )
 
 type fakeLambda struct {
 	created  []*lambda.CreateFunctionInput
 	exists   bool
+	image    string
+	mem, to  int32
+	code     []string
+	// pending makes GetFunction answer Pending / InProgress this many times after each change (AWS applies changes asynchronously)
+	pending, left int
 	cfg      []*lambda.UpdateFunctionConfigurationInput
 	payloads []InvokePayload
 	replies  []string
@@ -24,16 +31,43 @@ type fakeLambda struct {
 
 func (f *fakeLambda) CreateFunction(_ context.Context, in *lambda.CreateFunctionInput, _ ...func(*lambda.Options)) (*lambda.CreateFunctionOutput, error) {
 	f.created = append(f.created, in)
+	f.exists, f.image, f.mem, f.to, f.left = true, *in.Code.ImageUri, *in.MemorySize, *in.Timeout, f.pending
 	return &lambda.CreateFunctionOutput{}, nil
 }
-func (f *fakeLambda) UpdateFunctionCode(_ context.Context, _ *lambda.UpdateFunctionCodeInput, _ ...func(*lambda.Options)) (*lambda.UpdateFunctionCodeOutput, error) {
+func (f *fakeLambda) GetFunction(_ context.Context, _ *lambda.GetFunctionInput, _ ...func(*lambda.Options)) (*lambda.GetFunctionOutput, error) {
+	if !f.exists {
+		return nil, &lambdatypes.ResourceNotFoundException{}
+	}
+	cfg := &lambdatypes.FunctionConfiguration{State: lambdatypes.StateActive, LastUpdateStatus: lambdatypes.LastUpdateStatusSuccessful, MemorySize: aws.Int32(f.mem), Timeout: aws.Int32(f.to)}
+	if f.left > 0 {
+		f.left--
+		cfg.State, cfg.LastUpdateStatus = lambdatypes.StatePending, lambdatypes.LastUpdateStatusInProgress
+	}
+	return &lambda.GetFunctionOutput{Configuration: cfg, Code: &lambdatypes.FunctionCodeLocation{ImageUri: aws.String(f.image)}}, nil
+}
+func (f *fakeLambda) busy() error {
+	if f.left > 0 {
+		return errors.New("ResourceConflictException: An update is in progress")
+	}
+	return nil
+}
+func (f *fakeLambda) UpdateFunctionCode(_ context.Context, in *lambda.UpdateFunctionCodeInput, _ ...func(*lambda.Options)) (*lambda.UpdateFunctionCodeOutput, error) {
 	if !f.exists {
 		return nil, errors.New("ResourceNotFoundException")
 	}
+	if err := f.busy(); err != nil {
+		return nil, err
+	}
+	f.code = append(f.code, *in.ImageUri)
+	f.image, f.left = *in.ImageUri, f.pending
 	return &lambda.UpdateFunctionCodeOutput{}, nil
 }
 func (f *fakeLambda) UpdateFunctionConfiguration(_ context.Context, in *lambda.UpdateFunctionConfigurationInput, _ ...func(*lambda.Options)) (*lambda.UpdateFunctionConfigurationOutput, error) {
+	if err := f.busy(); err != nil {
+		return nil, err
+	}
 	f.cfg = append(f.cfg, in)
+	f.mem, f.to, f.left = *in.MemorySize, *in.Timeout, f.pending
 	return &lambda.UpdateFunctionConfigurationOutput{}, nil
 }
 func (f *fakeLambda) DeleteFunction(_ context.Context, in *lambda.DeleteFunctionInput, _ ...func(*lambda.Options)) (*lambda.DeleteFunctionOutput, error) {
@@ -41,6 +75,9 @@ func (f *fakeLambda) DeleteFunction(_ context.Context, in *lambda.DeleteFunction
 	return &lambda.DeleteFunctionOutput{}, nil
 }
 func (f *fakeLambda) Invoke(_ context.Context, in *lambda.InvokeInput, _ ...func(*lambda.Options)) (*lambda.InvokeOutput, error) {
+	if err := f.busy(); err != nil {
+		return nil, err
+	}
 	var p InvokePayload
 	json.Unmarshal(in.Payload, &p)
 	f.payloads = append(f.payloads, p)
@@ -69,10 +106,41 @@ func TestLambdaEnsureCapsTimeoutAndNeverPutsSecretsInEnvironment(t *testing.T) {
 	if !strings.HasSuffix(*c.Role, ":role/capsule-lambda-role") {
 		t.Fatal(*c.Role)
 	}
-	api.exists = true
-	e.Ensure(context.Background(), lfn(), "img")
-	if len(api.cfg) != 1 || *api.cfg[0].Timeout != 900 {
-		t.Fatal("update must re-apply limits")
+	if err := e.Ensure(context.Background(), lfn(), "123.dkr.ecr/x:1"); err != nil || len(api.code) != 0 || len(api.cfg) != 0 {
+		t.Fatalf("nothing changed, nothing must be updated: code %v cfg %d %v", api.code, len(api.cfg), err)
+	}
+	f := lfn()
+	f.MemoryMB = 1024
+	if err := e.Ensure(context.Background(), f, "123.dkr.ecr/x@sha256:2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.code) != 1 || api.code[0] != "123.dkr.ecr/x@sha256:2" || len(api.cfg) != 1 || *api.cfg[0].Timeout != 900 || *api.cfg[0].MemorySize != 1024 {
+		t.Fatalf("a new image and new limits must be applied: %v %+v", api.code, api.cfg)
+	}
+	if err := e.Ensure(context.Background(), f, ""); err == nil {
+		t.Fatal("a function whose image is not built yet cannot be prepared")
+	}
+}
+
+// AWS applies a create or an update asynchronously: Ensure must wait before the next update and before the first invoke.
+func TestLambdaEnsureWaitsUntilTheLambdaIsReady(t *testing.T) {
+	api := &fakeLambda{pending: 2, replies: []string{`{}`}}
+	e := &LambdaExecutor{API: api, Account: "123", Poll: time.Millisecond}
+	if err := e.Ensure(context.Background(), lfn(), "img:1"); err != nil {
+		t.Fatal(err)
+	}
+	f := lfn()
+	f.MemoryMB = 2048
+	if err := e.Ensure(context.Background(), f, "img:2"); err != nil { // code update then configuration update: each waits
+		t.Fatalf("update while in progress: %v", err)
+	}
+	if _, err := e.Run(context.Background(), f, &Run{ID: uuid.New()}, time.Now().Add(time.Hour), func(int) (map[string]string, error) { return nil, nil }); err != nil {
+		t.Fatalf("invoke right after Ensure: %v", err)
+	}
+	api.pending, api.left = 1000, 1000
+	e.ReadyWait = 5 * time.Millisecond
+	if err := e.Ensure(context.Background(), f, "img:3"); err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("a Lambda that never becomes ready must fail the run: %v", err)
 	}
 }
 
