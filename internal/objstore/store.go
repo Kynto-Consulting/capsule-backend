@@ -64,6 +64,10 @@ type Store struct {
 	root string
 	mu   sync.RWMutex
 	b    map[string]*bucketIdx
+
+	qmu      sync.Mutex // serializes quota check + reservation
+	imu      sync.Mutex // guards inflight
+	inflight map[string]int64
 }
 
 // Open loads (or creates) a store rooted at dir, rebuilding the index from disk.
@@ -653,4 +657,22 @@ func (s *Store) Pending(bucket string) int64 {
 		}
 	}
 	return t
+}
+
+// ── in-flight reservations (closing the check-then-write race of quotas) ────
+
+// Inflight is the bytes reserved by uploads in progress in bucket.
+func (s *Store) Inflight(bucket string) int64 {
+	s.imu.Lock()
+	defer s.imu.Unlock()
+	return s.inflight[bucket]
+}
+
+func (s *Store) addInflight(bucket string, n int64) {
+	s.imu.Lock()
+	if s.inflight == nil {
+		s.inflight = map[string]int64{}
+	}
+	s.inflight[bucket] += n
+	s.imu.Unlock()
 }

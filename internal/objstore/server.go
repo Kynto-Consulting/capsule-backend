@@ -365,7 +365,7 @@ func (s *Server) room(ctx context.Context, bucket string) (int64, error) {
 	used := func(names []string) int64 {
 		var t int64
 		for _, n := range names {
-			t += s.Store.Usage(n) + s.Store.Pending(n)
+			t += s.Store.Usage(n) + s.Store.Pending(n) + s.Store.Inflight(n)
 		}
 		return t
 	}
@@ -382,7 +382,7 @@ func (s *Server) room(ctx context.Context, bucket string) (int64, error) {
 			best = left
 		}
 	}
-	apply(b.MaxBytes, s.Store.Usage(bucket)+s.Store.Pending(bucket))
+	apply(b.MaxBytes, s.Store.Usage(bucket)+s.Store.Pending(bucket)+s.Store.Inflight(bucket))
 	apply(lim.ProjectMax, used(lim.ProjectBuckets))
 	apply(lim.OrgMax, used(lim.OrgBuckets))
 	return best, nil
@@ -411,20 +411,31 @@ func (s *Server) body(r *http.Request, a *parsedAuth, secret string) (io.Reader,
 	return rd, hash, length, nil
 }
 
-func (s *Server) quotaGuard(w http.ResponseWriter, r *http.Request, bucket string, length, replacing int64) (int64, bool) {
+func (s *Server) quotaGuard(w http.ResponseWriter, r *http.Request, bucket string, length, replacing int64) (int64, func(), bool) {
+	// check and reservation are one atomic step, so concurrent uploads cannot each pass on the same free space
+	s.Store.qmu.Lock()
+	defer s.Store.qmu.Unlock()
 	room, err := s.room(r.Context(), bucket)
 	if err != nil {
 		s.fail(w, r, eInternal)
-		return 0, false
+		return 0, nil, false
 	}
+	reserve := length
 	if room >= 0 {
 		room += replacing
 		if length > room {
 			s.fail(w, r, eQuota)
-			return 0, false
+			return 0, nil, false
+		}
+		if length < 0 {
+			reserve = room // unknown size (streamed): hold the whole remaining room until it finishes
 		}
 	}
-	return room, true
+	if reserve < 0 {
+		reserve = 0
+	}
+	s.Store.addInflight(bucket, reserve)
+	return room, func() { s.Store.addInflight(bucket, -reserve) }, true
 }
 
 func (s *Server) storeErr(w http.ResponseWriter, r *http.Request, err error) {
@@ -527,10 +538,11 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 	if o, err := s.Store.Stat(bucket, key); err == nil {
 		replacing = o.Size
 	}
-	room, ok := s.quotaGuard(w, r, bucket, length, replacing)
+	room, release, ok := s.quotaGuard(w, r, bucket, length, replacing)
 	if !ok {
 		return
 	}
+	defer release()
 	o, err := s.Store.Put(bucket, key, rd, writeOpts{ContentType: r.Header.Get("Content-Type"), MaxBytes: room, WantSHA256: sum})
 	if err != nil {
 		s.storeErr(w, r, err)
@@ -559,10 +571,11 @@ func (s *Server) putPart(w http.ResponseWriter, r *http.Request, bucket, uid str
 			}
 		}
 	}
-	room, ok := s.quotaGuard(w, r, bucket, length, replacing)
+	room, release, ok := s.quotaGuard(w, r, bucket, length, replacing)
 	if !ok {
 		return
 	}
+	defer release()
 	etag, _, err := s.Store.PutPart(bucket, uid, n, rd, room, sum)
 	if err != nil {
 		s.storeErr(w, r, err)

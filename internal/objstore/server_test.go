@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -359,5 +362,30 @@ func TestValidBucketName(t *testing.T) {
 	}
 	if err := (&Store{}).CreateBucket("X"); err == nil {
 		t.Error("invalid name accepted")
+	}
+}
+
+func TestConcurrentUploadsCannotPassTheQuota(t *testing.T) {
+	r := newRig(t, false)
+	r.meta.buckets["alpha-files"].MaxBytes = 100
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	var ok int32
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := r.cli.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String("alpha-files"), Key: aws.String(fmt.Sprintf("k%d", i)), Body: bytes.NewReader(make([]byte, 30))})
+			if err == nil {
+				atomic.AddInt32(&ok, 1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if ok > 3 || r.st.Usage("alpha-files") > 100 {
+		t.Fatalf("quota exceeded under concurrency: %d uploads accepted, usage %d", ok, r.st.Usage("alpha-files"))
+	}
+	if ok == 0 {
+		t.Fatal("no upload was accepted")
 	}
 }
