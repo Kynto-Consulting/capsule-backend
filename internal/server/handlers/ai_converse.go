@@ -326,7 +326,7 @@ func (h *AIHandler) converseNovaStream(ctx context.Context, w http.ResponseWrite
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	flusher, canFlush := w.(http.Flusher)
+	flusher, canFlush := flusherOf(w)
 
 	sendSSE := func(data any) {
 		b, _ := json.Marshal(data)

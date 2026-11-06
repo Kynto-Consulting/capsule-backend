@@ -841,7 +841,7 @@ func (h *AIMMHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	system := f.str("system")
 	if f.flag("stream") {
-		flusher, ok := w.(http.Flusher)
+		flusher, ok := flusherOf(w)
 		if !ok {
 			h.fail(w, errors.New("streaming is not supported by this connection"))
 			return

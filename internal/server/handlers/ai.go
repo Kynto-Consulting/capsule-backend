@@ -988,7 +988,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
-		flusher, canFlush := w.(http.Flusher)
+		flusher, canFlush := flusherOf(w)
 
 		sendSSE := func(data any) {
 			b, _ := json.Marshal(data)

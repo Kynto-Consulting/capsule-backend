@@ -516,11 +516,18 @@ func (o *Ops) ImageOp(ctx context.Context, m Model, req ImageRequest) ([]Image, 
 			Seeds         []int64   `json:"seeds"`
 			FinishReasons []*string `json:"finish_reasons"`
 		}
-		if err := json.Unmarshal(raw, &r); err != nil || len(r.Images) == 0 {
+		if err := json.Unmarshal(raw, &r); err != nil {
 			return nil, fmt.Errorf("unexpected image response from %s", m.ID)
 		}
 		if len(r.FinishReasons) > 0 && r.FinishReasons[0] != nil {
 			return nil, fmt.Errorf("%w: image refused by the model (%s)", ErrBadInput, *r.FinishReasons[0])
+		}
+		if len(r.Images) == 0 {
+			snippet := string(raw)
+			if len(snippet) > 200 {
+				snippet = snippet[:200]
+			}
+			return nil, fmt.Errorf("unexpected image response from %s: %s", m.ID, snippet)
 		}
 		data, err := base64.StdEncoding.DecodeString(r.Images[0])
 		if err != nil {
