@@ -54,3 +54,13 @@ func TestTransportRulesLetAnswersBack(t *testing.T) {
 		t.Errorf("deleteRule = %q", got)
 	}
 }
+
+func TestTunnelDevice(t *testing.T) {
+	out := "1: lo: <LOOPBACK,UP> mtu 65536\n4: ppp0: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> mtu 1354\n10: cp8cda9c7a059f@if11: <BROADCAST> mtu 1500\n"
+	if got := tunnelDevice(out); got != "ppp0" {
+		t.Fatalf("tunnelDevice = %q, want ppp0", got)
+	}
+	if got := tunnelDevice("1: lo: <LOOPBACK>\n10: cp8cda@if11: <BROADCAST>\n"); got != "" {
+		t.Fatalf("no tunnel interface: got %q", got)
+	}
+}

@@ -80,6 +80,8 @@ type KernelTunnel struct {
 	start time.Time
 	// host rules added by transport (iptables args with -A/-t), removed again on Close
 	rules [][]string
+	// the tunnel's declared networks: routed through the tunnel interface once it exists (the providers run with --no-routes)
+	cidrs []string
 
 	mu     sync.Mutex
 	closed bool
@@ -98,7 +100,7 @@ func OpenKernel(ta fn.TunnelAssignment, x Exec) (*KernelTunnel, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &KernelTunnel{ns: nsName(ta.ID.String()), x: x, start: time.Now()}
+	k := &KernelTunnel{ns: nsName(ta.ID.String()), x: x, start: time.Now(), cidrs: append([]string(nil), l.AllowCIDRs...)}
 	k.dir = filepath.Join(KernelDirRoot, k.ns)
 	_ = x.Run("ip", "netns", "del", k.ns) // leftovers of a crash
 	if err := x.Run("ip", "netns", "add", k.ns); err != nil {
@@ -211,12 +213,17 @@ func (k *KernelTunnel) Health() (string, time.Time, string) {
 	if err != nil {
 		return vpn.StatusError, time.Time{}, "namespace not reachable"
 	}
-	for _, ln := range strings.Split(string(out), "\n") {
-		for _, p := range []string{"tun", "ppp", "xfrm", "ipsec"} {
-			if strings.Contains(ln, ": "+p) {
-				return vpn.StatusUp, time.Now(), ""
+	if dev := tunnelDevice(string(out)); dev != "" {
+		// The providers run with --no-routes (they must not touch more than the declared networks), so the namespace only had
+		// the route to the gateway and a dial to the remote network failed with "Network is unreachable": the tunnel was up and
+		// carried 0 bytes (06-nov-2026, first real FortiGate). Each declared network goes through the tunnel interface; `replace`
+		// is idempotent and also restores the routes after the provider reconnects (a new ppp0 drops them).
+		for _, c := range k.cidrs {
+			if err := k.x.Run("ip", "netns", "exec", k.ns, "ip", "route", "replace", c, "dev", dev); err != nil {
+				return vpn.StatusError, time.Time{}, "could not route the tunnel networks"
 			}
 		}
+		return vpn.StatusUp, time.Now(), ""
 	}
 	if time.Since(k.start) > 90*time.Second {
 		return vpn.StatusError, time.Time{}, "tunnel interface did not come up"
@@ -267,4 +274,21 @@ func safeTunnelLine(s string) string {
 		s = s[:300]
 	}
 	return s
+}
+
+// tunnelDevice returns the tunnel interface from `ip -o link show` output (ppp0, tun0, xfrm..., ipsec...), or "".
+func tunnelDevice(linkShow string) string {
+	for _, ln := range strings.Split(linkShow, "\n") {
+		f := strings.SplitN(ln, ": ", 3)
+		if len(f) < 2 {
+			continue
+		}
+		name := strings.SplitN(strings.TrimSpace(f[1]), "@", 2)[0]
+		for _, p := range []string{"tun", "ppp", "xfrm", "ipsec"} {
+			if strings.HasPrefix(name, p) {
+				return name
+			}
+		}
+	}
+	return ""
 }
