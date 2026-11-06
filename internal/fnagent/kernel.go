@@ -1,7 +1,10 @@
 package fnagent
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -30,14 +33,36 @@ func (execRunner) Run(name string, args ...string) error {
 	return nil
 }
 
+// Start runs a long-lived tunnel process (openfortivpn, charon, openvpn). Its output goes to the agent log line by line, so a
+// tunnel that dies at once says why (bad credentials, certificate pin, gateway refusal); before, the output was discarded and
+// the only symptom was "tunnel interface did not come up" (06-nov-2026). The providers do not print the secrets they read from
+// their config file; lines that mention a password are still dropped as a precaution. The exit is logged too.
 func (execRunner) Start(dir, name string, args ...string) (func(), error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	pr, pw := io.Pipe()
+	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
 		return nil, err
 	}
+	prog := tunnelProgram(args)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 0, 4096), 64*1024)
+		for sc.Scan() {
+			if ln := safeTunnelLine(sc.Text()); ln != "" {
+				slog.Info("tunnel process", "program", prog, "line", ln)
+			}
+		}
+	}()
 	done := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(done) }()
+	go func() {
+		err := cmd.Wait()
+		_ = pw.Close()
+		slog.Warn("tunnel process exited", "program", prog, "result", fmt.Sprint(err))
+		close(done)
+	}()
 	return func() {
 		_ = cmd.Process.Kill()
 		<-done
@@ -181,4 +206,30 @@ func (k *KernelTunnel) Close() {
 	}
 	_ = k.x.Run("ip", "netns", "del", k.ns)
 	_ = os.RemoveAll(k.dir)
+}
+
+// tunnelProgram names the provider behind `ip netns exec <ns> <program> ...` for the log.
+func tunnelProgram(args []string) string {
+	if len(args) >= 4 && args[0] == "netns" && args[1] == "exec" {
+		return filepath.Base(args[3])
+	}
+	if len(args) > 0 {
+		return filepath.Base(args[0])
+	}
+	return ""
+}
+
+// safeTunnelLine trims a provider output line for the log and drops anything that could carry a secret.
+func safeTunnelLine(s string) string {
+	s = strings.TrimSpace(s)
+	l := strings.ToLower(s)
+	for _, w := range []string{"password", "passwd", "secret", "psk", "cookie", "svpncookie"} {
+		if strings.Contains(l, w) {
+			return ""
+		}
+	}
+	if len(s) > 300 {
+		s = s[:300]
+	}
+	return s
 }

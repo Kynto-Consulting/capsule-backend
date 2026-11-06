@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
@@ -60,6 +61,19 @@ func (f *fakeLambdaAPI) CreateFunction(_ context.Context, in *lambda.CreateFunct
 	f.made = append(f.made, *in.FunctionName)
 	f.mu.Unlock()
 	return &lambda.CreateFunctionOutput{}, nil
+}
+
+// GetFunction: absent until CreateFunction, then Active (LambdaExecutor.Ensure waits for that state since feat/fn-build-source).
+func (f *fakeLambdaAPI) GetFunction(_ context.Context, in *lambda.GetFunctionInput, _ ...func(*lambda.Options)) (*lambda.GetFunctionOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.made {
+		if n == *in.FunctionName {
+			cfg := &lambdatypes.FunctionConfiguration{State: lambdatypes.StateActive, LastUpdateStatus: lambdatypes.LastUpdateStatusSuccessful}
+			return &lambda.GetFunctionOutput{Configuration: cfg}, nil
+		}
+	}
+	return nil, &lambdatypes.ResourceNotFoundException{}
 }
 func (f *fakeLambdaAPI) UpdateFunctionCode(context.Context, *lambda.UpdateFunctionCodeInput, ...func(*lambda.Options)) (*lambda.UpdateFunctionCodeOutput, error) {
 	return nil, fmt.Errorf("not found")
@@ -128,12 +142,12 @@ func TestLambdaReachesTheTunnelThroughTheRelayEndToEnd(t *testing.T) {
 	// the "function": batch 0 downloads the file through the relay and asks to continue; batch 1 checks that its previous
 	// token is dead, that a destination outside the declared networks is refused and finishes.
 	var (
-		mu                                    sync.Mutex
-		downloaded                            int
-		outsideStatus, badTokenStatus         int
-		previousTokenStatus, secondBatchTok   int
-		tokens                                []string
-		sawSecret                             bool
+		mu                                  sync.Mutex
+		downloaded                          int
+		outsideStatus, badTokenStatus       int
+		previousTokenStatus, secondBatchTok int
+		tokens                              []string
+		sawSecret                           bool
 	)
 	api.run = func(p fn.InvokePayload) string {
 		mu.Lock()
@@ -177,7 +191,11 @@ func TestLambdaReachesTheTunnelThroughTheRelayEndToEnd(t *testing.T) {
 	ag := &Agent{Client: &Client{Base: backend.URL, Token: nodeTok}, Runner: blockRunner{}, Mgr: NewManager(), SocksRoot: shortTemp(t), Poll: 100 * time.Millisecond}
 	var denied []string
 	var dmu sync.Mutex
-	ag.Mgr.Audit = func(_ uuid.UUID, target, reason string) { dmu.Lock(); denied = append(denied, target+" "+reason); dmu.Unlock() }
+	ag.Mgr.Audit = func(_ uuid.UUID, target, reason string) {
+		dmu.Lock()
+		denied = append(denied, target+" "+reason)
+		dmu.Unlock()
+	}
 	go ag.Loop(ctx)
 	defer ag.Mgr.Stop(tn.ID)
 
