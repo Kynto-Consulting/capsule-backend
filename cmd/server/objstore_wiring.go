@@ -51,11 +51,17 @@ func wireObjstore(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, b
 	if addr == "" {
 		addr = ":9000"
 	}
+	publicFmt := strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_PUBLIC_ENDPOINT")) // e.g. http://localhost:9000 or https://{slug}-storage.example.com
 	logger.Info("object storage enabled", "dir", dir, "addr", addr)
 	return &server.ObjstoreDeps{
 		Store: store, Repo: repo, Addr: addr, InternalEndpoint: internal, Region: "us-east-1",
-		PublicEndpoint: func(slug string) string { return fmt.Sprintf("https://%s-storage.%s", slug, zone) },
-		S3:             &objstore.Server{Store: store, Meta: repo, Region: "us-east-1", Log: logger},
+		PublicEndpoint: func(slug string) string {
+			if publicFmt != "" {
+				return strings.ReplaceAll(publicFmt, "{slug}", slug)
+			}
+			return fmt.Sprintf("https://%s-storage.%s", slug, zone)
+		},
+		S3: &objstore.Server{Store: store, Meta: repo, Region: "us-east-1", Log: logger},
 	}
 }
 
@@ -74,7 +80,9 @@ func (b backupObjects) Buckets(ctx context.Context, p uuid.UUID) ([]string, erro
 	return b.repo.ProjectBucketNames(ctx, p)
 }
 
-func (b backupObjects) Archive(buckets []string, w io.Writer) error { return b.store.Archive(buckets, w) }
+func (b backupObjects) Archive(buckets []string, w io.Writer) error {
+	return b.store.Archive(buckets, w)
+}
 
 func (b backupObjects) Restore(ctx context.Context, p uuid.UUID, r io.Reader) error {
 	names, err := b.repo.ProjectBucketNames(ctx, p)
