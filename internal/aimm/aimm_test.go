@@ -235,6 +235,20 @@ func TestEmbedFormats(t *testing.T) {
 		t.Fatalf("cohere request: %v", rt.gotBody)
 	}
 
+	rt.reply = `{"data":[{"embedding":[0.1,0.2]}]}`
+	if r, err = o.Embed(ctx, model("marengo-embed-3"), []EmbedInput{{Text: "hola"}}, 0, ""); err != nil || r.Dim != 2 {
+		t.Fatalf("marengo: %v", err)
+	}
+	if rt.gotModel != "us.twelvelabs.marengo-embed-3-0-v1:0" || rt.gotBody["inputType"] != "text" || rt.gotBody["text"].(map[string]any)["inputText"] != "hola" {
+		t.Fatalf("marengo request: %v %v", rt.gotModel, rt.gotBody)
+	}
+	if _, err = o.Embed(ctx, model("marengo-embed-3"), []EmbedInput{{Image: []byte("x"), ImageFormat: "png"}}, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rt.gotBody["inputType"] != "image" || rt.gotBody["image"].(map[string]any)["mediaSource"].(map[string]any)["base64String"] == nil {
+		t.Fatalf("marengo image request: %v", rt.gotBody)
+	}
+
 	rt.reply = `{"embedding":[1,2,3],"inputTextTokenCount":3}`
 	if _, err = o.Embed(ctx, model("titan-embed-image"), []EmbedInput{{Text: "gato", Image: []byte("x")}}, 0, ""); err != nil {
 		t.Fatal(err)

@@ -157,7 +157,7 @@ func (o *Ops) Embed(ctx context.Context, m Model, inputs []EmbedInput, dim int, 
 			return nil, fmt.Errorf("unexpected embedding response from %s", m.ID)
 		}
 		return &EmbedResult{Vectors: r.Embeddings.Float, Tokens: estTokens(texts), Dim: len(r.Embeddings.Float[0])}, nil
-	case FamTitanEmbedText, FamTitanEmbedImage, FamNovaEmbed:
+	case FamTitanEmbedText, FamTitanEmbedImage, FamNovaEmbed, FamMarengoEmbed:
 		res := &EmbedResult{Vectors: make([][]float32, len(inputs))}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
@@ -243,6 +243,33 @@ func (o *Ops) embedOne(ctx context.Context, m Model, id string, in EmbedInput, d
 			return nil, 0, fmt.Errorf("unexpected embedding response from %s", m.ID)
 		}
 		return r.Embedding, r.Tokens + imageTokens(in), nil
+	case FamMarengoEmbed:
+		body := map[string]any{}
+		switch {
+		case len(in.Image) > 0 && in.Text != "":
+			return nil, 0, BadInput("marengo embeds either text or an image per item")
+		case len(in.Image) > 0:
+			body["inputType"] = "image"
+			body["image"] = map[string]any{"mediaSource": map[string]any{"base64String": base64.StdEncoding.EncodeToString(in.Image)}}
+		case in.Text != "":
+			body["inputType"] = "text"
+			body["text"] = map[string]any{"inputText": in.Text}
+		default:
+			return nil, 0, BadInput("empty input")
+		}
+		raw, err := o.invoke(ctx, id, body)
+		if err != nil {
+			return nil, 0, err
+		}
+		var r struct {
+			Data []struct {
+				Embedding []float32 `json:"embedding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil || len(r.Data) == 0 || len(r.Data[0].Embedding) == 0 {
+			return nil, 0, fmt.Errorf("unexpected embedding response from %s", m.ID)
+		}
+		return r.Data[0].Embedding, estTokens([]string{in.Text}) + imageTokens(in), nil
 	case FamNovaEmbed:
 		if dim == 0 {
 			dim = 256

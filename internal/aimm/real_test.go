@@ -85,7 +85,7 @@ func TestRealCatalog(t *testing.T) {
 func TestRealEmbedRerank(t *testing.T) {
 	c, cat, ctx := realEnv(t)
 	ops := &Ops{RT: c.Bedrock}
-	for _, id := range []string{"titan-embed-v2", "nova-embed", "cohere-embed-v4"} {
+	for _, id := range []string{"titan-embed-v2", "nova-embed", "cohere-embed-v4", "marengo-embed-3"} {
 		m := must(t, cat, ctx, id)
 		r, err := ops.Embed(ctx, m, []EmbedInput{{Text: "hola mundo"}, {Text: "hello world"}}, 256, "document")
 		if err != nil {

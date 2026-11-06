@@ -61,6 +61,7 @@ const (
 	FamTitanEmbedImage Family = "titan-embed-image"
 	FamNovaEmbed       Family = "nova-embed"
 	FamCohereEmbed     Family = "cohere-embed"
+	FamMarengoEmbed    Family = "marengo-embed"
 	FamCohereRerank    Family = "cohere-rerank"
 	FamStability       Family = "stability-image"
 	FamNovaSonic       Family = "nova-sonic"
@@ -141,6 +142,7 @@ var drivers = []driver{
 	{bedrockID: "amazon.titan-embed-image-v1", id: "titan-embed-image", name: "Titan Multimodal Embeddings G1", provider: "Amazon", family: FamTitanEmbedImage, caps: []Capability{CapEmbed}, price: Price{Unit: "1k_tokens", Input: 0.0008}, note: "text and image into one vector space"},
 	{bedrockID: "amazon.nova-2-multimodal-embeddings-v1:0", id: "nova-embed", name: "Nova 2 Multimodal Embeddings", provider: "Amazon", family: FamNovaEmbed, caps: []Capability{CapEmbed}, price: Price{Unit: "1k_tokens", Input: 0.00014}, verified: true, note: "text and image (audio and video need the asynchronous API)"},
 	{bedrockID: "cohere.embed-v4:0", id: "cohere-embed-v4", name: "Cohere Embed v4", provider: "Cohere", family: FamCohereEmbed, caps: []Capability{CapEmbed}, price: Price{Unit: "1k_tokens", Input: 0.00012}, verified: true},
+	{bedrockID: "twelvelabs.marengo-embed-3-0-v1:0", id: "marengo-embed-3", name: "TwelveLabs Marengo Embed 3", provider: "TwelveLabs", family: FamMarengoEmbed, caps: []Capability{CapEmbed}, price: Price{Unit: "1k_tokens", Input: 0.00007}, verified: true, note: "text and image, 512 dimensions (video and audio need the asynchronous API)"},
 	{bedrockID: "cohere.rerank-v3-5:0", id: "cohere-rerank-3-5", name: "Cohere Rerank 3.5", provider: "Cohere", family: FamCohereRerank, caps: []Capability{CapRerank}, price: Price{Unit: "1k_searches", Per: 2.0}, verified: true},
 	stab("stable-image-inpaint-v1:0", "Stable Image Inpaint", 0.04, true, CapImageEdit),
 	stab("stable-image-erase-object-v1:0", "Stable Image Erase Object", 0.04, false, CapImageEdit),
@@ -333,7 +335,7 @@ func (c *Catalog) fallback() []Model {
 
 // needsProfile is the fixed knowledge of which known ids have no on-demand mode (used only by the fallback).
 func needsProfile(id string) bool {
-	return strings.HasPrefix(id, "stability.") || id == "amazon.nova-2-lite-v1:0" || strings.HasPrefix(id, "anthropic.claude-")
+	return strings.HasPrefix(id, "stability.") || strings.HasPrefix(id, "twelvelabs.marengo") || id == "amazon.nova-2-lite-v1:0" || strings.HasPrefix(id, "anthropic.claude-")
 }
 
 func (d driver) model(source string) Model {
