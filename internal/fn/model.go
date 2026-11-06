@@ -116,6 +116,8 @@ type Spec struct {
 	Timeout        string   `json:"timeout"`
 	MaxConcurrency int      `json:"max_concurrency"`
 	Scopes         []string `json:"scopes"`
+	// SourceKey replaces Image: an uploaded directory (POST .../fn/uploads) that Capsule builds into an image (DeployFromSource).
+	SourceKey string `json:"source_key,omitempty"`
 }
 
 // Normalize validates and fills defaults: 512m, 1 CPU, 1 h, one run at a time, no scopes.
@@ -124,8 +126,14 @@ func (s Spec) Normalize() (Spec, error) {
 	if !nameRe.MatchString(s.Name) {
 		return s, invalid("name must be 1-40 chars of a-z, 0-9 and '-'")
 	}
-	if strings.TrimSpace(s.Image) == "" {
-		return s, invalid("image is required")
+	s.SourceKey = strings.TrimSpace(s.SourceKey)
+	switch {
+	case s.SourceKey != "" && strings.TrimSpace(s.Image) != "":
+		return s, invalid("use either an image or a source to build, not both")
+	case s.SourceKey == "" && strings.TrimSpace(s.Image) == "":
+		return s, invalid("image (or a source to build) is required")
+	case s.SourceKey != "" && !sourceKeyRe.MatchString(s.SourceKey):
+		return s, invalid("source_key must be an upload of this project (POST .../fn/uploads)")
 	}
 	if strings.ContainsAny(s.Image, " \t\n;&|$`") {
 		return s, invalid("image has invalid characters")

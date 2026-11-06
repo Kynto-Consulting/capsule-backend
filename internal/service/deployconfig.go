@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -145,9 +146,10 @@ func safeToken(s string) string {
 
 // dockerCall is one invocation of the docker CLI.
 type dockerCall struct {
-	Dir  string
-	Env  []string
-	Args []string
+	Dir   string
+	Env   []string
+	Args  []string
+	Stdin io.Reader // e.g. the registry password of `docker login --password-stdin`
 }
 
 // dockerFunc runs the docker CLI and returns combined output.
@@ -156,6 +158,7 @@ type dockerFunc func(ctx context.Context, c dockerCall) ([]byte, error)
 func execDocker(ctx context.Context, c dockerCall) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", c.Args...)
 	cmd.Dir = c.Dir
+	cmd.Stdin = c.Stdin
 	if c.Env != nil {
 		cmd.Env = c.Env
 	}

@@ -148,7 +148,7 @@ func (s *Service) DispatchLambda(ctx context.Context) error {
 	}
 	for _, r := range queued {
 		f, err := s.Store.GetFunctionByID(ctx, r.FunctionID)
-		if err != nil || !f.Enabled || f.Runtime != RuntimeLambda {
+		if err != nil || !f.Enabled || f.Runtime != RuntimeLambda || f.Image == "" {
 			continue
 		}
 		node := "lambda"
@@ -312,6 +312,11 @@ func (s *Service) Delete(ctx context.Context, f *Function) error {
 	if f.Runtime == RuntimeLambda && s.Lambda != nil {
 		if err := s.Lambda.Remove(ctx, f); err != nil {
 			return fmt.Errorf("could not delete the lambda: %w", err)
+		}
+	}
+	if s.Registry != nil { // the images Capsule built for it (capsule/fn-<id>); a repository that does not exist is not an error
+		if err := s.Registry.RemoveFunctionImages(ctx, f); err != nil {
+			return fmt.Errorf("could not delete the function's image repository: %w", err)
 		}
 	}
 	return s.Store.DeleteFunction(ctx, f.ID)

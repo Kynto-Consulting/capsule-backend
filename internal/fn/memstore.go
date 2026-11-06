@@ -17,6 +17,7 @@ type MemStore struct {
 	tokens map[string]*RunToken
 	Nodes  map[string]string // hash -> node name
 	seen   map[string]time.Time
+	builds map[uuid.UUID]*Build
 }
 
 // NewMemStore creates an empty store.
@@ -84,6 +85,11 @@ func (m *MemStore) DeleteFunction(_ context.Context, id uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.fns, id)
+	for bid, b := range m.builds { // ON DELETE CASCADE, like fn_builds
+		if b.FunctionID == id {
+			delete(m.builds, bid)
+		}
+	}
 	return nil
 }
 func (m *MemStore) CASLastCron(_ context.Context, id uuid.UUID, old *time.Time, now time.Time) (bool, error) {

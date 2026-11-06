@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -74,6 +75,8 @@ type DeployWorker struct {
 	ext workerExt
 	// connAudit (optional) reports non-routed internal connections; see connaudit.go.
 	connAudit *connAuditState
+	// fnb (optional) builds function images from source in the same loop; see fnbuild.go. Atomic: it is set after Run starts.
+	fnb atomic.Pointer[fnBuildState]
 }
 
 // NewDeployWorker creates a new deployment worker.
@@ -124,6 +127,10 @@ func (w *DeployWorker) Run(ctx context.Context) {
 		}
 
 		found := w.processNext(ctx)
+		if !found {
+			// function images are built in the same loop, after project deployments: never two builds at once
+			found = w.processFnBuild(ctx)
+		}
 		if found {
 			backoff = minPoll // reset on work found
 		} else {

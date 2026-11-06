@@ -21,6 +21,8 @@ var (
 	ErrDisabled = errors.New("fn: function or tunnel disabled")
 )
 
+// Errors of builds (ErrNoImage) live in build.go.
+
 // Store persists functions, runs and run tokens.
 type Store interface {
 	CreateFunction(ctx context.Context, f *Function) error
@@ -74,6 +76,13 @@ type Service struct {
 	// LiveWindow is how recently a node must have reported to be given a Lambda run's tunnel (default 2 min).
 	LiveWindow time.Duration
 
+	// Builds stores image builds of functions deployed from source (capsule fn deploy --source). Nil: only --image deploys.
+	Builds BuildStore
+	// Registry removes the ECR repository of a function's built images when the function is deleted. Optional.
+	Registry ImageRegistry
+	// Audit writes audit_logs rows (build results). Optional.
+	Audit Auditor
+
 	lmu     sync.Mutex
 	lcancel map[uuid.UUID]context.CancelFunc
 }
@@ -105,6 +114,9 @@ func (s *Service) Deploy(ctx context.Context, orgID, projectID uuid.UUID, by *uu
 	spec, err := spec.Normalize()
 	if err != nil {
 		return nil, err
+	}
+	if spec.SourceKey != "" && !strings.HasPrefix(spec.SourceKey, "fn-builds/"+projectID.String()+"/") {
+		return nil, invalid("source_key must be an upload of this project (POST .../fn/uploads)")
 	}
 	if spec.Runtime == RuntimeLambda && s.Lambda == nil {
 		return nil, invalid("the lambda runtime is not enabled on this Capsule; use --runtime container")
@@ -141,6 +153,9 @@ func (s *Service) Deploy(ctx context.Context, orgID, projectID uuid.UUID, by *uu
 func (s *Service) Enqueue(ctx context.Context, f *Function, trigger, by string, payload json.RawMessage) (*Run, error) {
 	if !f.Enabled {
 		return nil, ErrDisabled
+	}
+	if f.Image == "" {
+		return nil, ErrNoImage
 	}
 	if f.VPNID != nil {
 		t, err := s.VPN.Store.GetByID(ctx, *f.VPNID)
@@ -246,8 +261,8 @@ func (s *Service) Claim(ctx context.Context, node string) (*Assignment, error) {
 	}
 	for _, r := range queued {
 		f, err := s.Store.GetFunctionByID(ctx, r.FunctionID)
-		if err != nil || !f.Enabled || f.Runtime == RuntimeLambda {
-			continue // lambda runs are executed by the backend (DispatchLambda), never by a node
+		if err != nil || !f.Enabled || f.Runtime == RuntimeLambda || f.Image == "" {
+			continue // lambda runs are executed by the backend (DispatchLambda), never by a node; no image: nothing to run
 		}
 		var ta *TunnelAssignment
 		if f.VPNID != nil {
