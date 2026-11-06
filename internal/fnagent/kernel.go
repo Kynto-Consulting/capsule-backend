@@ -78,6 +78,8 @@ type KernelTunnel struct {
 	x     Exec
 	stop  func()
 	start time.Time
+	// host rules added by transport (iptables args with -A/-t), removed again on Close
+	rules [][]string
 
 	mu     sync.Mutex
 	closed bool
@@ -163,15 +165,44 @@ func (k *KernelTunnel) transport(remoteIP string) error {
 		// one /32 route toward the remote gateway, and nothing else
 		{"ip", "netns", "exec", k.ns, "ip", "route", "add", remoteIP + "/32", "via", "169.254.77.1"},
 		{"sysctl", "-w", "net.ipv4.conf." + host + ".forwarding=1"},
-		{"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", "169.254.77.2/32", "-d", remoteIP + "/32", "-j", "MASQUERADE"},
-		{"iptables", "-A", "FORWARD", "-i", host, "-d", remoteIP + "/32", "-j", "ACCEPT"},
-		{"iptables", "-A", "FORWARD", "-i", host, "-j", "DROP"},
 	} {
 		if err := k.x.Run(c[0], c[1:]...); err != nil {
 			return err
 		}
 	}
+	for _, r := range transportRules(host, remoteIP) {
+		if err := k.x.Run("iptables", r...); err != nil {
+			return err
+		}
+		k.rules = append(k.rules, r)
+	}
 	return nil
+}
+
+// transportRules are the host rules of a tunnel namespace: NAT of the namespace address toward the remote gateway only, forward
+// of that traffic, and of its answers back. The answers rule was missing: with Docker on the node the FORWARD policy is DROP, so
+// the gateway's SYN-ACK was dropped and openfortivpn ended with "connect: Connection timed out" (06-nov-2026, first real FortiGate).
+// The rules are inserted (-I) so they run before Docker's chains, and Close removes exactly these (before, every reconnect left
+// a duplicate set behind).
+func transportRules(host, remoteIP string) [][]string {
+	return [][]string{
+		{"-t", "nat", "-I", "POSTROUTING", "-s", "169.254.77.2/32", "-d", remoteIP + "/32", "-j", "MASQUERADE"},
+		{"-I", "FORWARD", "-i", host, "-j", "DROP"},
+		{"-I", "FORWARD", "-i", host, "-d", remoteIP + "/32", "-j", "ACCEPT"},
+		{"-I", "FORWARD", "-o", host, "-s", remoteIP + "/32", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
+	}
+}
+
+// deleteRule turns an insert rule (-I CHAIN ...) into its delete (-D CHAIN ...).
+func deleteRule(r []string) []string {
+	out := append([]string(nil), r...)
+	for i, a := range out {
+		if a == "-I" || a == "-A" {
+			out[i] = "-D"
+			break
+		}
+	}
+	return out
 }
 
 // Health: up when a non-loopback tunnel interface other than the transport veth exists in the namespace.
@@ -205,6 +236,10 @@ func (k *KernelTunnel) Close() {
 		k.stop()
 	}
 	_ = k.x.Run("ip", "netns", "del", k.ns)
+	for i := len(k.rules) - 1; i >= 0; i-- {
+		_ = k.x.Run("iptables", deleteRule(k.rules[i])...)
+	}
+	k.rules = nil
 	_ = os.RemoveAll(k.dir)
 }
 

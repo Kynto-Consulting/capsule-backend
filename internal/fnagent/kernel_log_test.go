@@ -1,6 +1,9 @@
 package fnagent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSafeTunnelLine(t *testing.T) {
 	cases := map[string]string{
@@ -23,5 +26,31 @@ func TestTunnelProgram(t *testing.T) {
 	}
 	if got := tunnelProgram([]string{"/usr/sbin/openvpn"}); got != "openvpn" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestTransportRulesLetAnswersBack(t *testing.T) {
+	rs := transportRules("cvabc", "161.1.2.3")
+	var back, drop, out int = -1, -1, -1
+	for i, r := range rs {
+		j := strings.Join(r, " ")
+		switch {
+		case strings.Contains(j, "-o cvabc -s 161.1.2.3/32 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"):
+			back = i
+		case strings.Contains(j, "-i cvabc -j DROP"):
+			drop = i
+		case strings.Contains(j, "-i cvabc -d 161.1.2.3/32 -j ACCEPT"):
+			out = i
+		}
+		if r[0] != "-I" && !(r[0] == "-t" && r[2] == "-I") {
+			t.Errorf("rule %q must be inserted (-I) so it runs before Docker's FORWARD chains", j)
+		}
+	}
+	// -I puts each rule on top: the DROP must be inserted before (so it ends below) both ACCEPTs.
+	if back < 0 || drop < 0 || out < 0 || !(drop < out && drop < back) {
+		t.Fatalf("answers rule missing or DROP would shadow an ACCEPT: %v", rs)
+	}
+	if got := strings.Join(deleteRule(rs[1]), " "); got != "-D FORWARD -i cvabc -j DROP" {
+		t.Errorf("deleteRule = %q", got)
 	}
 }
