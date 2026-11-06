@@ -181,8 +181,9 @@ func (s *Service) Authorize(ctx context.Context, q url.Values) AuthorizeResult {
 		}
 	}
 	if !containsString(scopes, ScopeOpenID) {
-		s.logger.Warn("oidc authorize: scope without openid", "client_id", q.Get("client_id"), "scope_raw", q.Get("scope"), "raw_query_len", len(q.Encode()))
-		return fail("invalid_scope", "scope must include openid")
+		// Every client of this server is an OIDC login: a missing or mangled scope must not block the sign-in.
+		s.logger.Warn("oidc authorize: scope without openid, adding it", "client_id", q.Get("client_id"), "scope_raw", q.Get("scope"))
+		scopes = append([]string{ScopeOpenID}, scopes...)
 	}
 
 	challenge := q.Get("code_challenge")

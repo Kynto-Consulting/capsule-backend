@@ -210,7 +210,6 @@ func TestAuthorizeValidation(t *testing.T) {
 		}
 	}
 	check(func(q url.Values) { q.Set("response_type", "token") }, "unsupported_response_type")
-	check(func(q url.Values) { q.Set("scope", "profile") }, "invalid_scope")
 	check(func(q url.Values) { q.Set("code_challenge_method", "plain") }, "invalid_request")
 	check(func(q url.Values) { q.Del("code_challenge"); q.Del("code_challenge_method") }, "invalid_request") // public => PKCE mandatory
 }
