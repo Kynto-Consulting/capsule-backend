@@ -22,6 +22,27 @@ import (
 // Planned rows are routes of API.openapi.yaml that P5-P6 will mount (P4 mounted templates, groups, assignments, /me/permissions, simulator and audit); they are here so the table already is the contract.
 // Generated from routes_authz.golden by the P3 mapping (docs/permissions/P3-NOTES.md) and maintained by hand afterwards.
 var routePermissions = map[string]routePerm{
+	// VPN Connector + functions (docs/vpn-connector.md): existing atoms of the same granularity as workers, crons, network and logs.
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/vpn": {Kind: middleware.KindPerm, Perms: []string{"network:manage"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/vpn": {Kind: middleware.KindPerm, Perms: []string{"network:read"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/vpn/{name}": {Kind: middleware.KindPerm, Perms: []string{"network:read"}},
+	"DELETE /api/v1/orgs/{orgID}/projects/{projectID}/vpn/{name}": {Kind: middleware.KindPerm, Perms: []string{"network:manage"}},
+	"PUT /api/v1/orgs/{orgID}/projects/{projectID}/vpn/{name}/enabled": {Kind: middleware.KindPerm, Perms: []string{"network:manage"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/vpn/{name}/events": {Kind: middleware.KindPerm, Perms: []string{"log:read"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions": {Kind: middleware.KindPerm, Perms: []string{"worker:manage"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions": {Kind: middleware.KindPerm, Perms: []string{"worker:read"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}": {Kind: middleware.KindPerm, Perms: []string{"worker:read"}},
+	"DELETE /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}": {Kind: middleware.KindPerm, Perms: []string{"worker:manage"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/run": {Kind: middleware.KindPerm, Perms: []string{"cron:trigger"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/enqueue": {Kind: middleware.KindPerm, Perms: []string{"cron:trigger"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/runs": {Kind: middleware.KindPerm, Perms: []string{"log:read"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}": {Kind: middleware.KindPerm, Perms: []string{"log:read"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}/cancel": {Kind: middleware.KindPerm, Perms: []string{"cron:trigger"}},
+	"POST /api/v1/fn/tokens/introspect": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/agent/claim": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/agent/sync": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/agent/runs/{runID}/finish": {Kind: middleware.KindPublic},
+	"POST /api/v1/fn/agent/tunnels/{tunnelID}/status": {Kind: middleware.KindPublic},
 	// Capsule object storage (docs/OBJECT_STORAGE.md): same atoms as the existing storage rows.
 	"PATCH /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},
 	"POST /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/rotate": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},

@@ -1,0 +1,184 @@
+package fnagent
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/kynto/capsule/backend/internal/fn"
+	"github.com/kynto/capsule/backend/internal/vpn"
+)
+
+// Exec abstracts command execution so the namespace choreography is testable without root.
+type Exec interface {
+	Run(name string, args ...string) error
+	Start(dir string, name string, args ...string) (stop func(), err error)
+}
+
+type execRunner struct{}
+
+func (execRunner) Run(name string, args ...string) error {
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (execRunner) Start(dir, name string, args ...string) (func(), error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	return func() {
+		_ = cmd.Process.Kill()
+		<-done
+	}, nil
+}
+
+// KernelTunnel runs fortigate (openfortivpn), ipsec (strongSwan) or openvpn inside a private network namespace:
+// default-DROP firewall, only the declared CIDRs and the remote transport allowed, no host routes, no host DNS,
+// nothing listening. Dials happen on a thread that entered the namespace.
+type KernelTunnel struct {
+	ns    string
+	dir   string
+	x     Exec
+	stop  func()
+	start time.Time
+
+	mu     sync.Mutex
+	closed bool
+}
+
+// KernelDirRoot holds the private (0600) provider config files of each namespace.
+var KernelDirRoot = "/run/capsule/ns"
+
+// namespace name is derived from the tunnel id so a crash can be cleaned up on restart.
+func nsName(id string) string { return "capsule-" + strings.ReplaceAll(id, "-", "")[:12] }
+
+// OpenKernel builds the namespace, applies the firewall, writes the private config files (0600) and starts the provider.
+func OpenKernel(ta fn.TunnelAssignment, x Exec) (*KernelTunnel, error) {
+	t := vpn.Tunnel{Provider: ta.Provider, Host: ta.Host, CIDRs: ta.CIDRs, CertPin: ta.CertPin}
+	l, err := vpn.RenderLaunch(t, ta.Secret)
+	if err != nil {
+		return nil, err
+	}
+	k := &KernelTunnel{ns: nsName(ta.ID.String()), x: x, start: time.Now()}
+	k.dir = filepath.Join(KernelDirRoot, k.ns)
+	_ = x.Run("ip", "netns", "del", k.ns) // leftovers of a crash
+	if err := x.Run("ip", "netns", "add", k.ns); err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*KernelTunnel, error) { k.Close(); return nil, err }
+	if err := x.Run("ip", "netns", "exec", k.ns, "ip", "link", "set", "lo", "up"); err != nil {
+		return fail(err)
+	}
+	// Transport to the remote gateway needs a path out of the namespace: a veth pair with NAT is NOT created here;
+	// the provider's UDP/TCP socket is created inside the namespace and routed through a veth to the host only for
+	// the remote's address (single /32 route, no default route).
+	remoteIP := hostIP(ta.Host)
+	if err := k.transport(remoteIP); err != nil {
+		return fail(err)
+	}
+	if err := x.Run("ip", "netns", "exec", k.ns, "sh", "-c", vpn.NamespaceScript(l, remoteIP)); err != nil {
+		return fail(err)
+	}
+	if err := os.MkdirAll(k.dir, 0o700); err != nil {
+		return fail(err)
+	}
+	for name, content := range l.Files {
+		if err := os.WriteFile(filepath.Join(k.dir, name), []byte(content), 0o600); err != nil {
+			return fail(err)
+		}
+	}
+	argv := append([]string{"netns", "exec", k.ns}, l.Argv...)
+	stop, err := x.Start(k.dir, "ip", argv...)
+	if err != nil {
+		return fail(err)
+	}
+	k.stop = stop
+	return k, nil
+}
+
+func hostIP(hostport string) string {
+	h, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return ""
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.String()
+	}
+	ips, err := net.LookupIP(h)
+	if err != nil || len(ips) == 0 {
+		return ""
+	}
+	return ips[0].String()
+}
+
+func (k *KernelTunnel) transport(remoteIP string) error {
+	if remoteIP == "" {
+		return fmt.Errorf("cannot resolve the remote host")
+	}
+	host, peer := "cv"+k.ns[8:], "cp"+k.ns[8:]
+	for _, c := range [][]string{
+		{"ip", "link", "add", host, "type", "veth", "peer", "name", peer},
+		{"ip", "link", "set", peer, "netns", k.ns},
+		{"ip", "addr", "add", "169.254.77.1/30", "dev", host},
+		{"ip", "link", "set", host, "up"},
+		{"ip", "netns", "exec", k.ns, "ip", "addr", "add", "169.254.77.2/30", "dev", peer},
+		{"ip", "netns", "exec", k.ns, "ip", "link", "set", peer, "up"},
+		// one /32 route toward the remote gateway, and nothing else
+		{"ip", "netns", "exec", k.ns, "ip", "route", "add", remoteIP + "/32", "via", "169.254.77.1"},
+		{"sysctl", "-w", "net.ipv4.conf." + host + ".forwarding=1"},
+		{"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", "169.254.77.2/32", "-d", remoteIP + "/32", "-j", "MASQUERADE"},
+		{"iptables", "-A", "FORWARD", "-i", host, "-d", remoteIP + "/32", "-j", "ACCEPT"},
+		{"iptables", "-A", "FORWARD", "-i", host, "-j", "DROP"},
+	} {
+		if err := k.x.Run(c[0], c[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Health: up when a non-loopback tunnel interface other than the transport veth exists in the namespace.
+func (k *KernelTunnel) Health() (string, time.Time, string) {
+	out, err := exec.Command("ip", "-o", "netns", "exec", k.ns, "ip", "-o", "link", "show").Output()
+	if err != nil {
+		return vpn.StatusError, time.Time{}, "namespace not reachable"
+	}
+	for _, ln := range strings.Split(string(out), "\n") {
+		for _, p := range []string{"tun", "ppp", "xfrm", "ipsec"} {
+			if strings.Contains(ln, ": "+p) {
+				return vpn.StatusUp, time.Now(), ""
+			}
+		}
+	}
+	if time.Since(k.start) > 90*time.Second {
+		return vpn.StatusError, time.Time{}, "tunnel interface did not come up"
+	}
+	return vpn.StatusConnecting, time.Time{}, "negotiating"
+}
+
+// Close kills the provider and deletes the namespace, the veth and the NAT rules.
+func (k *KernelTunnel) Close() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.closed {
+		return
+	}
+	k.closed = true
+	if k.stop != nil {
+		k.stop()
+	}
+	_ = k.x.Run("ip", "netns", "del", k.ns)
+	_ = os.RemoveAll(k.dir)
+}

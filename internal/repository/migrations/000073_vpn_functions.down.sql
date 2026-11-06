@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS fn_run_tokens;
+DROP TABLE IF EXISTS fn_runs;
+DROP TABLE IF EXISTS fn_functions;
+DROP TABLE IF EXISTS fn_nodes;
+DROP TABLE IF EXISTS vpn_events;
+DROP TABLE IF EXISTS vpn_tunnels;

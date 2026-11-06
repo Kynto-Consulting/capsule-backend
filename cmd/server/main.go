@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +17,8 @@ import (
 	authzwire "github.com/kynto/capsule/backend/internal/authz/wire"
 	"github.com/kynto/capsule/backend/internal/config"
 	"github.com/kynto/capsule/backend/internal/domain"
+	"github.com/kynto/capsule/backend/internal/fn"
+	"github.com/kynto/capsule/backend/internal/vpn"
 	"github.com/kynto/capsule/backend/internal/gitcore"
 	"github.com/kynto/capsule/backend/internal/ciwake"
 	eventswire "github.com/kynto/capsule/backend/internal/gitevents/wire"
@@ -87,6 +90,17 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	// `server fn-node <name>`: registers a work node of functions and prints its capnode_ token once (docs/vpn-connector.md).
+	if len(os.Args) == 3 && os.Args[1] == "fn-node" {
+		tok, err := (&fn.PGStore{Pool: pool}).CreateNode(ctx, os.Args[2])
+		if err != nil {
+			logger.Error("could not register node", "error", err)
+			os.Exit(1)
+		}
+		fmt.Println(tok)
+		return
+	}
 
 	userRepo       := repository.NewUserRepository(pool)
 	orgRepo        := repository.NewOrgRepository(pool)
@@ -277,6 +291,31 @@ func main() {
 	objstoreDeps := wireObjstore(cfg, logger, pool, backupsSvc)
 
 	ingressCfg := wireIngress(cfg, logger)
+	// VPN Connector + functions in the tunnel (docs/vpn-connector.md): the backend only plans, claims and audits; the work node executes.
+	vpnSvc := &vpn.Service{Store: &vpn.PGStore{Pool: pool}, SecretKey: cfg.SecretKey}
+	fnApiBase := os.Getenv("CAPSULE_API_URL")
+	if fnApiBase == "" && cfg.PublicHost != "" {
+		fnApiBase = "https://" + cfg.PublicHost
+	}
+	fnSvc := &fn.Service{Store: &fn.PGStore{Pool: pool}, VPN: vpnSvc, APIBase: fnApiBase, DBs: fn.NewDBResolver(dbRepo, cfg.SecretKey)}
+	if objstoreDeps != nil {
+		fnSvc.Storage = fnStorageResolver(objstoreDeps, dbRepo) // ctx.storage on Capsule's own object store
+	}
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-t.C:
+				if err := fnSvc.Tick(workerCtx); err != nil {
+					logger.Error("fn scheduler tick failed", "error", err)
+				}
+			}
+		}
+	}()
+
 	srv := server.New(cfg, logger, version, server.Deps{
 		Authz:              authzSvc,
 		ProjectMembers:     projectMemberRepo,
@@ -316,6 +355,8 @@ func main() {
 		Objstore:           objstoreDeps,
 		GitCore:            gitCoreHandler,
 		OIDC:               oidcSvc,
+		VPN:                vpnSvc,
+		Fn:                 fnSvc,
 	})
 	if err := srv.Run(); err != nil {
 		logger.Error("server exited with error", "error", err)

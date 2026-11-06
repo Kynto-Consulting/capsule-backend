@@ -27,6 +27,8 @@ import (
 	"github.com/kynto/capsule/backend/internal/server/handlers"
 	"github.com/kynto/capsule/backend/internal/server/middleware"
 	"github.com/kynto/capsule/backend/internal/service"
+	"github.com/kynto/capsule/backend/internal/fn"
+	"github.com/kynto/capsule/backend/internal/vpn"
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
@@ -85,6 +87,10 @@ type Deps struct {
 
 	// Deploy connection audit (nil: connection_warnings omitted, policy routes answer 501)
 	ConnAudit connaudit.Store
+
+	// VPN Connector + functions inside the tunnel (nil: the routes answer 501). docs/vpn-connector.md
+	VPN *vpn.Service
+	Fn  *fn.Service
 }
 
 func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *chi.Mux {
@@ -164,6 +170,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	orgHandler.SetAccessModes(deps.ProjectMembers)
 	deploymentHandler.SetConnAudit(deps.ConnAudit)
 	deploymentHandler.SetECSUnavailable(deps.Ingress.Caddy() && !deps.FargateConfigured)
+	vpnFnHandler := handlers.NewVPNFnHandler(deps.OrgRepo, deps.ProjRepo, deps.VPN, deps.Fn)
+	vpnFnHandler.SetAuthz(az)
 	connAuditHandler := handlers.NewConnAuditHandler(deps.OrgRepo, deps.ProjRepo, deps.ConnAudit)
 	connAuditHandler.SetAuthz(az)
 	var backupsHandler *handlers.BackupHandler
@@ -294,6 +302,13 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		if oidcHandler != nil {
 			oidcHandler.MountAPIPublic(r)
 		}
+		// Run tokens of functions (customer apps introspect the capfn_ bearer) and the work node's outbound API (capnode_ token).
+		// The agent API is under /api/v1 and not /internal because the node is remote and InternalEdgeGuard refuses public addresses there.
+		r.Post("/fn/tokens/introspect", vpnFnHandler.Introspect)
+		r.Post("/fn/agent/claim", vpnFnHandler.AgentClaim)
+		r.Post("/fn/agent/sync", vpnFnHandler.AgentSync)
+		r.Post("/fn/agent/runs/{runID}/finish", vpnFnHandler.AgentFinish)
+		r.Post("/fn/agent/tunnels/{tunnelID}/status", vpnFnHandler.AgentTunnelStatus)
 		r.Get("/auth/onboarding/status", authHandler.GetOnboardingStatus)
 		r.Post("/auth/onboarding/verify", authHandler.VerifyOnboarding)
 
@@ -519,6 +534,23 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/crons/{cronID}", cronHandler.Get)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/crons/{cronID}", cronHandler.Delete)
 			r.Post("/orgs/{orgID}/projects/{projectID}/crons/{cronID}/trigger", cronHandler.Trigger)
+
+			// VPN Connector: one tunnel per project, functions that run inside it (docs/vpn-connector.md)
+			r.Post("/orgs/{orgID}/projects/{projectID}/vpn", vpnFnHandler.CreateVPN)
+			r.Get("/orgs/{orgID}/projects/{projectID}/vpn", vpnFnHandler.ListVPN)
+			r.Get("/orgs/{orgID}/projects/{projectID}/vpn/{name}", vpnFnHandler.GetVPN)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/vpn/{name}", vpnFnHandler.DeleteVPN)
+			r.Put("/orgs/{orgID}/projects/{projectID}/vpn/{name}/enabled", vpnFnHandler.SetVPNEnabled)
+			r.Get("/orgs/{orgID}/projects/{projectID}/vpn/{name}/events", vpnFnHandler.VPNEvents)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions", vpnFnHandler.DeployFn)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/functions", vpnFnHandler.ListFn)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}", vpnFnHandler.GetFn)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}", vpnFnHandler.DeleteFn)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/run", vpnFnHandler.RunFn)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/enqueue", vpnFnHandler.EnqueueFn)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/runs", vpnFnHandler.ListRuns)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}", vpnFnHandler.GetRun)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}/cancel", vpnFnHandler.CancelRun)
 
 			// Bedrock AI Utility Keys and Helpers
 			// (/ai/models is now registered publicly above)
