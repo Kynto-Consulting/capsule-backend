@@ -28,7 +28,9 @@ func RenderLaunch(t Tunnel, secret string) (Launch, error) {
 		}
 		host, port := splitHost(t.Host)
 		l.Argv = []string{"openfortivpn", host + ":" + port, "-u", u.Username, "-c", "openfortivpn.conf",
-			"--no-routes", "--no-dns", "--pppd-no-peerdns", "--set-routes=0", "--set-dns=0"}
+			"--no-routes", "--no-dns", "--pppd-no-peerdns", "--set-routes=0", "--set-dns=0",
+			// reconnect by itself when the gateway drops the session (idle timeout, network blip) instead of exiting
+			"--persistent=10"}
 		if t.CertPin != "" {
 			l.Argv = append(l.Argv, "--trusted-cert", t.CertPin)
 		}

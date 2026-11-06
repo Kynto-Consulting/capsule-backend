@@ -88,10 +88,15 @@ func (m *Manager) Ensure(ta fn.TunnelAssignment) (*gw, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if g, ok := m.gws[ta.ID]; ok {
-		if g.version == ta.Version {
+		st, _, _ := g.t.Health()
+		if g.version == ta.Version && st != vpn.StatusError {
 			return g, nil
 		}
-		g.t.Close() // credentials or networks changed
+		// credentials or networks changed, or the tunnel died: a FortiGate ends an SSL-VPN session after its idle timeout (5 min
+		// without traffic) and openfortivpn exits. Before, the dead gateway was handed out forever and no run could reach the
+		// remote network until the agent restarted (06-nov-2026). Health reports error only after its own grace (90 s for kernel
+		// tunnels), so a gateway that is still coming up is not restarted in a loop.
+		g.t.Close()
 		delete(m.gws, ta.ID)
 	}
 	red := vpn.NewRedactor()
