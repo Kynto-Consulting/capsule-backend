@@ -3,8 +3,11 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/ssh"
 	"io"
 	"log/slog"
 	"net/http"
@@ -81,6 +84,7 @@ func (e *objEnv) Delete(_ context.Context, _ uuid.UUID, k string) error {
 }
 
 type memObjRepo struct {
+	keys   []*objstore.SSHKeyRecord
 	mu     sync.Mutex
 	recs   map[uuid.UUID]*objstore.BucketRecord
 	quotas map[string]int64
@@ -227,6 +231,9 @@ func newStorageEnv(t *testing.T, role string) *storageEnv {
 	r.Delete(b+"/{dbID}", h.Delete)
 	r.Post(b+"/{dbID}/presign", h.Presign)
 	r.Post(b+"/{dbID}/rotate", h.Rotate)
+	r.Get(b+"/{dbID}/ssh-keys", h.ListSSHKeys)
+	r.Post(b+"/{dbID}/ssh-keys", h.AddSSHKey)
+	r.Delete(b+"/{dbID}/ssh-keys/{keyID}", h.DeleteSSHKey)
 	r.Get(b+"/{dbID}/objects", h.ListObjects)
 	r.Delete(b+"/{dbID}/objects", h.DeleteObject)
 	r.Post(b+"/{dbID}/uploads", h.StartUpload)
@@ -540,4 +547,89 @@ func TestProxyStorageRoute(t *testing.T) {
 		t.Fatalf("info: %s", w.Body)
 	}
 	_ = time.Now
+}
+
+// ── SSH keys (SFTP) ─────────────────────────────────────────────────────────
+
+func (m *memObjRepo) AddSSHKey(_ context.Context, bucket, name, fp, pub string, _ *uuid.UUID) (*objstore.SSHKeyRecord, error) {
+	for _, k := range m.keys {
+		if k.Bucket == bucket && (k.Name == name || k.Fingerprint == fp) {
+			return nil, objstore.ErrKeyExists
+		}
+	}
+	k := &objstore.SSHKeyRecord{ID: uuid.New(), Bucket: bucket, Name: name, Fingerprint: fp, PublicKey: pub}
+	m.keys = append(m.keys, k)
+	return k, nil
+}
+func (m *memObjRepo) ListSSHKeys(_ context.Context, bucket string) ([]*objstore.SSHKeyRecord, error) {
+	var out []*objstore.SSHKeyRecord
+	for _, k := range m.keys {
+		if k.Bucket == bucket {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+func (m *memObjRepo) DeleteSSHKey(_ context.Context, bucket, ref string) error {
+	for i, k := range m.keys {
+		if k.Bucket == bucket && (k.ID.String() == ref || k.Name == ref || k.Fingerprint == ref) {
+			m.keys = append(m.keys[:i], m.keys[i+1:]...)
+			return nil
+		}
+	}
+	return objstore.ErrNotFound
+}
+
+const testEd25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl laptop"
+
+func TestSSHKeysEndpoints(t *testing.T) {
+	e := newStorageEnv(t, "owner")
+	b := e.create(t, "files", nil)
+	id := b["id"].(string)
+	if b["sftp"] != nil {
+		t.Fatalf("sftp info without a configured SFTP: %v", b["sftp"])
+	}
+	rec := e.do(http.MethodPost, "/"+id+"/ssh-keys", map[string]any{"public_key": testEd25519})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	k := jsonBody(t, rec)
+	if k["name"] != "laptop" || !strings.HasPrefix(k["fingerprint"].(string), "SHA256:") {
+		t.Fatalf("key: %v", k)
+	}
+	if rec := e.do(http.MethodPost, "/"+id+"/ssh-keys", map[string]any{"public_key": testEd25519}); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate: %d", rec.Code)
+	}
+	for _, bad := range []string{"", "not a key", `command="x" ` + testEd25519, testEd25519 + "\nssh-ed25519 AAAA"} {
+		if rec := e.do(http.MethodPost, "/"+id+"/ssh-keys", map[string]any{"public_key": bad}); rec.Code != http.StatusBadRequest {
+			t.Errorf("accepted %q: %d", bad, rec.Code)
+		}
+	}
+	rec = e.do(http.MethodGet, "/"+id+"/ssh-keys", nil)
+	if rec.Code != 200 || len(jsonBody(t, rec)["data"].([]any)) != 1 {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do(http.MethodDelete, "/"+id+"/ssh-keys/laptop", nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	if rec := e.do(http.MethodDelete, "/"+id+"/ssh-keys/laptop", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("delete again: %d", rec.Code)
+	}
+}
+
+func TestParseSSHKeyRejectsWeakRSA(t *testing.T) {
+	if _, _, _, err := ParseSSHKey(testEd25519); err != nil {
+		t.Fatal(err)
+	}
+	for bits, wantOK := range map[int]bool{1024: false, 2048: true} {
+		k, err := rsa.GenerateKey(rand.Reader, bits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pk, _ := ssh.NewPublicKey(&k.PublicKey)
+		_, _, _, err = ParseSSHKey(string(ssh.MarshalAuthorizedKey(pk)))
+		if (err == nil) != wantOK {
+			t.Errorf("RSA %d: err=%v", bits, err)
+		}
+	}
 }

@@ -19,6 +19,7 @@ type Server struct {
 	version string
 	cancel  context.CancelFunc
 	s3      *http.Server // dedicated object-store listener (nil when disabled)
+	objDeps *ObjstoreDeps
 }
 
 func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Server {
@@ -49,6 +50,7 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 		version: version,
 		cancel:  cancel,
 		s3:      s3,
+		objDeps: deps.Objstore,
 	}
 }
 
@@ -64,6 +66,9 @@ func (s *Server) Run() error {
 	errCh := make(chan error, 1)
 	if s.s3 != nil {
 		go runS3(s.s3, s.logger, errCh)
+	}
+	if s.objDeps != nil && s.objDeps.SFTP != nil && s.objDeps.SFTPAddr != "" {
+		go runSFTP(s.objDeps, s.logger, errCh)
 	}
 	go func() {
 		s.logger.Info("server started", "addr", s.http.Addr, "version", s.version)
@@ -86,6 +91,9 @@ func (s *Server) Run() error {
 	defer cancel()
 
 	shutdownS3(s.s3, ctx)
+	if s.objDeps != nil && s.objDeps.SFTP != nil {
+		_ = s.objDeps.SFTP.Close()
+	}
 	if err := s.http.Shutdown(ctx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}

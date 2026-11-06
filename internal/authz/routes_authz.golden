@@ -300,6 +300,9 @@ DELETE	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects	handlers
 GET	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects	handlers.StorageHandler.ListObjects	session	action	project.read
 POST	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/presign	handlers.StorageHandler.Presign	session	action	project.ops
 POST	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/rotate	handlers.StorageHandler.Rotate	session	action	project.databases
+GET	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys	handlers.StorageHandler.ListSSHKeys	session	action	project.read
+POST	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys	handlers.StorageHandler.AddSSHKey	session	action	project.databases
+DELETE	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys/{keyID}	handlers.StorageHandler.DeleteSSHKey	session	action	project.databases
 POST	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads	handlers.StorageHandler.StartUpload	session	action	project.ops
 DELETE	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}	handlers.StorageHandler.AbortUpload	session	action	project.ops
 GET	/api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}	handlers.StorageHandler.GetUpload	session	action	project.ops

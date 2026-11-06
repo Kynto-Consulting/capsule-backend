@@ -474,3 +474,61 @@ func TestSweeperPurgesOrphansAndWakesLongPolls(t *testing.T) {
 		t.Fatalf("purge=%d woke=%d logs=%q", st.count("PurgeOrphans"), woke, logs.String())
 	}
 }
+
+func TestSyncPublishesSFTPServiceForObjectStorage(t *testing.T) {
+	e := newEnv(t, func(c *Config) { c.SFTPPort = 2222 })
+	ctx := context.Background()
+	bucket := &domain.Database{ID: uuid.New(), OrgID: e.org, Name: "files", Engine: "objstore", Status: "available"}
+	e.src.dbs = []*domain.Database{bucket}
+	list, err := e.svc.ListServices(ctx, e.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != "sftp" || list[0].Protocol != "ssh" || list[0].DefaultAccess != "gateway" {
+		t.Fatalf("services: %v", names(list))
+	}
+	var gw, direct *AccessView
+	for i := range list[0].Accesses {
+		switch list[0].Accesses[i].Kind {
+		case "gateway":
+			gw = &list[0].Accesses[i]
+		case "direct_port":
+			direct = &list[0].Accesses[i]
+		}
+	}
+	if gw == nil || !gw.Enabled {
+		t.Fatalf("the gateway access must be on: %+v", list[0].Accesses)
+	}
+	if direct != nil && direct.Enabled {
+		t.Fatalf("the SFTP port must not be offered as a direct port: %+v", direct)
+	}
+	// the data plane learns where to connect
+	rv, err := e.st.ResolveService(ctx, e.project.ID, "sftp", "tcp")
+	if err != nil || rv.DestPort != 2222 || !rv.Enabled {
+		t.Fatalf("route: %+v %v", rv, err)
+	}
+	// idempotent
+	if list, _ = e.svc.ListServices(ctx, e.project); len(list) != 1 {
+		t.Fatalf("second sync: %v", names(list))
+	}
+	// the last bucket takes the service with it
+	bucket.Status = "deleted"
+	if list, _ = e.svc.ListServices(ctx, e.project); len(list) != 0 {
+		t.Fatalf("after removing the bucket: %v", names(list))
+	}
+}
+
+func TestSyncDoesNotPublishSFTPWhenDisabledOrForeignName(t *testing.T) {
+	e := newEnv(t) // SFTPPort 0
+	e.src.dbs = []*domain.Database{{ID: uuid.New(), OrgID: e.org, Name: "files", Engine: "objstore", Status: "available"}}
+	if list, _ := e.svc.ListServices(context.Background(), e.project); len(list) != 0 {
+		t.Fatalf("SFTP disabled but published: %v", names(list))
+	}
+	e2 := newEnv(t, func(c *Config) { c.SFTPPort = 2222 })
+	e2.expose("sftp", "tcp", 22) // a user's own service with that name
+	e2.src.dbs = []*domain.Database{{ID: uuid.New(), OrgID: e2.org, Name: "files", Engine: "objstore", Status: "available"}}
+	list, _ := e2.svc.ListServices(context.Background(), e2.project)
+	if len(list) != 1 || list[0].Protocol != "tcp" || list[0].ContainerPort != 22 {
+		t.Fatalf("a foreign service named sftp must be left alone: %v", list)
+	}
+}

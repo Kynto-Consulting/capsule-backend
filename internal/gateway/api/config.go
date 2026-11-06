@@ -47,6 +47,8 @@ type Config struct {
 	PoolOff  bool
 	Zone     string
 	DestHost string
+	// SFTPPort is the port of the object store SFTP server on the docker host (0: no "sftp" service is published).
+	SFTPPort int
 	// TCPHost is the host of the direct (secondary) method, e.g. the one the ports API shows.
 	TCPHost string
 
@@ -150,6 +152,7 @@ func ConfigFromEnv() (Config, error) {
 		DestHost:        strings.TrimSpace(os.Getenv(EnvDestHost)),
 		SigningKey:      strings.TrimSpace(os.Getenv(EnvSigningKey)),
 		SigningPrevious: strings.TrimSpace(os.Getenv(EnvSigningPrev)),
+		SFTPPort:        objstoreSFTPPort(),
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvSweepInterval)); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -190,3 +193,21 @@ func ParsePool(s string) (lo, hi int, off bool, err error) {
 }
 
 func overlaps(a1, a2, b1, b2 int) bool { return a1 <= b2 && b1 <= a2 }
+
+// objstoreSFTPPort reads the SFTP port of Capsule's object store (CAPSULE_OBJSTORE_SFTP_ADDR, default 2222 while the
+// object store is enabled by CAPSULE_OBJSTORE_DIR; "off" or no object store gives 0).
+func objstoreSFTPPort() int {
+	if strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_DIR")) == "" {
+		return 0
+	}
+	addr := strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_SFTP_ADDR"))
+	if strings.EqualFold(addr, "off") {
+		return 0
+	}
+	if i := strings.LastIndexByte(addr, ':'); i >= 0 {
+		if n, err := strconv.Atoi(addr[i+1:]); err == nil && n > 0 && n < 65536 {
+			return n
+		}
+	}
+	return 2222
+}

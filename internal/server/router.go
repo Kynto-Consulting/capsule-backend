@@ -127,7 +127,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		deps.AWSClients, deps.SecretKey, logger,
 	)
 	if o := deps.Objstore; o != nil {
-		storageHandler.SetObjstore(handlers.ObjstoreConfig{Store: o.Store, Repo: o.Repo, EnvVars: deps.EnvVarRepo, PublicEndpoint: o.PublicEndpoint, InternalEndpoint: o.InternalEndpoint, Region: o.Region})
+		storageHandler.SetObjstore(handlers.ObjstoreConfig{Store: o.Store, Repo: o.Repo, EnvVars: deps.EnvVarRepo, PublicEndpoint: o.PublicEndpoint, InternalEndpoint: o.InternalEndpoint, Region: o.Region, SFTP: o.SFTPInfo})
 		purgePorts := portsHandler.Cleanup
 		projectHandler.SetOnDelete(func(id uuid.UUID) { purgePorts(id); storageHandler.CleanupProject(id) })
 	}
@@ -486,6 +486,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Get("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}", storageHandler.GetUpload)
 			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}/complete", storageHandler.CompleteUpload)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}", storageHandler.AbortUpload)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys", storageHandler.ListSSHKeys)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys", storageHandler.AddSSHKey)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/ssh-keys/{keyID}", storageHandler.DeleteSSHKey)
 			r.Get("/orgs/{orgID}/projects/{projectID}/storage/quota", storageHandler.GetProjectQuota)
 			r.Put("/orgs/{orgID}/projects/{projectID}/storage/quota", storageHandler.PutProjectQuota)
 			r.Get("/orgs/{orgID}/storage/quota", storageHandler.GetOrgQuota)
