@@ -1,6 +1,6 @@
 -- SSH public keys that may open a bucket over SFTP (internal/objstore/sftpd). The password of an SFTP login is
 -- the bucket's own secret key; these keys are the alternative. Removing a bucket removes its keys.
--- NOTE: numbered after 000075 (functions runtime, branch feat/vpn-functions-lambda): apply that branch first.
+-- NOTE: branch feat/vpn-functions-lambda also adds a 000075 (functions runtime): whichever branch merges second renumbers its pair to 000076.
 CREATE TABLE IF NOT EXISTS objstore_ssh_keys (
     id           uuid         PRIMARY KEY,
     bucket       varchar(63)  NOT NULL REFERENCES objstore_buckets(bucket) ON DELETE CASCADE,
