@@ -1429,6 +1429,7 @@ loop:
 	for { // browser -> model
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
+			h.logger.Info("live voice input ended", "reason", err.Error())
 			break
 		}
 		if typ == websocket.MessageText {
@@ -1440,6 +1441,7 @@ loop:
 		inBytes += len(data)
 		lastIn.Store(time.Now().UnixNano())
 		if err := s.Audio(data); err != nil {
+			h.logger.Info("live voice: sending audio failed", "err", err.Error())
 			break
 		}
 	}
