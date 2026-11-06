@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -1132,7 +1133,19 @@ func (h *AIMMHandler) Images(w http.ResponseWriter, r *http.Request) {
 	}
 	modelID := f.str("model")
 	if modelID == "" && f.str("operation") != "" {
-		modelID = "stability-" + f.str("operation")
+		var ops []string
+		for _, m := range h.cat.ByCapability(ctx, aimm.CapImageEdit, false) {
+			if m.Family == aimm.FamStability {
+				ops = append(ops, aimm.StabilityKind(m))
+				if aimm.StabilityKind(m) == f.str("operation") {
+					modelID = m.ID
+				}
+			}
+		}
+		if modelID == "" {
+			h.fail(w, aimm.BadInput("unknown operation %q; one of: %s", f.str("operation"), strings.Join(ops, ", ")))
+			return
+		}
 	}
 	cap := aimm.CapImageGenerate
 	if img != nil {
@@ -1372,6 +1385,25 @@ func (h *AIMMHandler) TalkWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.Close()
 	var inBytes, outBytes int
+	var lastIn atomic.Int64
+	lastIn.Store(time.Now().UnixNano())
+	go func() { // keep the model's stream alive and let it detect the end of a turn: silence whenever the client sends no audio
+		quiet := make([]byte, aimm.SonicInRate/10*2) // 100 ms
+		tk := time.NewTicker(100 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tk.C:
+				if time.Since(time.Unix(0, lastIn.Load())) > 250*time.Millisecond {
+					if s.Audio(quiet) != nil {
+						return
+					}
+				}
+			}
+		}
+	}()
 	go func() { // model -> browser
 		for ev := range s.Events {
 			switch ev.Kind {
@@ -1406,6 +1438,7 @@ loop:
 			continue
 		}
 		inBytes += len(data)
+		lastIn.Store(time.Now().UnixNano())
 		if err := s.Audio(data); err != nil {
 			break
 		}

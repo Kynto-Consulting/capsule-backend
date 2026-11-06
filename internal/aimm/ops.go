@@ -383,6 +383,9 @@ var stabilitySpec = map[string]struct {
 	"control-sketch":       {false, false, true, nil, "image"}, // no image: blank canvas, i.e. text to image
 }
 
+// StabilityKind is the service name of a Stability model ("inpaint", "remove-background", "fast-upscale"...), the value of operation=.
+func StabilityKind(m Model) string { return stabilityKind(m) }
+
 func stabilityKind(m Model) string {
 	k := strings.TrimPrefix(m.BedrockID, "stability.")
 	k = strings.TrimSuffix(k, "-v1:0")

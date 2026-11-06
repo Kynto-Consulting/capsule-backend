@@ -344,6 +344,14 @@ func TestAIMMImagesGenerateEditAndSave(t *testing.T) {
 	if last["image"] != base64.StdEncoding.EncodeToString([]byte("SRC")) || last["mask"] != base64.StdEncoding.EncodeToString([]byte("MASK")) {
 		t.Fatalf("edit body: %v", last)
 	}
+	// operation= names the service by its short name
+	rec = e.do("POST", "/images", map[string]any{"image_source": "media/in.png", "operation": "remove-background"})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"model":"stability-image-remove-background"`) {
+		t.Fatalf("operation: %d %s", rec.Code, rec.Body)
+	}
+	if rec = e.do("POST", "/images", map[string]any{"image_source": "media/in.png", "operation": "teleport"}); rec.Code != 422 || !strings.Contains(rec.Body.String(), "remove-background") {
+		t.Errorf("unknown operation must list the valid ones: %d %s", rec.Code, rec.Body)
+	}
 	if rec = e.do("POST", "/images", map[string]any{"prompt": "x", "image_source": "media/missing.png"}); rec.Code != 404 {
 		t.Errorf("missing source object: %d %s", rec.Code, rec.Body)
 	}
