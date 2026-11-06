@@ -143,7 +143,6 @@ type bucketView struct {
 	ProjectMaxBytes  int64   `json:"project_max_bytes"`
 	OrgUsedBytes     int64   `json:"org_used_bytes"`
 	OrgMaxBytes      int64   `json:"org_max_bytes"`
-	GatewayURL       string  `json:"gateway_url,omitempty"`
 	RotatedAt        *string `json:"rotated_at,omitempty"`
 }
 
@@ -158,7 +157,7 @@ func (h *StorageHandler) usage(ctx context.Context, names []string) int64 {
 func (h *StorageHandler) view(ctx context.Context, db *domain.Database, rec *objstore.BucketRecord, slug string, reveal bool) *bucketView {
 	v := &bucketView{Database: db, Bucket: rec.Bucket, Public: rec.Public, Endpoint: h.obj.PublicEndpoint(slug),
 		InternalEndpoint: h.obj.InternalEndpoint, Region: h.obj.Region, AccessKey: rec.AccessKey, MaxBytes: rec.MaxBytes,
-		UsedBytes: h.obj.Store.Usage(rec.Bucket), Objects: h.obj.Store.Count(rec.Bucket), GatewayURL: "capsule://" + slug + "/" + db.Name}
+		UsedBytes: h.obj.Store.Usage(rec.Bucket), Objects: h.obj.Store.Count(rec.Bucket)}
 	if rec.RotatedAt != nil {
 		s := rec.RotatedAt.UTC().Format(time.RFC3339)
 		v.RotatedAt = &s
