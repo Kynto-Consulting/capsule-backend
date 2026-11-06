@@ -39,6 +39,9 @@ type ObjstoreRepo interface {
 	OrgBucketNames(ctx context.Context, orgID uuid.UUID) ([]string, error)
 	Secret(b *objstore.BucketRecord) (string, error)
 	Encrypt(secret string) ([]byte, error)
+	AddSSHKey(ctx context.Context, bucket, name, fingerprint, publicKey string, createdBy *uuid.UUID) (*objstore.SSHKeyRecord, error)
+	ListSSHKeys(ctx context.Context, bucket string) ([]*objstore.SSHKeyRecord, error)
+	DeleteSSHKey(ctx context.Context, bucket, ref string) error
 }
 
 // ObjstoreConfig wires Capsule's own object store into the storage handler.
@@ -49,6 +52,7 @@ type ObjstoreConfig struct {
 	PublicEndpoint   func(projectSlug string) string // https://<slug>-storage.apps.<zone>
 	InternalEndpoint string                          // http://host.docker.internal:9000
 	Region           string
+	SFTP             *SFTPInfo // nil: SFTP is not enabled
 }
 
 // SetObjstore enables Capsule's own object store; without it `storage create` keeps provisioning AWS buckets.
@@ -129,21 +133,22 @@ func (h *StorageHandler) clearEnv(ctx context.Context, projectID uuid.UUID, name
 
 type bucketView struct {
 	*domain.Database
-	Bucket           string  `json:"bucket"`
-	Public           bool    `json:"public"`
-	Endpoint         string  `json:"endpoint"`
-	InternalEndpoint string  `json:"internal_endpoint"`
-	Region           string  `json:"region"`
-	AccessKey        string  `json:"access_key"`
-	SecretKey        string  `json:"secret_key,omitempty"`
-	UsedBytes        int64   `json:"used_bytes"`
-	Objects          int     `json:"objects"`
-	MaxBytes         *int64  `json:"max_bytes,omitempty"`
-	ProjectUsedBytes int64   `json:"project_used_bytes"`
-	ProjectMaxBytes  int64   `json:"project_max_bytes"`
-	OrgUsedBytes     int64   `json:"org_used_bytes"`
-	OrgMaxBytes      int64   `json:"org_max_bytes"`
-	RotatedAt        *string `json:"rotated_at,omitempty"`
+	Bucket           string    `json:"bucket"`
+	Public           bool      `json:"public"`
+	Endpoint         string    `json:"endpoint"`
+	InternalEndpoint string    `json:"internal_endpoint"`
+	Region           string    `json:"region"`
+	AccessKey        string    `json:"access_key"`
+	SecretKey        string    `json:"secret_key,omitempty"`
+	UsedBytes        int64     `json:"used_bytes"`
+	Objects          int       `json:"objects"`
+	MaxBytes         *int64    `json:"max_bytes,omitempty"`
+	ProjectUsedBytes int64     `json:"project_used_bytes"`
+	ProjectMaxBytes  int64     `json:"project_max_bytes"`
+	OrgUsedBytes     int64     `json:"org_used_bytes"`
+	OrgMaxBytes      int64     `json:"org_max_bytes"`
+	RotatedAt        *string   `json:"rotated_at,omitempty"`
+	SFTP             *sftpView `json:"sftp,omitempty"`
 }
 
 func (h *StorageHandler) usage(ctx context.Context, names []string) int64 {
@@ -173,6 +178,7 @@ func (h *StorageHandler) view(ctx context.Context, db *domain.Database, rec *obj
 	}
 	v.ProjectMaxBytes, _ = h.obj.Repo.EffectiveQuota(ctx, "project", rec.ProjectID)
 	v.OrgMaxBytes, _ = h.obj.Repo.EffectiveQuota(ctx, "org", rec.OrgID)
+	v.SFTP = h.sftpView(rec, slug)
 	return v
 }
 

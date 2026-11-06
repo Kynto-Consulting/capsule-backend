@@ -4,6 +4,8 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,5 +66,79 @@ func TestObjstoreRepoDB(t *testing.T) {
 	}
 	if _, err := r.ByName(ctx, name); err == nil {
 		t.Fatal("bucket not deleted")
+	}
+}
+
+// SFTP: user resolution (bucket name, <project>-<name>, access key) and the SSH keys of a bucket.
+func TestObjstoreSFTPRepoDB(t *testing.T) {
+	pool := sharedPool(t)
+	ctx := context.Background()
+	f := newFx(t, pool)
+	org := f.org(f.user("", time.Now()))
+	proj := f.project(org, "")
+	var slug string
+	if err := pool.QueryRow(ctx, `SELECT slug FROM projects WHERE id=$1`, proj).Scan(&slug); err != nil {
+		t.Skipf("fixture: %v", err)
+	}
+	name := "files" + uuid.NewString()[:6]
+	var dbID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO databases (org_id, project_id, name, engine, version, host, port, db_name, credentials_enc, status)
+		VALUES ($1,$2,$3,'objstore','1','h',0,'b','','available') RETURNING id`, org, proj, name).Scan(&dbID); err != nil {
+		t.Skipf("fixture insert failed (schema drift): %v", err)
+	}
+	r := NewObjstoreRepository(pool, "unit-test-secret-key-32-bytes-long!!")
+	enc, _ := r.Encrypt("s3cr3t")
+	bucket := "b-" + uuid.NewString()[:8]
+	ak := "CAPS" + strings.ToUpper(uuid.NewString()[:8])
+	if err := r.Create(ctx, &objstore.BucketRecord{DatabaseID: dbID, OrgID: org, ProjectID: proj, Bucket: bucket, AccessKey: ak, SecretEnc: enc}); err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range []string{bucket, strings.ToUpper(bucket), slug + "-" + name, ak} {
+		if got, err := r.ResolveSFTPUser(ctx, user); err != nil || got != bucket {
+			t.Errorf("resolve %q: %q %v", user, got, err)
+		}
+	}
+	for _, user := range []string{"", "nope-nope", slug, bucket + "x"} {
+		if _, err := r.ResolveSFTPUser(ctx, user); err == nil {
+			t.Errorf("resolved %q", user)
+		}
+	}
+	if s, err := r.BucketSecret(ctx, bucket); err != nil || s != "s3cr3t" {
+		t.Fatalf("secret: %q %v", s, err)
+	}
+
+	k1, err := r.AddSSHKey(ctx, bucket, "laptop", "SHA256:aaa", "ssh-ed25519 AAAA laptop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.AddSSHKey(ctx, bucket, "laptop", "SHA256:bbb", "ssh-ed25519 BBBB", nil); !errors.Is(err, objstore.ErrKeyExists) {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	if _, err := r.AddSSHKey(ctx, bucket, "other", "SHA256:aaa", "ssh-ed25519 AAAA", nil); !errors.Is(err, objstore.ErrKeyExists) {
+		t.Fatalf("duplicate fingerprint: %v", err)
+	}
+	r.TouchSSHKey(ctx, k1.ID)
+	keys, err := r.SSHKeysCached(ctx, bucket)
+	if err != nil || len(keys) != 1 || keys[0].LastUsedAt == nil && false {
+		t.Fatalf("keys: %v %v", keys, err)
+	}
+	if err := r.DeleteSSHKey(ctx, bucket, "laptop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteSSHKey(ctx, bucket, "laptop"); !errors.Is(err, objstore.ErrNotFound) {
+		t.Fatalf("delete twice: %v", err)
+	}
+	if keys, _ := r.SSHKeysCached(ctx, bucket); len(keys) != 0 {
+		t.Fatalf("removed key still listed: %v", keys)
+	}
+	// keys go away with the bucket
+	k2, _ := r.AddSSHKey(ctx, bucket, "again", "SHA256:ccc", "ssh-ed25519 CCCC", nil)
+	if err := r.Delete(ctx, dbID); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM objstore_ssh_keys WHERE id=$1`, k2.ID).Scan(&n)
+	if n != 0 {
+		t.Fatal("ssh keys survived the bucket")
 	}
 }

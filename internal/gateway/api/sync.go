@@ -118,6 +118,9 @@ func (s *Service) syncProject(ctx context.Context, p *domain.Project, force bool
 		}
 		changed = true
 	}
+	if s.syncSFTP(ctx, p, dbs, svcs) {
+		changed = true
+	}
 	// Sources that no longer exist (soft-deleted databases keep their row, so the cascade does not fire).
 	for _, sv := range svcs {
 		orphan := (sv.ProjectPortID != nil && !livePort[*sv.ProjectPortID]) || (sv.DatabaseID != nil && !liveDB[*sv.DatabaseID])
@@ -184,3 +187,68 @@ func gatewayEnabled(sv *store.Service) bool {
 }
 
 func lowerTrim(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// sftpServiceName is the gateway service that reaches the SFTP server of the object store (capsule://<project>/sftp).
+const sftpServiceName = "sftp"
+
+// syncSFTP keeps the project's "sftp" service in step with its object storage: it exists, with its gateway access on
+// and no direct port opened, while the project has at least one own-store bucket and SFTP is enabled; it goes away
+// with the last bucket. A service of that name that is not ours (another origin or protocol) is left alone.
+func (s *Service) syncSFTP(ctx context.Context, p *domain.Project, dbs []*domain.Database, svcs []*store.Service) bool {
+	if s.cfg.SFTPPort <= 0 {
+		return false
+	}
+	want := false
+	for _, db := range dbs {
+		if db.Engine == "objstore" && db.Status != "deleted" {
+			want = true
+			break
+		}
+	}
+	var cur *store.Service
+	for _, sv := range svcs {
+		if sv.Name == sftpServiceName {
+			cur = sv
+		}
+	}
+	ours := cur != nil && cur.Protocol == "ssh" && cur.ProjectPortID == nil && cur.DatabaseID == nil
+	port := s.cfg.SFTPPort
+	switch {
+	case want && cur == nil:
+		sv, err := s.d.Store.CreateService(ctx, store.NewService{OrgID: p.OrgID, ProjectID: p.ID, Name: sftpServiceName, Protocol: "ssh",
+			ContainerPort: port, DefaultAccess: store.AccessGateway, DirectPort: &port})
+		if err != nil {
+			if !errors.Is(err, store.ErrConflict) {
+				s.log.Warn("gateway: creating the sftp service failed", "project_id", p.ID.String(), "error", err.Error())
+			}
+			return false
+		}
+		// the port is recorded only so the data plane knows where to connect; it is not opened to the internet
+		if _, err := s.d.Store.SetAccess(ctx, sv.ID, store.AccessDirectPort, false, &port); err != nil {
+			s.log.Warn("gateway: closing the direct access of the sftp service failed", "error", err.Error())
+		}
+		fresh, err := s.d.Store.GetService(ctx, sv.ID)
+		if err == nil {
+			err = s.applyRoute(ctx, fresh, p, true, "")
+		}
+		if err != nil {
+			s.log.Warn("gateway: publishing the sftp service failed", "project_id", p.ID.String(), "error", err.Error())
+		}
+		return true
+	case want && ours:
+		da := accessOf(cur, store.AccessDirectPort)
+		if da == nil || da.Port == nil || *da.Port != port {
+			if _, err := s.d.Store.SetAccess(ctx, cur.ID, store.AccessDirectPort, false, &port); err == nil {
+				s.reapplyRoute(ctx, cur.ID, p)
+				return true
+			}
+		}
+	case !want && ours:
+		if err := s.d.Store.DeleteService(ctx, cur.ID, s.cfg.Quarantine); err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.log.Warn("gateway: removing the sftp service failed", "service_id", cur.ID.String(), "error", err.Error())
+			return false
+		}
+		return true
+	}
+	return false
+}

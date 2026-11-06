@@ -53,7 +53,7 @@ func wireObjstore(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, b
 	}
 	publicFmt := strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_PUBLIC_ENDPOINT")) // e.g. http://localhost:9000 or https://{slug}-storage.example.com
 	logger.Info("object storage enabled", "dir", dir, "addr", addr)
-	return &server.ObjstoreDeps{
+	deps := &server.ObjstoreDeps{
 		Store: store, Repo: repo, Addr: addr, InternalEndpoint: internal, Region: "us-east-1",
 		PublicEndpoint: func(slug string) string {
 			if publicFmt != "" {
@@ -63,6 +63,8 @@ func wireObjstore(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, b
 		},
 		S3: &objstore.Server{Store: store, Meta: repo, Region: "us-east-1", Log: logger},
 	}
+	wireSFTP(deps, dir, logger)
+	return deps
 }
 
 func envBytes(k string) int64 {

@@ -242,7 +242,10 @@ func (c *Classifier) isObjstore(port int) bool {
 	if p == 0 {
 		p = 9000
 	}
-	return port == p
+	if port == p {
+		return true
+	}
+	return port == objstoreSFTPPortFromEnv()
 }
 
 func objstorePortFromEnv() int {
@@ -253,4 +256,16 @@ func objstorePortFromEnv() int {
 		}
 	}
 	return 9000
+}
+
+// objstoreSFTPPortFromEnv is the SFTP port of the object store (CAPSULE_OBJSTORE_SFTP_ADDR, default 2222), reached by
+// apps of the same server through host.docker.internal like the S3 port.
+func objstoreSFTPPortFromEnv() int {
+	addr := strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_SFTP_ADDR"))
+	if i := strings.LastIndexByte(addr, ':'); i >= 0 {
+		if n, err := strconv.Atoi(addr[i+1:]); err == nil && n > 0 && n < 65536 {
+			return n
+		}
+	}
+	return 2222
 }
