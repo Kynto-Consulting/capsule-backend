@@ -34,6 +34,10 @@ var routePermissions = map[string]routePerm{
 	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}":          {Kind: middleware.KindPerm, Perms: []string{"worker:read"}},
 	"DELETE /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}":       {Kind: middleware.KindPerm, Perms: []string{"worker:manage"}},
 	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/run":     {Kind: middleware.KindPerm, Perms: []string{"cron:trigger"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/uploads":                  {Kind: middleware.KindPerm, Perms: []string{"worker:manage"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/builds":  {Kind: middleware.KindPerm, Perms: []string{"worker:manage"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/builds":   {Kind: middleware.KindPerm, Perms: []string{"worker:read"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/fn/builds/{buildID}":          {Kind: middleware.KindPerm, Perms: []string{"log:read"}},
 	// Multimodal AI (docs/AI_MULTIMODAL.md): reading-type uses need project:read, uses that produce files need storage:presign (handlers.capabilityAtom).
 	"POST /api/v1/orgs/{orgID}/projects/{projectID}/ai/chat": {Kind: middleware.KindPerm, Perms: []string{"project:read"}},
 	"POST /api/v1/orgs/{orgID}/projects/{projectID}/ai/embeddings": {Kind: middleware.KindPerm, Perms: []string{"project:read"}},

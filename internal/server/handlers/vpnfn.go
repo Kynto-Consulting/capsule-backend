@@ -30,6 +30,7 @@ type VPNFnHandler struct {
 	vpn      *vpn.Service
 	fn       *fn.Service
 	relay    *gateway.Relay
+	presign  UploadPresigner // POST /fn/uploads (builds from source); nil = unavailable
 }
 
 // NewVPNFnHandler builds the handler.
@@ -86,6 +87,8 @@ func (h *VPNFnHandler) fail(w http.ResponseWriter, err error) {
 		respondError(w, http.StatusNotFound, "NOT_FOUND", "not found")
 	case errors.Is(err, fn.ErrDisabled), errors.Is(err, vpn.ErrDisabled):
 		respondError(w, http.StatusConflict, "DISABLED", err.Error())
+	case errors.Is(err, fn.ErrNoImage):
+		respondError(w, http.StatusConflict, "NO_IMAGE", err.Error())
 	default:
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 	}
@@ -247,12 +250,23 @@ func (h *VPNFnHandler) DeployFn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, uid := actorOf(r)
+	if spec.SourceKey != "" { // --source: Capsule builds the image (the function cannot run until the build succeeds)
+		f, b, err := h.fn.DeployFromSource(r.Context(), orgID, projectID, uid, spec)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		h.audit(r, orgID, projectID, "fn.deploy", f.ID, map[string]any{"function": f.Name, "runtime": f.Runtime, "source": "build", "build_id": b.ID.String(), "scopes": f.Scopes})
+		respondJSON(w, http.StatusCreated, fnDeployed{Function: f, Build: b})
+		return
+	}
 	f, err := h.fn.Deploy(r.Context(), orgID, projectID, uid, spec)
 	if err != nil {
 		h.fail(w, err)
 		return
 	}
-	respondJSON(w, http.StatusCreated, f)
+	h.audit(r, orgID, projectID, "fn.deploy", f.ID, map[string]any{"function": f.Name, "runtime": f.Runtime, "image": f.Image, "scopes": f.Scopes})
+	respondJSON(w, http.StatusCreated, fnDeployed{Function: f})
 }
 
 // ListFn GET /fn/functions
@@ -294,7 +308,7 @@ func (h *VPNFnHandler) GetFn(w http.ResponseWriter, r *http.Request) {
 
 // DeleteFn DELETE /fn/functions/{name}
 func (h *VPNFnHandler) DeleteFn(w http.ResponseWriter, r *http.Request) {
-	_, projectID, ok := h.ids(w, r, "worker:manage")
+	orgID, projectID, ok := h.ids(w, r, "worker:manage")
 	if !ok {
 		return
 	}
@@ -306,6 +320,7 @@ func (h *VPNFnHandler) DeleteFn(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
+	h.audit(r, orgID, projectID, "fn.delete", f.ID, map[string]any{"function": f.Name, "runtime": f.Runtime})
 	respondNoContent(w)
 }
 

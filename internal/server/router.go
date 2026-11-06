@@ -178,6 +178,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	vpnFnHandler := handlers.NewVPNFnHandler(deps.OrgRepo, deps.ProjRepo, deps.VPN, deps.Fn)
 	vpnFnHandler.SetAuthz(az)
 	vpnFnHandler.SetRelay(deps.FnRelay)
+	if deps.AWSClients != nil && deps.AWSClients.S3 != nil && deps.ArtifactsBucket != "" {
+		vpnFnHandler.SetUploads(artifactsPresigner(deps.AWSClients.S3, deps.ArtifactsBucket)) // fn sources: same bucket as capsule deploy
+	}
 	connAuditHandler := handlers.NewConnAuditHandler(deps.OrgRepo, deps.ProjRepo, deps.ConnAudit)
 	connAuditHandler.SetAuthz(az)
 	var backupsHandler *handlers.BackupHandler
@@ -564,6 +567,10 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/run", vpnFnHandler.RunFn)
 			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/enqueue", vpnFnHandler.EnqueueFn)
 			r.Get("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/runs", vpnFnHandler.ListRuns)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/uploads", vpnFnHandler.UploadFnSource)
+			r.Post("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/builds", vpnFnHandler.BuildFn)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/functions/{name}/builds", vpnFnHandler.ListFnBuilds)
+			r.Get("/orgs/{orgID}/projects/{projectID}/fn/builds/{buildID}", vpnFnHandler.GetFnBuild)
 			r.Get("/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}", vpnFnHandler.GetRun)
 			r.Post("/orgs/{orgID}/projects/{projectID}/fn/runs/{runID}/cancel", vpnFnHandler.CancelRun)
 

@@ -298,7 +298,14 @@ func main() {
 	if fnApiBase == "" && cfg.PublicHost != "" {
 		fnApiBase = "https://" + cfg.PublicHost
 	}
-	fnSvc := &fn.Service{Store: &fn.PGStore{Pool: pool}, VPN: vpnSvc, APIBase: fnApiBase, DBs: fn.NewDBResolver(dbRepo, cfg.SecretKey)}
+	fnStore := &fn.PGStore{Pool: pool}
+	fnSvc := &fn.Service{Store: fnStore, VPN: vpnSvc, APIBase: fnApiBase, DBs: fn.NewDBResolver(dbRepo, cfg.SecretKey), Audit: fnStore.Audit}
+	// Images from source (capsule fn deploy --source): built by the deploy worker in its own queue loop (one build at a time on
+	// the host) and pushed to the ECR repository capsule/fn-<id>; deleting the function deletes that repository.
+	if awsClients != nil && awsClients.ECR != nil {
+		fnSvc.Builds = fnStore
+		fnSvc.Registry = service.NewFnImageRegistry(awsClients.ECR)
+	}
 	if objstoreDeps != nil {
 		fnSvc.Storage = fnStorageResolver(objstoreDeps, dbRepo, projRepo) // ctx.storage on Capsule's own object store
 	}
@@ -309,6 +316,9 @@ func main() {
 	if os.Getenv("CAPSULE_FN_LAMBDA") == "true" && awsClients != nil && awsClients.Lambda != nil {
 		fnSvc.Lambda = &fn.LambdaExecutor{API: awsClients.Lambda, Account: cfg.AWSAccountID}
 		logger.Info("functions: lambda runtime enabled")
+	}
+	if fnSvc.Builds != nil {
+		deployWorker.SetFnBuilder(fnSvc) // last: the worker loop is already running and reads fnSvc from now on
 	}
 	go func() {
 		t := time.NewTicker(5 * time.Second)
