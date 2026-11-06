@@ -274,6 +274,7 @@ func main() {
 	// gateway:wiring end
 
 	backupsSvc := wireBackups(workerCtx, cfg, logger, pool, awsClients, projRepo, dbRepo)
+	objstoreDeps := wireObjstore(cfg, logger, pool, backupsSvc)
 
 	ingressCfg := wireIngress(cfg, logger)
 	srv := server.New(cfg, logger, version, server.Deps{
@@ -312,6 +313,7 @@ func main() {
 		FargateConfigured:  awsClients != nil && fargateConfig.IsConfigured(),
 		Git:                gitHandler,
 		Backups:            backupsSvc,
+		Objstore:           objstoreDeps,
 		GitCore:            gitCoreHandler,
 		OIDC:               oidcSvc,
 	})

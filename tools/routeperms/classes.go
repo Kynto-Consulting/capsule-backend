@@ -124,6 +124,8 @@ var rules = []rule{
 	{handler: "handlers.gitImportAPI.importCreate", class: "org-admin"},
 	{handler: "handlers.gitImportAPI.importGet", class: "org-admin"},
 	{handler: "api.Service.handlePolicyGet", class: "org-member"},
+	{handler: "handlers.StorageHandler.GetOrgQuota", class: "org-member"},
+	{handler: "handlers.StorageHandler.PutOrgQuota", class: "org-admin"},
 	{handler: "api.Service.handlePolicySet", class: "org-admin"},
 	{handler: "handlers.DatabaseHandler.ListByOrg", class: "org-member", note: "G7; result filtered by Visibility"},
 	{handler: "handlers.DatabaseHandler.CreateOrgLevel", class: "org-member", note: "G7: readonly may create"},

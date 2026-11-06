@@ -29,6 +29,7 @@ type StorageHandler struct {
 	aws       *awsclient.Clients
 	secretKey string
 	logger    *slog.Logger
+	obj       *ObjstoreConfig // Capsule's own object store; nil = legacy AWS buckets
 }
 
 func NewStorageHandler(
@@ -76,8 +77,9 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name   string `json:"name"`
-		Public bool   `json:"public"`
+		Name     string `json:"name"`
+		Public   bool   `json:"public"`
+		MaxBytes *int64 `json:"max_bytes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body")
@@ -85,6 +87,10 @@ func (h *StorageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "name is required")
+		return
+	}
+	if h.obj != nil {
+		h.createObjstore(w, r, orgID, project, req.Name, req.Public, req.MaxBytes)
 		return
 	}
 
@@ -151,10 +157,15 @@ func (h *StorageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var results []*domain.Database
+	results := []any{}
 	for _, db := range allDBs {
-		if db.Engine == "s3" {
+		switch {
+		case db.Engine == "s3":
 			results = append(results, db)
+		case db.Engine == EngineObjstore && h.obj != nil:
+			if rec, err := h.obj.Repo.ByDatabase(r.Context(), db.ID); err == nil {
+				results = append(results, h.view(r.Context(), db, rec, project.Slug, false))
+			}
 		}
 	}
 
@@ -185,6 +196,17 @@ func (h *StorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if db.Engine == EngineObjstore && h.obj != nil {
+		rec, rerr := h.obj.Repo.ByDatabase(r.Context(), dbID)
+		project, perr := h.projects.GetByID(r.Context(), projectID)
+		if rerr != nil || perr != nil {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
+			return
+		}
+		h.getObjstore(w, r, db, rec, project)
 		return
 	}
 
@@ -243,6 +265,17 @@ func (h *StorageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if db.Engine == EngineObjstore && h.obj != nil {
+		rec, rerr := h.obj.Repo.ByDatabase(r.Context(), dbID)
+		project, perr := h.projects.GetByID(r.Context(), projectID)
+		if rerr != nil || perr != nil {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
+			return
+		}
+		h.deleteObjstore(w, r, db, rec, project)
+		return
+	}
+
 	if err := h.dbs.Delete(r.Context(), dbID); err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete database record")
 		return
@@ -279,6 +312,17 @@ func (h *StorageHandler) Presign(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	if db.Engine == EngineObjstore && h.obj != nil {
+		rec, rerr := h.obj.Repo.ByDatabase(r.Context(), dbID)
+		project, perr := h.projects.GetByID(r.Context(), projectID)
+		if rerr != nil || perr != nil {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "storage bucket not found")
+			return
+		}
+		h.presignObjstore(w, r, rec, project)
 		return
 	}
 

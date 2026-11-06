@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"os"
@@ -69,6 +70,9 @@ type Deps struct {
 
 	// Data backups (nil disables the routes)
 	Backups *backup.Service
+	// Capsule's own object store (nil: `capsule storage create` provisions AWS S3 buckets)
+	Objstore *ObjstoreDeps
+
 	// Core Git (Forgejo): repo provisioning, branches/commits/pulls views, API previews (nil disables the routes)
 	GitCore *handlers.GitCoreHandler
 
@@ -116,6 +120,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.AWSClients, deps.SecretKey, logger,
 	)
+	if o := deps.Objstore; o != nil {
+		storageHandler.SetObjstore(handlers.ObjstoreConfig{Store: o.Store, Repo: o.Repo, EnvVars: deps.EnvVarRepo, PublicEndpoint: o.PublicEndpoint, InternalEndpoint: o.InternalEndpoint, Region: o.Region})
+		purgePorts := portsHandler.Cleanup
+		projectHandler.SetOnDelete(func(id uuid.UUID) { purgePorts(id); storageHandler.CleanupProject(id) })
+	}
 	emailHandler := handlers.NewEmailHandler(
 		deps.DatabaseRepo, deps.OrgRepo, deps.ProjRepo,
 		deps.EmailLogRepo, deps.AWSClients, deps.SecretKey, logger,
@@ -133,6 +142,9 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	workerHandler := handlers.NewWorkerHandler(deps.WorkerRepo, deps.OrgRepo, deps.ProjRepo, logger, deps.AWSClients)
 	cronHandler := handlers.NewCronJobHandler(deps.CronJobRepo, deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger, deps.AWSClients)
 	membersHandler := handlers.NewOrgMembersHandler(deps.OrgRepo, deps.UserRepo)
+	if deps.Objstore != nil {
+		proxyHandler.SetObjstore(deps.Objstore.S3)
+	}
 	adminHandler    := handlers.NewAdminHandler(deps.UserRepo)
 	apiTokenHandler := handlers.NewAPITokenHandler(deps.APITokenRepo, deps.OrgRepo, deps.ProjRepo)
 	logsHandler := handlers.NewLogsHandler(deps.OrgRepo, deps.ProjRepo, deps.ExecLogRepo, logger)
@@ -451,6 +463,18 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			// Domains (scoped to project)
 			r.Post("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.Create)
 			r.Get("/orgs/{orgID}/projects/{projectID}/domains", domainHandler.List)
+			r.Patch("/orgs/{orgID}/projects/{projectID}/storage/{dbID}", storageHandler.Update)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/rotate", storageHandler.Rotate)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects", storageHandler.ListObjects)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects", storageHandler.DeleteObject)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads", storageHandler.StartUpload)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}", storageHandler.GetUpload)
+			r.Post("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}/complete", storageHandler.CompleteUpload)
+			r.Delete("/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}", storageHandler.AbortUpload)
+			r.Get("/orgs/{orgID}/projects/{projectID}/storage/quota", storageHandler.GetProjectQuota)
+			r.Put("/orgs/{orgID}/projects/{projectID}/storage/quota", storageHandler.PutProjectQuota)
+			r.Get("/orgs/{orgID}/storage/quota", storageHandler.GetOrgQuota)
+			r.Put("/orgs/{orgID}/storage/quota", storageHandler.PutOrgQuota)
 			r.Post("/orgs/{orgID}/projects/{projectID}/domains/{domainID}/verify", domainHandler.Verify)
 			r.Delete("/orgs/{orgID}/projects/{projectID}/domains/{domainID}", domainHandler.Delete)
 			// Domains (org-level)

@@ -22,6 +22,19 @@ import (
 // Planned rows are routes of API.openapi.yaml that P5-P6 will mount (P4 mounted templates, groups, assignments, /me/permissions, simulator and audit); they are here so the table already is the contract.
 // Generated from routes_authz.golden by the P3 mapping (docs/permissions/P3-NOTES.md) and maintained by hand afterwards.
 var routePermissions = map[string]routePerm{
+	// Capsule object storage (docs/OBJECT_STORAGE.md): same atoms as the existing storage rows.
+	"PATCH /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/rotate": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects": {Kind: middleware.KindPerm, Perms: []string{"storage:read"}},
+	"DELETE /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/objects": {Kind: middleware.KindPerm, Perms: []string{"storage:presign"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads": {Kind: middleware.KindPerm, Perms: []string{"storage:presign"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}": {Kind: middleware.KindPerm, Perms: []string{"storage:presign"}},
+	"POST /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}/complete": {Kind: middleware.KindPerm, Perms: []string{"storage:presign"}},
+	"DELETE /api/v1/orgs/{orgID}/projects/{projectID}/storage/{dbID}/uploads/{uploadID}": {Kind: middleware.KindPerm, Perms: []string{"storage:presign"}},
+	"GET /api/v1/orgs/{orgID}/projects/{projectID}/storage/quota": {Kind: middleware.KindPerm, Perms: []string{"storage:read"}},
+	"PUT /api/v1/orgs/{orgID}/projects/{projectID}/storage/quota": {Kind: middleware.KindPerm, Perms: []string{"storage:manage"}},
+	"GET /api/v1/orgs/{orgID}/storage/quota": {Kind: middleware.KindMember},
+	"PUT /api/v1/orgs/{orgID}/storage/quota": {Kind: middleware.KindSession}, // handler requires organization owner/admin
 	"ANY /_proxy/{subdomain}":                                                                               {Kind: middleware.KindPublic},
 	"ANY /_proxy/{subdomain}/*":                                                                             {Kind: middleware.KindPublic},
 	"ANY /apps/{orgSlug}/{projectSlug}":                                                                     {Kind: middleware.KindPublic},

@@ -18,6 +18,7 @@ type Server struct {
 	logger  *slog.Logger
 	version string
 	cancel  context.CancelFunc
+	s3      *http.Server // dedicated object-store listener (nil when disabled)
 }
 
 func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Server {
@@ -32,6 +33,10 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 		StartMockBuilder(ctx, deps.DeploymentRepo, logger)
 	}
 
+	var s3 *http.Server
+	if deps.Objstore != nil && deps.Objstore.Addr != "" {
+		s3 = s3Listener(deps.Objstore, logger)
+	}
 	return &Server{
 		http: &http.Server{
 			Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -43,6 +48,7 @@ func New(cfg *config.Config, logger *slog.Logger, version string, deps Deps) *Se
 		logger:  logger,
 		version: version,
 		cancel:  cancel,
+		s3:      s3,
 	}
 }
 
@@ -56,6 +62,9 @@ func (s *Server) Run() error {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
+	if s.s3 != nil {
+		go runS3(s.s3, s.logger, errCh)
+	}
 	go func() {
 		s.logger.Info("server started", "addr", s.http.Addr, "version", s.version)
 		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -76,6 +85,7 @@ func (s *Server) Run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	shutdownS3(s.s3, ctx)
 	if err := s.http.Shutdown(ctx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}

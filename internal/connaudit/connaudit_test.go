@@ -42,6 +42,7 @@ func TestClassifyTable(t *testing.T) {
 		{"host.docker.internal", 5432, KindDockerBridge, SevWarning}, // not a published database port: still a warning
 		{"host.docker.internal", 40010, KindOK, SevInfo},             // published database port of the same server: the right path
 		{"host.docker.internal", 41001, KindOK, SevInfo},
+		{"host.docker.internal", 9000, KindOK, SevInfo}, // S3 listener of the object store
 		{"gateway.docker.internal", 0, KindDockerBridge, SevWarning},
 		{"capsule-app-abcdef123456", 3000, KindContainer, SevWarning},
 		{"capsule-app-111111111111", 3000, KindContainer, SevCritical},

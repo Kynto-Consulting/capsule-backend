@@ -11,6 +11,7 @@ package connaudit
 import (
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -56,6 +57,7 @@ type Classifier struct {
 	PortFrom       int             // published range, default 40000
 	PortTo         int             // default 41999
 	Published      func(int) bool  // other ports Capsule publishes
+	ObjstorePort   int             // S3 listener of the object store (CAPSULE_OBJSTORE_ADDR, default 9000)
 	OwnShort       string          // 12-hex short id of the project being deployed
 	OwnNames       map[string]bool // container names that belong to this project
 }
@@ -64,7 +66,7 @@ type Classifier struct {
 // CAPSULE_DB_HOST, CAPSULE_TCP_HOST, CAPSULE_PUBLIC_HOST, CAPSULE_ELASTIC_IP,
 // CAPSULE_GATEWAY_DOMAINS (comma separated, "*." optional).
 func ClassifierFromEnv() *Classifier {
-	c := &Classifier{DirectHosts: []string{"db.tumi-ai.com"}}
+	c := &Classifier{DirectHosts: []string{"db.tumi-ai.com"}, ObjstorePort: objstorePortFromEnv()}
 	for _, k := range []string{"CAPSULE_DB_HOST", "CAPSULE_TCP_HOST", "CAPSULE_PUBLIC_HOST"} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			c.addDirect(v)
@@ -206,7 +208,7 @@ func (c *Classifier) Classify(host string, port int) (Kind, Severity) {
 		}
 		return KindLoopback, SevWarning
 	case h == "host.docker.internal" || h == "gateway.docker.internal" || h == "host.containers.internal":
-		if h == "host.docker.internal" && c.inRange(port) {
+		if h == "host.docker.internal" && (c.inRange(port) || c.isObjstore(port)) {
 			// The recommended way for an app to reach a database of the same server (Capsule maps this name to the docker host).
 			return KindOK, SevInfo
 		}
@@ -231,4 +233,24 @@ func (c *Classifier) isOwn(name string) bool {
 		return true
 	}
 	return c.OwnShort != "" && (name == "capsule-app-"+c.OwnShort || strings.HasPrefix(name, "capsule-app-"+c.OwnShort+"-"))
+}
+
+// isObjstore reports whether port is the S3 listener of Capsule's own object store (reached by apps of the
+// same server through host.docker.internal:<port>, like the databases).
+func (c *Classifier) isObjstore(port int) bool {
+	p := c.ObjstorePort
+	if p == 0 {
+		p = 9000
+	}
+	return port == p
+}
+
+func objstorePortFromEnv() int {
+	addr := strings.TrimSpace(os.Getenv("CAPSULE_OBJSTORE_ADDR"))
+	if i := strings.LastIndexByte(addr, ':'); i >= 0 {
+		if n, err := strconv.Atoi(addr[i+1:]); err == nil && n > 0 && n < 65536 {
+			return n
+		}
+	}
+	return 9000
 }

@@ -133,7 +133,7 @@ func (h *DatabaseAccessHandler) load(w http.ResponseWriter, r *http.Request, wri
 		respondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get database")
 		return nil, false
 	}
-	if db.Tier == "prod" || db.Engine == "s3" {
+	if db.Tier == "prod" || db.Engine == "s3" || db.Engine == "objstore" {
 		respondError(w, http.StatusBadRequest, "UNSUPPORTED", "network access rules only apply to databases hosted on the Capsule host")
 		return nil, false
 	}

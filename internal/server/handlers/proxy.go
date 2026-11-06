@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/kynto/capsule/backend/internal/objstore"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 )
 
 type ProxyHandler struct {
+	obj *objstore.Server // nil: object storage disabled
 	orgs        domain.OrganizationRepository
 	projects    domain.ProjectRepository
 	domains     domain.DomainRepository
@@ -53,6 +55,9 @@ func (h *ProxyHandler) ipAllowed(w http.ResponseWriter, r *http.Request, project
 	}
 	return true
 }
+
+// SetObjstore serves <project>-storage requests with Capsule's own S3-compatible object store.
+func (h *ProxyHandler) SetObjstore(s *objstore.Server) { h.obj = s }
 
 func NewProxyHandler(orgs domain.OrganizationRepository, projects domain.ProjectRepository, domains domain.DomainRepository, deployments domain.DeploymentRepository, exLogs domain.ExecutionLogRepository, aws *awsclient.Clients) *ProxyHandler {
 	return &ProxyHandler{orgs: orgs, projects: projects, domains: domains, deployments: deployments, exLogs: exLogs, aws: aws}
@@ -162,7 +167,7 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 		}
 		h.proxyToContainer(w, r, project, subdomain)
 	case "storage":
-		h.handleStorageInfo(w, r, project)
+		h.handleStorageInfo(w, r, project, subdomain)
 	case "db":
 		h.handleDBInfo(w, r, project)
 	default:
@@ -593,9 +598,8 @@ func (h *ProxyHandler) proxyToStaticS3(w http.ResponseWriter, r *http.Request, p
 	io.Copy(w, resp.Body)
 }
 
-func (h *ProxyHandler) handleStorageInfo(w http.ResponseWriter, r *http.Request, project *domain.Project) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"project_id":%q,"message":"S3 storage proxy — coming soon"}`, project.ID)
+func (h *ProxyHandler) handleStorageInfo(w http.ResponseWriter, r *http.Request, project *domain.Project, subdomain string) {
+	h.serveStorage(w, r, project, subdomain)
 }
 
 func (h *ProxyHandler) handleDBInfo(w http.ResponseWriter, r *http.Request, project *domain.Project) {
