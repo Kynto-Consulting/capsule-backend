@@ -33,6 +33,7 @@ type Service struct {
 	dock       Docker
 	projects   ProjectGetter
 	dbs        DBLister
+	objects    ObjectSource
 	secret     string
 	log        *slog.Logger
 	now        func() time.Time
@@ -362,12 +363,12 @@ func (s *Service) StartRestore(ctx context.Context, projectID, snapshotID uuid.U
 				return uuid.Nil, &InvalidError{"this engine cannot restore into a new database"}
 			}
 		}
-	case "volume":
+	case "volume", "objects":
 		if target != "" {
 			return uuid.Nil, &InvalidError{"target is only supported for database snapshots"}
 		}
 	default:
-		return uuid.Nil, &InvalidError{"only database and volume snapshots can be restored"}
+		return uuid.Nil, &InvalidError{"only database, volume and object storage snapshots can be restored"}
 	}
 	run := s.newRun(&projectID, &proj.OrgID, "restore", "manual", user)
 	if err := s.repo.CreateRun(ctx, &run); err != nil {

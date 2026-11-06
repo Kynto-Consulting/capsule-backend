@@ -113,6 +113,11 @@ func (s *Service) projectOnce(ctx context.Context, run Run, st Settings, rs *run
 			errs = append(errs, "volume: "+err.Error())
 		}
 	}
+	if st.IncludeVolumes && s.objects != nil && !rs.done["objects"] {
+		if err := s.backupObjects(ctx, rs, run); err != nil {
+			errs = append(errs, "objects: "+err.Error())
+		}
+	}
 	if len(errs) == 0 && st.IncludeDatabases && rs.data == 0 && len(rs.notes) > 0 && !st.IncludeVolumes {
 		return []string{"nothing was backed up: " + strings.Join(rs.notes, "; ")}
 	}
@@ -559,9 +564,12 @@ func (s *Service) executeRestore(run Run, sn *Snapshot, target string) {
 		return
 	}
 	var err error
-	if sn.Kind == "database" {
+	switch sn.Kind {
+	case "database":
 		err = s.restoreDatabase(ctx, sn, target)
-	} else {
+	case "objects":
+		err = s.restoreObjects(ctx, sn)
+	default:
 		err = s.restoreVolume(ctx, run, sn)
 	}
 	s.finish(run, sn.SizeBytes, err, nil)
