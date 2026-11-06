@@ -50,6 +50,8 @@ type Object struct {
 	ETag        string    `json:"etag"`
 	ContentType string    `json:"content_type"`
 	Modified    time.Time `json:"modified"`
+	// Meta is the user metadata (x-amz-meta-*), keys in lower case without the prefix.
+	Meta map[string]string `json:"meta,omitempty"`
 }
 
 type bucketIdx struct {
@@ -229,8 +231,9 @@ func (s *Store) paths(bucket, key string) (data, meta string) {
 // the caller (negative = unlimited). Used by the server to cap streaming bodies.
 type writeOpts struct {
 	ContentType string
-	MaxBytes    int64  // cap on this body (<0 unlimited); exceeding it fails with ErrQuota
-	WantSHA256  string // hex; verified at EOF when set
+	Meta        map[string]string // user metadata (x-amz-meta-*)
+	MaxBytes    int64             // cap on this body (<0 unlimited); exceeding it fails with ErrQuota
+	WantSHA256  string            // hex; verified at EOF when set
 	Reader      func(io.Reader) io.Reader
 }
 
@@ -258,7 +261,7 @@ func (s *Store) Put(bucket, key string, r io.Reader, o writeOpts) (Object, error
 	if err != nil {
 		return Object{}, err
 	}
-	obj := Object{Key: key, Size: n, ETag: etag, ContentType: o.ContentType, Modified: time.Now().UTC().Truncate(time.Second)}
+	obj := Object{Key: key, Size: n, ETag: etag, ContentType: o.ContentType, Modified: time.Now().UTC().Truncate(time.Second), Meta: o.Meta}
 	return s.commit(bucket, tmp.Name(), data, meta, obj)
 }
 
@@ -432,8 +435,9 @@ func (s *Store) List(bucket, prefix, delimiter, after string, max int) (ListResu
 // ---- multipart -------------------------------------------------------------------------------
 
 type uploadMeta struct {
-	Key         string `json:"key"`
-	ContentType string `json:"content_type"`
+	Key         string            `json:"key"`
+	ContentType string            `json:"content_type"`
+	Meta        map[string]string `json:"meta,omitempty"`
 }
 
 // Part is one uploaded part of a multipart upload.
@@ -456,6 +460,11 @@ func (s *Store) uploadDir(bucket, id string) (string, error) {
 
 // InitUpload starts a multipart upload and returns its id.
 func (s *Store) InitUpload(bucket, key, contentType string) (string, error) {
+	return s.InitUploadMeta(bucket, key, contentType, nil)
+}
+
+// InitUploadMeta starts a multipart upload whose object will carry the user metadata meta (x-amz-meta-*).
+func (s *Store) InitUploadMeta(bucket, key, contentType string, meta map[string]string) (string, error) {
 	if err := validKey(key); err != nil {
 		return "", err
 	}
@@ -471,7 +480,7 @@ func (s *Store) InitUpload(bucket, key, contentType string) (string, error) {
 	if err := os.MkdirAll(d, 0o750); err != nil {
 		return "", err
 	}
-	raw, _ := json.Marshal(uploadMeta{key, contentType})
+	raw, _ := json.Marshal(uploadMeta{key, contentType, meta})
 	return id, os.WriteFile(filepath.Join(d, "meta.json"), raw, 0o640)
 }
 
@@ -621,7 +630,7 @@ func (s *Store) CompleteUpload(bucket, id string, want []Part, max int64) (Objec
 		return Object{}, err
 	}
 	obj := Object{Key: m.Key, Size: total, ETag: hex.EncodeToString(sum.Sum(nil)) + "-" + strconv.Itoa(len(want)),
-		ContentType: m.ContentType, Modified: time.Now().UTC().Truncate(time.Second)}
+		ContentType: m.ContentType, Modified: time.Now().UTC().Truncate(time.Second), Meta: m.Meta}
 	out, err := s.commit(bucket, tmp.Name(), data, meta, obj)
 	if err == nil {
 		_ = os.RemoveAll(d)

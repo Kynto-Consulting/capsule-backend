@@ -389,3 +389,60 @@ func TestConcurrentUploadsCannotPassTheQuota(t *testing.T) {
 		t.Fatal("no upload was accepted")
 	}
 }
+
+func TestUserMetadata(t *testing.T) {
+	r := newRig(t, false)
+	ctx := context.Background()
+	b := aws.String("alpha-files")
+	if _, err := r.cli.PutObject(ctx, &s3.PutObjectInput{Bucket: b, Key: aws.String("m/one"), Body: strings.NewReader("x"),
+		Metadata: map[string]string{"Source-Path": `\srv\share\a.pdf`, "sha256": "abc"}}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := r.cli.HeadObject(ctx, &s3.HeadObjectInput{Bucket: b, Key: aws.String("m/one")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Metadata["source-path"] != `\srv\share\a.pdf` || h.Metadata["sha256"] != "abc" {
+		t.Fatalf("head metadata: %v", h.Metadata)
+	}
+	// multipart: the metadata given at CreateMultipartUpload lands on the completed object
+	up, err := r.cli.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: b, Key: aws.String("m/big"), Metadata: map[string]string{"origin": "smb"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := bytes.Repeat([]byte("p"), 5<<20)
+	p1, err := r.cli.UploadPart(ctx, &s3.UploadPartInput{Bucket: b, Key: aws.String("m/big"), UploadId: up.UploadId, PartNumber: aws.Int32(1), Body: bytes.NewReader(part)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := r.cli.UploadPart(ctx, &s3.UploadPartInput{Bucket: b, Key: aws.String("m/big"), UploadId: up.UploadId, PartNumber: aws.Int32(2), Body: strings.NewReader("tail")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.cli.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: b, Key: aws.String("m/big"), UploadId: up.UploadId,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: []s3types.CompletedPart{{PartNumber: aws.Int32(1), ETag: p1.ETag}, {PartNumber: aws.Int32(2), ETag: p2.ETag}}}}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := r.cli.GetObject(ctx, &s3.GetObjectInput{Bucket: b, Key: aws.String("m/big")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Body.Close()
+	if g.Metadata["origin"] != "smb" || aws.ToInt64(g.ContentLength) != int64(len(part))+4 {
+		t.Fatalf("multipart metadata: %v size %d", g.Metadata, aws.ToInt64(g.ContentLength))
+	}
+	// metadata survives a restart (it is in the object's .json)
+	st2, err := Open(r.st.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o, err := st2.Stat("alpha-files", "m/one"); err != nil || o.Meta["sha256"] != "abc" {
+		t.Fatalf("reopened: %v %v", o.Meta, err)
+	}
+	// S3 caps user metadata at 2 KB
+	_, err = r.cli.PutObject(ctx, &s3.PutObjectInput{Bucket: b, Key: aws.String("m/huge"), Body: strings.NewReader("x"),
+		Metadata: map[string]string{"big": strings.Repeat("v", 3000)}})
+	if err == nil || !strings.Contains(err.Error(), "MetadataTooLarge") {
+		t.Fatalf("oversized metadata: %v", err)
+	}
+}

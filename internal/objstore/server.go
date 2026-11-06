@@ -62,20 +62,21 @@ type s3Err struct {
 }
 
 var (
-	eAccess    = s3Err{403, "AccessDenied", "Access Denied"}
-	eSig       = s3Err{403, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided."}
-	eKey       = s3Err{403, "InvalidAccessKeyId", "The access key ID you provided does not exist."}
-	eExpired   = s3Err{403, "ExpiredToken", "The request has expired."}
-	eNoBucket  = s3Err{404, "NoSuchBucket", "The specified bucket does not exist."}
-	eNoKey     = s3Err{404, "NoSuchKey", "The specified key does not exist."}
-	eNoUpload  = s3Err{404, "NoSuchUpload", "The specified multipart upload does not exist."}
-	eQuota     = s3Err{403, "QuotaExceeded", "The storage quota of this bucket, project or organization is exhausted."}
-	eBadDigest = s3Err{400, "BadDigest", "The content hash you specified did not match what we received."}
-	eInvalid   = s3Err{400, "InvalidRequest", "Invalid request."}
-	ePart      = s3Err{400, "InvalidPart", "One or more of the specified parts could not be found."}
-	eNotImpl   = s3Err{501, "NotImplemented", "A header or parameter you provided implies functionality that is not implemented."}
-	eMethod    = s3Err{405, "MethodNotAllowed", "The specified method is not allowed against this resource."}
-	eInternal  = s3Err{500, "InternalError", "We encountered an internal error. Please try again."}
+	eAccess       = s3Err{403, "AccessDenied", "Access Denied"}
+	eSig          = s3Err{403, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided."}
+	eKey          = s3Err{403, "InvalidAccessKeyId", "The access key ID you provided does not exist."}
+	eExpired      = s3Err{403, "ExpiredToken", "The request has expired."}
+	eNoBucket     = s3Err{404, "NoSuchBucket", "The specified bucket does not exist."}
+	eNoKey        = s3Err{404, "NoSuchKey", "The specified key does not exist."}
+	eNoUpload     = s3Err{404, "NoSuchUpload", "The specified multipart upload does not exist."}
+	eQuota        = s3Err{403, "QuotaExceeded", "The storage quota of this bucket, project or organization is exhausted."}
+	eBadDigest    = s3Err{400, "BadDigest", "The content hash you specified did not match what we received."}
+	eInvalid      = s3Err{400, "InvalidRequest", "Invalid request."}
+	ePart         = s3Err{400, "InvalidPart", "One or more of the specified parts could not be found."}
+	eNotImpl      = s3Err{501, "NotImplemented", "A header or parameter you provided implies functionality that is not implemented."}
+	eMethod       = s3Err{405, "MethodNotAllowed", "The specified method is not allowed against this resource."}
+	eInternal     = s3Err{500, "InternalError", "We encountered an internal error. Please try again."}
+	eMetaTooLarge = s3Err{400, "MetadataTooLarge", "Your metadata headers exceed the maximum allowed metadata size."}
 )
 
 func (s *Server) now() time.Time {
@@ -472,7 +473,12 @@ func (s *Server) objectOp(w http.ResponseWriter, r *http.Request, bucket, key st
 	uid := q.Get("uploadId")
 	switch {
 	case r.Method == http.MethodPost && q.Has("uploads"):
-		id, err := s.Store.InitUpload(bucket, key, r.Header.Get("Content-Type"))
+		meta, e := userMeta(r.Header)
+		if e != nil {
+			s.fail(w, r, *e)
+			return
+		}
+		id, err := s.Store.InitUploadMeta(bucket, key, r.Header.Get("Content-Type"), meta)
 		if err != nil {
 			s.storeErr(w, r, err)
 			return
@@ -515,6 +521,9 @@ func (s *Server) objectOp(w http.ResponseWriter, r *http.Request, bucket, key st
 		} else {
 			h.Set("Content-Type", "application/octet-stream")
 		}
+		for k, v := range o.Meta {
+			h.Set(metaPrefix+k, v)
+		}
 		h.Set("Accept-Ranges", "bytes")
 		http.ServeContent(w, r, "", o.Modified, f)
 	case r.Method == http.MethodDelete:
@@ -534,6 +543,11 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 		s.fail(w, r, *e)
 		return
 	}
+	meta, e := userMeta(r.Header)
+	if e != nil {
+		s.fail(w, r, *e)
+		return
+	}
 	var replacing int64
 	if o, err := s.Store.Stat(bucket, key); err == nil {
 		replacing = o.Size
@@ -543,7 +557,7 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, bucket, key s
 		return
 	}
 	defer release()
-	o, err := s.Store.Put(bucket, key, rd, writeOpts{ContentType: r.Header.Get("Content-Type"), MaxBytes: room, WantSHA256: sum})
+	o, err := s.Store.Put(bucket, key, rd, writeOpts{ContentType: r.Header.Get("Content-Type"), Meta: meta, MaxBytes: room, WantSHA256: sum})
 	if err != nil {
 		s.storeErr(w, r, err)
 		return
@@ -648,6 +662,33 @@ func (s *Server) listParts(w http.ResponseWriter, r *http.Request, bucket, key, 
 		out.Part = append(out.Part, xp{p.Number, `"` + p.ETag + `"`, p.Size})
 	}
 	writeXML(w, 200, out)
+}
+
+const (
+	metaPrefix  = "X-Amz-Meta-"
+	maxMetaSize = 2 << 10 // S3: the user metadata of an object is at most 2 KB (names + values)
+)
+
+// userMeta reads the x-amz-meta-* headers (names in lower case, without the prefix). nil when there are none.
+func userMeta(h http.Header) (map[string]string, *s3Err) {
+	var out map[string]string
+	size := 0
+	for k, vs := range h {
+		if len(k) <= len(metaPrefix) || !strings.EqualFold(k[:len(metaPrefix)], metaPrefix) {
+			continue
+		}
+		name := strings.ToLower(k[len(metaPrefix):])
+		v := strings.Join(vs, ",")
+		size += len(name) + len(v)
+		if size > maxMetaSize {
+			return nil, &eMetaTooLarge
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = v
+	}
+	return out, nil
 }
 
 // Escape helper for callers building public object URLs.
