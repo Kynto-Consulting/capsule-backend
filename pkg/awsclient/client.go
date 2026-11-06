@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/acm"
+	"github.com/aws/aws-sdk-go-v2/service/bedrock"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -15,32 +16,37 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	elasticloadbalancingv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/polly"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/transcribe"
 )
 
 // Clients holds initialised AWS service clients.
 type Clients struct {
-	EC2       *ec2.Client
-	ECR       *ecr.Client
-	ECS       *ecs.Client
-	ELBV2     *elasticloadbalancingv2.Client
-	ACM       *acm.Client
-	RDS       *rds.Client
-	Route53   *route53.Client
-	Bedrock   *bedrockruntime.Client
-	S3        *s3.Client
-	SES       *sesv2.Client
-	Lambda    *lambda.Client
-	CE        *costexplorer.Client
-	Scheduler *scheduler.Client
-	SQS       *sqs.Client
-	Region    string
-	Account   string
+	EC2        *ec2.Client
+	ECR        *ecr.Client
+	ECS        *ecs.Client
+	ELBV2      *elasticloadbalancingv2.Client
+	ACM        *acm.Client
+	RDS        *rds.Client
+	Route53    *route53.Client
+	Bedrock    *bedrockruntime.Client
+	BedrockCtl *bedrock.Client // control plane: model catalog and availability
+	Transcribe *transcribe.Client
+	Polly      *polly.Client
+	S3         *s3.Client
+	SES        *sesv2.Client
+	Lambda     *lambda.Client
+	CE         *costexplorer.Client
+	Scheduler  *scheduler.Client
+	SQS        *sqs.Client
+	Region     string
+	Account    string
 }
 
 // New creates AWS service clients using static credentials.
@@ -82,21 +88,24 @@ func New(ctx context.Context, region, accessKeyID, secretKey, account string) (*
 	}
 
 	return &Clients{
-		EC2:       ec2.NewFromConfig(cfg),
-		ECR:       ecr.NewFromConfig(cfg),
-		ECS:       ecs.NewFromConfig(cfg),
-		ELBV2:     elasticloadbalancingv2.NewFromConfig(cfg),
-		ACM:       acm.NewFromConfig(cfg),
-		RDS:       rds.NewFromConfig(cfg),
-		Route53:   route53.NewFromConfig(cfg),
-		Bedrock:   bedrockruntime.NewFromConfig(cfg),
-		S3:        s3.NewFromConfig(cfg),
-		SES:       sesv2.NewFromConfig(cfg),
-		Lambda:    lambda.NewFromConfig(cfg),
-		CE:        costexplorer.NewFromConfig(ceCfg),
-		Scheduler: scheduler.NewFromConfig(cfg),
-		SQS:       sqs.NewFromConfig(cfg),
-		Region:    region,
-		Account:   account,
+		EC2:        ec2.NewFromConfig(cfg),
+		ECR:        ecr.NewFromConfig(cfg),
+		ECS:        ecs.NewFromConfig(cfg),
+		ELBV2:      elasticloadbalancingv2.NewFromConfig(cfg),
+		ACM:        acm.NewFromConfig(cfg),
+		RDS:        rds.NewFromConfig(cfg),
+		Route53:    route53.NewFromConfig(cfg),
+		Bedrock:    bedrockruntime.NewFromConfig(cfg),
+		BedrockCtl: bedrock.NewFromConfig(cfg),
+		Transcribe: transcribe.NewFromConfig(cfg),
+		Polly:      polly.NewFromConfig(cfg),
+		S3:         s3.NewFromConfig(cfg),
+		SES:        sesv2.NewFromConfig(cfg),
+		Lambda:     lambda.NewFromConfig(cfg),
+		CE:         costexplorer.NewFromConfig(ceCfg),
+		Scheduler:  scheduler.NewFromConfig(cfg),
+		SQS:        sqs.NewFromConfig(cfg),
+		Region:     region,
+		Account:    account,
 	}, nil
 }
