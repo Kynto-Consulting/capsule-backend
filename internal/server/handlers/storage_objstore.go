@@ -477,6 +477,7 @@ func (h *StorageHandler) StartUpload(w http.ResponseWriter, r *http.Request) {
 		ContentType string `json:"content_type"`
 		Size        int64  `json:"size"`
 		PartSize    int64  `json:"part_size"`
+		UploadID    string `json:"upload_id"` // resume: presign the parts of an existing upload again
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Key == "" || req.Size <= 0 {
 		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", "key and size are required")
@@ -488,10 +489,18 @@ func (h *StorageHandler) StartUpload(w http.ResponseWriter, r *http.Request) {
 	for (req.Size+req.PartSize-1)/req.PartSize > maxParts {
 		req.PartSize *= 2
 	}
-	id, err := h.obj.Store.InitUpload(rec.Bucket, req.Key, req.ContentType)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
-		return
+	id := req.UploadID
+	if id != "" {
+		if k, err := h.obj.Store.UploadKey(rec.Bucket, id); err != nil || k != req.Key {
+			respondError(w, http.StatusNotFound, "NOT_FOUND", "upload not found")
+			return
+		}
+	} else {
+		var err error
+		if id, err = h.obj.Store.InitUpload(rec.Bucket, req.Key, req.ContentType); err != nil {
+			respondError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
 	}
 	secret, err := h.obj.Repo.Secret(rec)
 	if err != nil {

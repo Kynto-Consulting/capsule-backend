@@ -423,6 +423,13 @@ func TestStorageQuotaAndMultipartResume(t *testing.T) {
 	if len(have) != 1 {
 		t.Fatalf("resume state: %v", have)
 	}
+	re := e.do(http.MethodPost, "/"+id+"/uploads", map[string]any{"key": "movie.bin", "size": 12 << 20, "part_size": 5 << 20, "upload_id": uid})
+	if re.Code != 201 || jsonBody(t, re)["upload_id"] != uid {
+		t.Fatalf("re-presign for resume: %d %s", re.Code, re.Body)
+	}
+	if re := e.do(http.MethodPost, "/"+id+"/uploads", map[string]any{"key": "other", "size": 1 << 20, "upload_id": uid}); re.Code != 404 {
+		t.Fatalf("upload id of another key: %d", re.Code)
+	}
 	send(1)
 	send(2)
 	rec = e.do(http.MethodPost, "/"+id+"/uploads/"+uid+"/complete", map[string]any{"parts": []map[string]any{
