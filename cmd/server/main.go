@@ -300,7 +300,7 @@ func main() {
 	}
 	fnSvc := &fn.Service{Store: &fn.PGStore{Pool: pool}, VPN: vpnSvc, APIBase: fnApiBase, DBs: fn.NewDBResolver(dbRepo, cfg.SecretKey)}
 	if objstoreDeps != nil {
-		fnSvc.Storage = fnStorageResolver(objstoreDeps, dbRepo) // ctx.storage on Capsule's own object store
+		fnSvc.Storage = fnStorageResolver(objstoreDeps, dbRepo, projRepo) // ctx.storage on Capsule's own object store
 	}
 	// Relay for functions that run as Lambda (docs/vpn-connector.md, section 7): the tunnel's node connects out, the Lambda comes in with its token.
 	fnRelay := gateway.NewRelay()

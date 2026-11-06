@@ -58,8 +58,9 @@ type Service struct {
 	APIBase string // public base URL of the Capsule API, handed to the function as CAPSULE_API
 	// DBs resolves a `db:<name>` scope to a connection URL on the internal route (host.docker.internal:<port>). Optional.
 	DBs DBResolver
-	// Storage resolves a `storage:<name>` scope to the S3 access of that bucket (endpoint, bucket, access_key_id, secret_access_key, region)
-	// on the internal route. It is backed by the object store of Capsule; nil until that store is wired (the SDK then reports the scope as unavailable).
+	// Storage resolves a `storage:<name>` scope to the S3 access of that bucket (endpoint, public_endpoint, bucket, access_key_id,
+	// secret_access_key, region). "endpoint" is the internal route (containers on the work node); "public_endpoint" is the project's
+	// https://<slug>-storage host, used by Lambda runs. Nil until the object store is wired (the SDK then reports the scope as unavailable).
 	Storage StorageResolver
 
 	// Lambda runs functions deployed with --runtime lambda as their own AWS Lambda, in resumable batches. Nil disables the runtime
@@ -277,14 +278,15 @@ func (s *Service) Claim(ctx context.Context, node string) (*Assignment, error) {
 				s.VPN.Audit(ctx, t, vpn.EventRunStarted, fmt.Sprintf("function %s run %s started (%s by %s); scopes %s", f.Name, r.ID, r.Trigger, r.TriggeredBy, strings.Join(r.Scopes, ",")), "node:"+node)
 			}
 		}
-		env := s.runEnv(ctx, f, r, plain)
+		env := s.runEnv(ctx, f, r, plain, false)
 		return &Assignment{Run: run, Function: f, Tunnel: ta, Token: plain, APIBase: s.APIBase, Env: env}, nil
 	}
 	return nil, nil
 }
 
 // runEnv is the environment of a run: the token, its scopes, the payload and the resources (databases, buckets) its scopes name.
-func (s *Service) runEnv(ctx context.Context, f *Function, r *Run, plain string) map[string]string {
+// public is true for runs outside the host (Lambda): buckets are then reached by their public endpoint instead of the internal route.
+func (s *Service) runEnv(ctx context.Context, f *Function, r *Run, plain string, public bool) map[string]string {
 	env := map[string]string{
 		"CAPSULE_RUN_ID": r.ID.String(), "CAPSULE_FN": f.Name, "CAPSULE_API": s.APIBase, "CAPSULE_TOKEN": plain,
 		"CAPSULE_SCOPES": strings.Join(r.Scopes, ","),
@@ -304,7 +306,12 @@ func (s *Service) runEnv(ctx context.Context, f *Function, r *Run, plain string)
 			if kv, err := s.Storage(ctx, r.ProjectID, name); err == nil {
 				p := "CAPSULE_STORAGE_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name)) + "_"
 				for k, v := range kv {
-					env[p+strings.ToUpper(k)] = v
+					if k != "public_endpoint" {
+						env[p+strings.ToUpper(k)] = v
+					}
+				}
+				if pub := kv["public_endpoint"]; public && pub != "" {
+					env[p+"ENDPOINT"] = pub
 				}
 			}
 		}

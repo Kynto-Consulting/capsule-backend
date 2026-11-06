@@ -11,9 +11,10 @@ import (
 )
 
 // fnStorageResolver connects the `storage:<name>` scope of functions to Capsule's own object store: the run gets the S3
-// access of that bucket on the internal route (host.docker.internal). <name> is the bucket name or the name of the storage
-// resource of the project.
-func fnStorageResolver(o *server.ObjstoreDeps, dbs domain.DatabaseRepository) fn.StorageResolver {
+// access of that bucket. "endpoint" is the internal route (host.docker.internal, for containers on the work node) and
+// "public_endpoint" the project's https://<slug>-storage.<zone> (path style), which is what a Lambda run uses: a Lambda is
+// outside the host and cannot reach host.docker.internal. <name> is the bucket name or the name of the storage resource.
+func fnStorageResolver(o *server.ObjstoreDeps, dbs domain.DatabaseRepository, projects domain.ProjectRepository) fn.StorageResolver {
 	return func(ctx context.Context, projectID uuid.UUID, name string) (map[string]string, error) {
 		recs, err := o.Repo.ListByProject(ctx, projectID)
 		if err != nil {
@@ -34,7 +35,13 @@ func fnStorageResolver(o *server.ObjstoreDeps, dbs domain.DatabaseRepository) fn
 			if err != nil {
 				return nil, err
 			}
-			return map[string]string{"endpoint": o.InternalEndpoint, "bucket": r.Bucket, "access_key_id": r.AccessKey, "secret_access_key": secret, "region": o.Region}, nil
+			kv := map[string]string{"endpoint": o.InternalEndpoint, "bucket": r.Bucket, "access_key_id": r.AccessKey, "secret_access_key": secret, "region": o.Region}
+			if o.PublicEndpoint != nil {
+				if p, err := projects.GetByID(ctx, projectID); err == nil && p.Slug != "" {
+					kv["public_endpoint"] = o.PublicEndpoint(p.Slug)
+				}
+			}
+			return kv, nil
 		}
 		return nil, fn.ErrNotFound
 	}

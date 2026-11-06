@@ -340,3 +340,38 @@ func base64Std(s string) string { return base64.StdEncoding.EncodeToString([]byt
 func (e *env) lambda(api LambdaAPI) *LambdaExecutor {
 	return &LambdaExecutor{API: api, Account: "123", Now: func() time.Time { return *e.clock }}
 }
+
+// A Lambda runs outside the host: ctx.storage must get the project's public storage endpoint (path style), in the invoke
+// payload; a container on the work node keeps the internal route.
+func TestLambdaRunGetsThePublicStorageEndpointInThePayload(t *testing.T) {
+	e := newEnv(t)
+	api := &fakeLambda{replies: []string{`{}`}}
+	e.svc.Lambda = e.lambda(api)
+	e.svc.Storage = func(_ context.Context, _ uuid.UUID, name string) (map[string]string, error) {
+		return map[string]string{"endpoint": "http://host.docker.internal:9000", "public_endpoint": "https://estudio-storage.apps.example.com",
+			"bucket": name, "access_key_id": "AK1", "secret_access_key": "s3cr3t-key", "region": "us-east-1"}, nil
+	}
+	ctx := context.Background()
+	f := e.deploy(t, Spec{Name: "copiar", Runtime: "lambda", Scopes: []string{"storage:biblioteca"}})
+	run, _ := e.svc.Enqueue(ctx, f, TriggerAPI, "user:ana", nil)
+	if err := e.svc.DispatchLambda(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, e, run.ID, RunSucceeded)
+	env := api.payloads[0].Env
+	if env["CAPSULE_STORAGE_BIBLIOTECA_ENDPOINT"] != "https://estudio-storage.apps.example.com" || env["CAPSULE_STORAGE_BIBLIOTECA_SECRET_ACCESS_KEY"] != "s3cr3t-key" {
+		t.Fatalf("lambda storage env: %v", env)
+	}
+	if _, ok := env["CAPSULE_STORAGE_BIBLIOTECA_PUBLIC_ENDPOINT"]; ok {
+		t.Fatal("public_endpoint is an input of the resolver, not a variable of the run")
+	}
+	if api.created[0].Environment != nil {
+		t.Fatal("bucket keys must never be in the Lambda's Environment")
+	}
+	g := e.deploy(t, Spec{Name: "nodo", Scopes: []string{"storage:biblioteca"}})
+	e.svc.Enqueue(ctx, g, TriggerAPI, "user:ana", nil)
+	a, err := e.svc.Claim(ctx, "nodo-1")
+	if err != nil || a == nil || a.Env["CAPSULE_STORAGE_BIBLIOTECA_ENDPOINT"] != "http://host.docker.internal:9000" {
+		t.Fatalf("container run keeps the internal route: %v %v", a, err)
+	}
+}

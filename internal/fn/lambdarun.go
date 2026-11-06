@@ -234,7 +234,7 @@ func (s *Service) executeLambda(ctx context.Context, f *Function, run *Run) {
 		if err := s.Store.PutToken(rctx, RunToken{Hash: hash, RunID: run.ID, ProjectID: run.ProjectID, Scopes: run.Scopes, ExpiresAt: now.Add(MaxInvoke + TokenGrace)}); err != nil {
 			return nil, err
 		}
-		env := s.runEnv(rctx, f, run, plain)
+		env := s.runEnv(rctx, f, run, plain, true) // a Lambda is outside the host: buckets by their public endpoint
 		delete(env, "CAPSULE_PAYLOAD") // the payload travels in the invoke payload itself
 		if f.VPNID != nil {
 			env["CAPSULE_VPN_RELAY"] = strings.TrimRight(s.APIBase, "/") + "/api/v1/fn/relay/connect"

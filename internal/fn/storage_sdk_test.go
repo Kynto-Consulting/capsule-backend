@@ -97,12 +97,23 @@ func TestCtxStorageDoesRealPutsAgainstTheObjectStore(t *testing.T) {
 		t.Fatal("node did not finish")
 	}
 	var out struct {
-		PutBytes     int         `json:"putBytes"`
-		GetEqual     bool        `json:"getEqual"`
-		GetText      string      `json:"getText"`
-		HeadSize     int         `json:"headSize"`
-		HeadMissing  interface{} `json:"headMissing"`
-		OtherScope   string      `json:"otherScope"`
+		PutBytes          int               `json:"putBytes"`
+		GetEqual          bool              `json:"getEqual"`
+		GetText           string            `json:"getText"`
+		HeadSize          int               `json:"headSize"`
+		HeadMissing       interface{}       `json:"headMissing"`
+		OtherScope        string            `json:"otherScope"`
+		UploadSize        int               `json:"uploadSize"`
+		UploadEtagParts   string            `json:"uploadEtagParts"`
+		UploadHeadSize    int               `json:"uploadHeadSize"`
+		UploadMeta        map[string]string `json:"uploadMeta"`
+		UploadContentType string            `json:"uploadContentType"`
+		SmallSize         int               `json:"smallSize"`
+		SmallMeta         map[string]string `json:"smallMeta"`
+		WrongSize         string            `json:"wrongSize"`
+		WrongSizeStored   bool              `json:"wrongSizeStored"`
+		ListKeys          []string          `json:"listKeys"`
+		ListPages         int               `json:"listPages"`
 	}
 	line := strings.TrimSpace(stdout.String())
 	if err := json.Unmarshal([]byte(line[strings.LastIndex(line, "\n")+1:]), &out); err != nil {
@@ -113,6 +124,28 @@ func TestCtxStorageDoesRealPutsAgainstTheObjectStore(t *testing.T) {
 	}
 	if !strings.Contains(out.OtherScope, "no storage:otro scope") {
 		t.Fatalf("a bucket outside the scopes must be refused by the SDK: %q", out.OtherScope)
+	}
+
+	// Bucket.upload: a streamed multipart upload (3 x 5 MiB + tail) with UTF-8 metadata; a single PUT for a small source;
+	// a source of the wrong size is aborted and leaves nothing; list pages one key at a time.
+	const total = 3*5<<20 + 1234
+	if out.UploadSize != total || out.UploadHeadSize != total || out.UploadEtagParts != "4" || out.UploadContentType != "application/pdf" {
+		t.Fatalf("multipart upload: %+v", out)
+	}
+	if out.UploadMeta["source-path"] != `\\srv\Expedientes\García\escrito final.pdf` || out.UploadMeta["mtime"] != "2024-03-01T10:00:00Z" {
+		t.Fatalf("metadata: %q", out.UploadMeta)
+	}
+	if out.SmallSize != len("pequeño") || out.SmallMeta["origen"] != "smb" {
+		t.Fatalf("small upload: %+v", out)
+	}
+	if !strings.Contains(out.WrongSize, "expected") || out.WrongSizeStored {
+		t.Fatalf("a wrong size must fail and store nothing: %q stored=%v", out.WrongSize, out.WrongSizeStored)
+	}
+	if strings.Join(out.ListKeys, "|") != "migracion/García/escrito final.pdf|migracion/nota.txt" || out.ListPages != 2 {
+		t.Fatalf("list: %v in %d pages", out.ListKeys, out.ListPages)
+	}
+	if n := st.Pending("biblioteca"); n != 0 {
+		t.Fatalf("%d bytes of multipart parts left behind (the failed upload was not aborted)", n)
 	}
 
 	// and the bytes are really in the store: read them back with an independent client (the AWS SDK)
