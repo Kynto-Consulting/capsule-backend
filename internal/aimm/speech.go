@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -604,7 +605,9 @@ func (tr *Transcript) Render(format string) ([]byte, string, error) {
 		for _, s := range tr.Segments {
 			if s.Speaker != "" && s.Speaker != prev {
 				if b.Len() > 0 {
-					b.WriteString("\n")
+					cur := strings.TrimRight(b.String(), " ")
+					b.Reset()
+					b.WriteString(cur + "\n")
 				}
 				b.WriteString(speakerName(s.Speaker) + ": ")
 			}
@@ -657,4 +660,4 @@ func stamp(sec float64, sep byte) string {
 	return fmt.Sprintf("%02d:%02d:%02d%c%03d", ms/3600000, ms/60000%60, ms/1000%60, sep, ms%1000)
 }
 
-func roundUSD(v float64) float64 { return float64(int(v*1e6+0.5)) / 1e6 }
+func roundUSD(v float64) float64 { return math.Round(v*1e8) / 1e8 }
