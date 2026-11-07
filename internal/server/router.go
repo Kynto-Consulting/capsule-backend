@@ -33,6 +33,18 @@ import (
 	"github.com/kynto/capsule/backend/pkg/awsclient"
 )
 
+// webdavMethods are HTTP methods chi doesn't know about out of the box (its Mux.Method panics on an
+// unregistered one — "chi: '<method>' http method is not supported"); chi.RegisterMethod teaches it
+// these before any router is built, so a deployed app that speaks WebDAV (e.g. the tunnel service's
+// "share --folder") can be reached through the subdomain/custom-domain proxy (07-nov-2026).
+var webdavMethods = []string{"PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK"}
+
+func init() {
+	for _, m := range webdavMethods {
+		chi.RegisterMethod(m)
+	}
+}
+
 type Deps struct {
 	AuthSvc        domain.AuthService
 	OrgRepo        domain.OrganizationRepository
@@ -298,10 +310,44 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 	// ── Subdomain proxy (*.apps.tumi-ai.com → Next.js rewrite → here) ──────
 	r.Handle("/_proxy/{subdomain}/*", http.HandlerFunc(proxyHandler.ProxyBySlug))
 	r.Handle("/_proxy/{subdomain}", http.HandlerFunc(proxyHandler.ProxyBySlug))
+	// chi's Handle()/"*" only wires up the methods in its own fixed list (GET, HEAD, POST, PUT, DELETE,
+	// CONNECT, OPTIONS, TRACE, PATCH) — a deployed app speaking WebDAV (e.g. the tunnel service's
+	// "share --folder": PROPFIND, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH) 405's here before the
+	// request ever reaches the container (07-nov-2026). Wire those methods explicitly to the same handler.
+	// Spelled out one by one, not looped: tools/routeperms statically reads the method out of each
+	// MethodFunc call, so it must be a literal, not a loop variable.
+	r.MethodFunc("PROPFIND", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("PROPPATCH", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("MKCOL", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("COPY", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("MOVE", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("LOCK", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("UNLOCK", "/_proxy/{subdomain}/*", proxyHandler.ProxyBySlug)
+	r.MethodFunc("PROPFIND", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("PROPPATCH", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("MKCOL", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("COPY", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("MOVE", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("LOCK", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
+	r.MethodFunc("UNLOCK", "/_proxy/{subdomain}", proxyHandler.ProxyBySlug)
 
 	// ── Legacy path-based proxy ──────────────────────────────────────────────
 	r.Handle("/apps/{orgSlug}/{projectSlug}/*", http.HandlerFunc(proxyHandler.Proxy))
 	r.Handle("/apps/{orgSlug}/{projectSlug}", http.HandlerFunc(proxyHandler.Proxy))
+	r.MethodFunc("PROPFIND", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("PROPPATCH", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("MKCOL", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("COPY", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("MOVE", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("LOCK", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("UNLOCK", "/apps/{orgSlug}/{projectSlug}/*", proxyHandler.Proxy)
+	r.MethodFunc("PROPFIND", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("PROPPATCH", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("MKCOL", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("COPY", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("MOVE", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("LOCK", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
+	r.MethodFunc("UNLOCK", "/apps/{orgSlug}/{projectSlug}", proxyHandler.Proxy)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth
