@@ -175,6 +175,12 @@ func (h *ProxyHandler) ProxyBySlug(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// IsCustomDomain reports whether host is a verified custom domain linked to a project.
+func (h *ProxyHandler) IsCustomDomain(ctx context.Context, host string) bool {
+	d, err := h.domains.GetByHostname(ctx, host)
+	return err == nil && d != nil && d.ProjectID != nil
+}
+
 // ProxyByHost handles requests arriving with a custom domain Host header.
 // It looks up the verified domain record and either redirects or proxies to the container.
 func (h *ProxyHandler) ProxyByHost(w http.ResponseWriter, r *http.Request) {

@@ -262,12 +262,15 @@ func newRouter(cfg *config.Config, logger *slog.Logger, version string, deps Dep
 			if i := strings.LastIndex(host, ":"); i >= 0 {
 				host = host[:i]
 			}
-			// Custom domain: proxy ALL paths (including /api/*) to the container
+			// Custom domain: proxy ALL paths (including /api/*) to the container.
+			// A subdomain of the platform's own zone (mail.tumi-ai.com) can also be a
+			// customer domain: it is proxied only when it is registered, otherwise it
+			// keeps the normal platform routing.
 			if host != "" &&
 				!strings.HasSuffix(host, ".apps.tumi-ai.com") &&
-				!strings.HasSuffix(host, ".tumi-ai.com") &&
 				host != "localhost" &&
-				host != "api.tumi-ai.com" {
+				host != "api.tumi-ai.com" &&
+				(!strings.HasSuffix(host, ".tumi-ai.com") || proxyHandler.IsCustomDomain(r.Context(), host)) {
 				proxyHandler.ProxyByHost(w, r)
 				return
 			}
