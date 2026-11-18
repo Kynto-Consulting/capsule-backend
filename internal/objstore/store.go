@@ -67,6 +67,12 @@ type Store struct {
 	mu   sync.RWMutex
 	b    map[string]*bucketIdx
 
+	// lazy holds the buckets found on disk at Open whose index is still unread: each one is scanned on its first
+	// use (ensure). Open used to walk every bucket before returning, and with a large store the backend never
+	// reached ListenAndServe (2026-11-17: api.tumi-ai.com 502 for an hour after a reboot).
+	lmu  sync.Mutex
+	lazy map[string]*sync.Once
+
 	qmu      sync.Mutex // serializes quota check + reservation
 	imu      sync.Mutex // guards inflight
 	inflight map[string]int64
@@ -77,22 +83,55 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
-	s := &Store{root: dir, b: map[string]*bucketIdx{}}
+	s := &Store{root: dir, b: map[string]*bucketIdx{}, lazy: map[string]*sync.Once{}}
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range ents {
 		if e.IsDir() && ValidBucketName(e.Name()) {
-			if err := s.load(e.Name()); err != nil {
-				return nil, err
-			}
+			s.lazy[e.Name()] = &sync.Once{}
 		}
 	}
 	return s, nil
 }
 
-func (s *Store) load(bucket string) error {
+// ensure reads the index of a bucket found at Open the first time it is used. Callers must not hold s.mu.
+func (s *Store) ensure(bucket string) {
+	s.lmu.Lock()
+	once := s.lazy[bucket]
+	s.lmu.Unlock()
+	if once == nil {
+		return
+	}
+	once.Do(func() {
+		bi, err := s.scan(bucket)
+		if err == nil {
+			s.mu.Lock()
+			if _, ok := s.b[bucket]; !ok {
+				s.b[bucket] = bi
+			}
+			s.mu.Unlock()
+			s.sweepUploads(bucket)
+		}
+		s.lmu.Lock()
+		delete(s.lazy, bucket)
+		s.lmu.Unlock()
+	})
+}
+
+// lazyNames lists the buckets found at Open whose index has not been read yet.
+func (s *Store) lazyNames() []string {
+	s.lmu.Lock()
+	defer s.lmu.Unlock()
+	out := make([]string, 0, len(s.lazy))
+	for n := range s.lazy {
+		out = append(out, n)
+	}
+	return out
+}
+
+func (s *Store) scan(bucket string) (*bucketIdx, error) {
 	bi := &bucketIdx{objects: map[string]Object{}, dirty: true}
 	data := filepath.Join(s.root, bucket, "data")
 	err := filepath.WalkDir(data, func(p string, d os.DirEntry, err error) error {
@@ -121,9 +160,21 @@ func (s *Store) load(bucket string) error {
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	return bi, nil
+}
+
+// loadLocked (re)reads a bucket's index from disk and replaces the in-memory one. The caller holds s.mu (Restore).
+func (s *Store) loadLocked(bucket string) error {
+	bi, err := s.scan(bucket)
+	if err != nil {
 		return err
 	}
 	s.b[bucket] = bi
+	s.lmu.Lock()
+	delete(s.lazy, bucket)
+	s.lmu.Unlock()
 	s.sweepUploads(bucket)
 	return nil
 }
@@ -162,6 +213,7 @@ func validKey(k string) error {
 
 // CreateBucket makes the bucket directory (idempotent).
 func (s *Store) CreateBucket(name string) error {
+	s.ensure(name)
 	if !ValidBucketName(name) {
 		return fmt.Errorf("invalid bucket name %q", name)
 	}
@@ -179,6 +231,7 @@ func (s *Store) CreateBucket(name string) error {
 
 // DeleteBucket removes the bucket and all its data. With force=false it refuses a non-empty bucket.
 func (s *Store) DeleteBucket(name string, force bool) error {
+	s.ensure(name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bi, ok := s.b[name]
@@ -194,6 +247,7 @@ func (s *Store) DeleteBucket(name string, force bool) error {
 
 // HasBucket reports whether the bucket exists.
 func (s *Store) HasBucket(name string) bool {
+	s.ensure(name)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.b[name]
@@ -202,6 +256,7 @@ func (s *Store) HasBucket(name string) bool {
 
 // Usage returns the bytes stored in bucket (0 for an unknown one).
 func (s *Store) Usage(bucket string) int64 {
+	s.ensure(bucket)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if bi := s.b[bucket]; bi != nil {
@@ -212,6 +267,7 @@ func (s *Store) Usage(bucket string) int64 {
 
 // Count returns the number of objects in bucket.
 func (s *Store) Count(bucket string) int {
+	s.ensure(bucket)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if bi := s.b[bucket]; bi != nil {
@@ -239,6 +295,7 @@ type writeOpts struct {
 
 // Put stores r as bucket/key atomically and returns the object.
 func (s *Store) Put(bucket, key string, r io.Reader, o writeOpts) (Object, error) {
+	s.ensure(bucket)
 	if err := validKey(key); err != nil {
 		return Object{}, err
 	}
@@ -316,6 +373,7 @@ func copyHashed(w io.Writer, r io.Reader, max int64, wantSHA string) (int64, str
 
 // Stat returns the object's metadata.
 func (s *Store) Stat(bucket, key string) (Object, error) {
+	s.ensure(bucket)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if bi := s.b[bucket]; bi != nil {
@@ -328,6 +386,7 @@ func (s *Store) Stat(bucket, key string) (Object, error) {
 
 // Open opens the object for reading.
 func (s *Store) OpenObject(bucket, key string) (*os.File, Object, error) {
+	s.ensure(bucket)
 	o, err := s.Stat(bucket, key)
 	if err != nil {
 		return nil, Object{}, err
@@ -342,6 +401,7 @@ func (s *Store) OpenObject(bucket, key string) (*os.File, Object, error) {
 
 // Delete removes the object (deleting a missing key succeeds, like S3).
 func (s *Store) Delete(bucket, key string) error {
+	s.ensure(bucket)
 	data, meta := s.paths(bucket, key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -371,6 +431,7 @@ type ListResult struct {
 
 // List returns keys with prefix after `after`, up to max (>0), grouping by delimiter when set.
 func (s *Store) List(bucket, prefix, delimiter, after string, max int) (ListResult, error) {
+	s.ensure(bucket)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bi := s.b[bucket]
@@ -465,6 +526,7 @@ func (s *Store) InitUpload(bucket, key, contentType string) (string, error) {
 
 // InitUploadMeta starts a multipart upload whose object will carry the user metadata meta (x-amz-meta-*).
 func (s *Store) InitUploadMeta(bucket, key, contentType string, meta map[string]string) (string, error) {
+	s.ensure(bucket)
 	if err := validKey(key); err != nil {
 		return "", err
 	}
@@ -572,6 +634,7 @@ func (s *Store) UploadSize(bucket, id string) int64 {
 // CompleteUpload assembles the listed parts (number+etag, ascending) into the object. max caps the
 // assembled size (<0 unlimited).
 func (s *Store) CompleteUpload(bucket, id string, want []Part, max int64) (Object, error) {
+	s.ensure(bucket)
 	d, err := s.uploadDir(bucket, id)
 	if err != nil {
 		return Object{}, err
@@ -649,6 +712,7 @@ func (s *Store) AbortUpload(bucket, id string) error {
 
 // Pending is the bytes held by multipart parts still in flight in bucket.
 func (s *Store) Pending(bucket string) int64 {
+	s.ensure(bucket)
 	var t int64
 	root := filepath.Join(s.root, bucket, ".uploads")
 	ents, err := os.ReadDir(root)

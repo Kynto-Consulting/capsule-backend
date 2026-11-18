@@ -34,6 +34,7 @@ func (s *Store) SweepStaging(maxAge time.Duration) {
 		names = append(names, n)
 	}
 	s.mu.RUnlock()
+	names = append(names, s.lazyNames()...)
 	for _, n := range names {
 		d := filepath.Join(s.root, n, ".sftp")
 		ents, _ := os.ReadDir(d)
@@ -47,6 +48,7 @@ func (s *Store) SweepStaging(maxAge time.Duration) {
 
 // PutFile turns a finished staging file (same filesystem) into bucket/key atomically. The file is consumed.
 func (s *Store) PutFile(bucket, key, path, contentType string) (Object, error) {
+	s.ensure(bucket)
 	if err := validKey(key); err != nil {
 		return Object{}, err
 	}
@@ -71,6 +73,7 @@ func (s *Store) PutFile(bucket, key, path, contentType string) (Object, error) {
 // Rename moves bucket/from to bucket/to inside the bucket: the bytes are not copied, the destination is
 // replaced atomically and the stored size does not change (quota neutral apart from a replaced object).
 func (s *Store) Rename(bucket, from, to string) error {
+	s.ensure(bucket)
 	if err := validKey(from); err != nil {
 		return err
 	}
@@ -175,6 +178,7 @@ func (r *Reservation) Release() {
 
 // IsPrefix reports whether any object lives under prefix (which must end in "/").
 func (s *Store) IsPrefix(bucket, prefix string) bool {
+	s.ensure(bucket)
 	res, err := s.List(bucket, prefix, "", "", 1)
 	return err == nil && len(res.Objects) > 0 && strings.HasPrefix(res.Objects[0].Key, prefix)
 }

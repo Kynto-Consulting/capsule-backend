@@ -19,6 +19,7 @@ func (s *Store) Archive(buckets []string, w io.Writer) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	for _, b := range buckets {
+		s.ensure(b)
 		s.mu.RLock()
 		bi := s.b[b]
 		var objs []Object
@@ -136,7 +137,7 @@ func (s *Store) Restore(r io.Reader, allow func(bucket string) bool) ([]string, 
 		if err := os.MkdirAll(filepath.Join(live, "data"), 0o750); err != nil {
 			return done, err
 		}
-		if err := s.load(b); err != nil {
+		if err := s.loadLocked(b); err != nil {
 			return done, err
 		}
 		done = append(done, b)
