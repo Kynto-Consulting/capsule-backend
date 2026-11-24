@@ -3,12 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	schedulerpkg "github.com/aws/aws-sdk-go-v2/service/scheduler"
@@ -271,44 +268,13 @@ func (h *CronJobHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !cronAcquire(cron.ID) {
+		respondError(w, http.StatusConflict, "ALREADY_RUNNING", "the cron job is already running")
+		return
+	}
 	go func(c *domain.CronJob) {
-		ctx := context.Background()
-		start := time.Now()
-
-		// Run the command INSIDE the project's app container via docker exec.
-		// This gives the cron the app's working dir (/app), the app's env vars
-		// (DATABASE_URL etc.), and isolates user commands from the platform host.
-		// Container name matches the deploy worker: capsule-app-<first12ofUUID>.
-		shortID := strings.ReplaceAll(c.ProjectID.String(), "-", "")[:12]
-		containerName := "capsule-app-" + shortID
-
-		_ = wakeApp(ctx, containerName, 0) // the app may be asleep (idle sleep)
-		cmd := exec.CommandContext(ctx, "docker", "exec", containerName, "sh", "-c", c.Command)
-		out, runErr := cmd.CombinedOutput()
-		dur := time.Since(start)
-		runStatus := "success"
-		level := "info"
-		if runErr != nil {
-			h.logger.Error("cron trigger failed", "cron_id", c.ID, "container", containerName, "error", runErr)
-			runStatus = "failed"
-			level = "error"
-		}
-		_ = h.crons.UpdateLastRun(ctx, c.ID, runStatus, nil)
-
-		// Persist cron execution log
-		if h.exLogs != nil {
-			msg := fmt.Sprintf("cron %q (%s) → %s in %s", c.Name, c.Command, runStatus, dur.Round(time.Millisecond))
-			if len(out) > 0 {
-				msg += "\n" + string(out)
-			}
-			_ = h.exLogs.Append(ctx, &domain.ExecutionLog{
-				ProjectID: c.ProjectID,
-				Source:    "cron",
-				SourceID:  c.ID.String(),
-				Level:     level,
-				Message:   msg,
-			})
-		}
+		defer cronRelease(c.ID)
+		runCronJob(context.Background(), h.crons, h.exLogs, h.logger, c)
 	}(cron)
 
 	respondJSON(w, http.StatusAccepted, map[string]any{"message": "cron job triggered"})

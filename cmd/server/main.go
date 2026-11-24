@@ -201,6 +201,9 @@ func main() {
 	// Put app containers without traffic to sleep (CAPSULE_IDLE_SLEEP_HOURS, default 12).
 	go handlers.RunIdleReaper(workerCtx, logger)
 
+	// Fire the projects' cron jobs on schedule (in-process; EventBridge is not required).
+	go handlers.RunCronScheduler(workerCtx, cronJobRepo, execLogRepo, logger)
+
 	// Git auto-deploy + PR previews (webhook receiver, preview lifecycle, TTL reaper).
 	gitHandler := wireGit(workerCtx, cfg, logger, pool, projRepo, orgRepo, deploymentRepo, awsClients, fargateConfig)
 
